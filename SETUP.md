@@ -16,6 +16,10 @@ Everything here targets GCP/Firebase project **sdfc-udp-dev**.
 >   `CNAME marketing.sdfc.dev → sdfc-marketing-portal.web.app` (DNS-only/grey
 >   cloud) — the modern customDomains flow needs no TXT/A records.
 > - SAs, scoped IAM, WIF pool/provider, GH variable: all applied as written.
+> - **PENDING [console, 30s]: enable Google sign-in provider** (Authentication →
+>   Sign-in method → Google → Enable; auto-provisions the OAuth client the API
+>   won't create). The login page ships the button already — Google SSO for PMY
+>   staff, invited email/password for club users; `portal_role` stays the gate.
 > - **BLOCKED: `allUsers` run.invoker** on `marketing-portal-api` — org
 >   domain-restricted-sharing policy (allowed customers `C03qrfgnt`,
 >   `C00ik0b8m`). Talent-platform's project has an exception (its Cloud Run is
