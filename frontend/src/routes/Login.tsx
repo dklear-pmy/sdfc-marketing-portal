@@ -59,7 +59,7 @@ export default function Login() {
                 d="M21.35 11.1H12v2.9h5.35c-.5 2.5-2.6 3.9-5.35 3.9a6 6 0 1 1 0-12c1.5 0 2.9.55 3.95 1.55l2.15-2.15A9 9 0 1 0 12 21c5.2 0 8.85-3.65 8.85-8.8 0-.4-.2-.75-.5-1.1Z"
               />
             </svg>
-            Continue with Google (PMY staff)
+            Continue with Google
           </Button>
           <div className="text-muted-foreground flex items-center gap-3 text-xs">
             <span className="bg-border h-px flex-1" />

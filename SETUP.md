@@ -19,7 +19,8 @@ Everything here targets GCP/Firebase project **sdfc-udp-dev**.
 > - **PENDING [console, 30s]: enable Google sign-in provider** (Authentication →
 >   Sign-in method → Google → Enable; auto-provisions the OAuth client the API
 >   won't create). The login page ships the button already — Google SSO for PMY
->   staff, invited email/password for club users; `portal_role` stays the gate.
+>   and SDFC staff, invited email/password for everyone else; `portal_role`
+>   stays the gate.
 > - **BLOCKED: `allUsers` run.invoker** on `marketing-portal-api` — org
 >   domain-restricted-sharing policy (allowed customers `C03qrfgnt`,
 >   `C00ik0b8m`). Talent-platform's project has an exception (its Cloud Run is
