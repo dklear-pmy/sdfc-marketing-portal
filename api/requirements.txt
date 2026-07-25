@@ -1,0 +1,6 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+firebase-admin>=6.5
+google-cloud-secret-manager>=2.20
+requests>=2.32
+PyYAML>=6.0

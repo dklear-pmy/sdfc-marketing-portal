@@ -1,0 +1,29 @@
+# Slug registry — one entry per campaign slug the harness knows how to validate
+# and (Phase 2) run. This file is the source of truth for the payload contract;
+# keep it in sync with cio_trigger_hub/triggers.py SELECT columns.
+slugs:
+  Welcome-General-260715:
+    trigger_key: tb_signup
+    event_name: welcome_general
+    test_event_name: pmy_test_welcome_general
+    webhook_secrets:
+      - cio-trigger-url-tb-signup
+    payload_fields:
+      - dedup_key
+      - email
+      - activity_id
+      - campaign_title
+      - signup_form_family
+      - is_world_cup
+      - is_new_fan_24h
+      - fan_created_at
+      - activity_at
+      - first_name
+      - last_name
+      - fan_source
+      - phone_subscribed
+      - has_season_plan
+      - postal_code
+    person_attributes:
+      - first_name
+      - last_name
