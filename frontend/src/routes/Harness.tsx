@@ -32,6 +32,7 @@ const roleLabel: Record<string, string> = {
 
 export default function Harness() {
   const [slug, setSlug] = useState("")
+  const [formError, setFormError] = useState<string | null>(null)
 
   const validation = useMutation({
     mutationFn: (s: string) => api.get<ValidationReport>(`/api/harness/validate/${encodeURIComponent(s)}`),
@@ -39,7 +40,12 @@ export default function Harness() {
 
   function onSubmit(e: FormEvent) {
     e.preventDefault()
-    if (slug.trim()) validation.mutate(slug.trim())
+    if (!slug.trim()) {
+      setFormError("Enter a campaign slug first — the grey text is just an example.")
+      return
+    }
+    setFormError(null)
+    validation.mutate(slug.trim())
   }
 
   const report = validation.data
@@ -67,7 +73,8 @@ export default function Harness() {
               <Label htmlFor="slug">Campaign slug</Label>
               <Input
                 id="slug"
-                placeholder="Welcome-General-260715"
+                required
+                placeholder="e.g. Welcome-General-260715"
                 value={slug}
                 onChange={(e) => setSlug(e.target.value)}
               />
@@ -76,6 +83,7 @@ export default function Harness() {
               {validation.isPending ? "Validating…" : "Validate"}
             </Button>
           </form>
+          {formError && <p className="text-destructive mt-2 text-sm">{formError}</p>}
         </CardContent>
       </Card>
 
