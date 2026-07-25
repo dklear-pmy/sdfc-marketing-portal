@@ -110,11 +110,10 @@ done
 # run.admin administers Cloud Run services only (no data access);
 # firebasehosting.admin administers Hosting only. Both are product-scoped roles.
 
-# Cloud Build staging bucket ONLY (created by the first build; run once after):
-gcloud storage buckets add-iam-policy-binding gs://sdfc-udp-dev_cloudbuild \
-  --project=sdfc-udp-dev --member="$DEPLOYER" --role=roles/storage.objectAdmin
-
-# Cloud Run source-deploy Artifact Registry repo ONLY (exists after first deploy):
+# Artifact Registry repo ONLY (exists after the first manual --source deploy).
+# CI builds the image itself and pushes here (deploy-by-image) — `gcloud run
+# deploy --source` was rejected for CI because it needs project-level
+# storage.buckets.list; the deployer SA holds NO storage grants at all.
 gcloud artifacts repositories add-iam-policy-binding cloud-run-source-deploy \
   --project=sdfc-udp-dev --location=us-west2 --member="$DEPLOYER" \
   --role=roles/artifactregistry.writer

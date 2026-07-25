@@ -35,9 +35,28 @@ jobs:
       - name: Setup Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      # CI builds the image itself and deploys by digest — deliberately NOT
+      # `gcloud run deploy --source`, which needs project-level storage
+      # permissions the deployer SA doesn't get in this project.
+      - name: Build and push API image
+        run: |
+          gcloud auth configure-docker us-west2-docker.pkg.dev --quiet
+          IMAGE="us-west2-docker.pkg.dev/sdfc-udp-dev/cloud-run-source-deploy/marketing-portal-api:${GITHUB_SHA}"
+          docker build -t "$IMAGE" api
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
       - name: Deploy API to Cloud Run
-        working-directory: api
-        run: ./deploy.sh
+        run: |
+          gcloud run deploy marketing-portal-api \
+            --project=sdfc-udp-dev \
+            --region=us-west2 \
+            --image="$IMAGE" \
+            --service-account=marketing-portal-sa@sdfc-udp-dev.iam.gserviceaccount.com \
+            --set-env-vars="CORS_ORIGINS=https://marketing.sdfc.dev" \
+            --min-instances=0 \
+            --max-instances=2 \
+            --memory=512Mi
 
       - uses: actions/setup-node@v4
         with:
