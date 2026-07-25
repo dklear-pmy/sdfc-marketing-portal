@@ -30,7 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(u)
       if (u) {
         const token = await u.getIdTokenResult()
-        setRole((token.claims.role as Role | undefined) ?? null)
+        setRole((token.claims.portal_role as Role | undefined) ?? null)
       } else {
         setRole(null)
       }

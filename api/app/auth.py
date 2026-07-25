@@ -48,7 +48,12 @@ def require_role(minimum: Role):
         except Exception:
             raise HTTPException(status_code=401, detail="Invalid token")
 
-        role = decoded.get("role")
+        # The Firebase Auth user store in sdfc-udp-dev is SHARED with the
+        # scouting sandbox app, whose users carry their own `role` claim
+        # (system_admin). The portal therefore namespaces its claim as
+        # `portal_role` — and any claim write MUST merge with existing claims
+        # (set_custom_user_claims replaces the whole dict).
+        role = decoded.get("portal_role")
         if role not in _ROLE_RANK:
             raise HTTPException(status_code=403, detail="Account has no access role")
         if _ROLE_RANK[role] < _ROLE_RANK[minimum]:

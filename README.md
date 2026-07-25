@@ -28,8 +28,10 @@ product) and `CIO_TEST_HARNESS_UI_PLAN.md` (harness validator/runner spec).
 | `operator` | + run test-pair campaigns |
 | `admin` | + prod-mode runs, invites |
 
-Roles are Firebase custom claims stamped at invite time. A signed-in account
-with no role claim gets 403 on every API route.
+Roles are Firebase custom claims stamped at invite time under the **`portal_role`**
+key (namespaced — the project's Auth store is shared with the scouting sandbox
+app, which owns the plain `role` claim; always merge claims, never replace).
+A signed-in account with no `portal_role` claim gets 403 on every API route.
 
 ## Local development
 

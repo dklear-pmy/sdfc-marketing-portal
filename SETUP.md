@@ -1,8 +1,27 @@
 # One-time platform setup
 
-Everything here targets GCP/Firebase project **sdfc-udp-dev**. Console steps are
-marked **[console]** — they cannot be scripted (or are one-time enough not to
-bother).
+Everything here targets GCP/Firebase project **sdfc-udp-dev**.
+
+> **✅ Executed 2026-07-25** — all sections below are DONE except the final DNS
+> record and the org-policy decision:
+>
+> - Firebase was already on the project (409 on addFirebase) and its Auth store
+>   is **shared with the scouting sandbox app** (6 users, `role`/`organizationId`
+>   claims) → portal claim namespaced `portal_role`, merge-only writes.
+> - Hosting: dedicated site **`sdfc-marketing-portal`** (default site
+>   `sdfc-udp-dev` belongs to the scouting sandbox — never deploy to it).
+>   Web app "SDFC Marketing Portal", Email/Password enabled via Identity Toolkit
+>   API (`x-goog-user-project` header needed with user ADC).
+> - Custom domain registered via Hosting API; **pending: one Cloudflare record**
+>   `CNAME marketing.sdfc.dev → sdfc-marketing-portal.web.app` (DNS-only/grey
+>   cloud) — the modern customDomains flow needs no TXT/A records.
+> - SAs, scoped IAM, WIF pool/provider, GH variable: all applied as written.
+> - **BLOCKED: `allUsers` run.invoker** on `marketing-portal-api` — org
+>   domain-restricted-sharing policy (allowed customers `C03qrfgnt`,
+>   `C00ik0b8m`). Talent-platform's project has an exception (its Cloud Run is
+>   public). Dean's identity holds `orgpolicy.policy.set` on sdfc-udp-dev, so a
+>   project-level exception is possible — awaiting his call vs API Gateway.
+>   Until resolved the `/api/**` Hosting rewrite returns 403s.
 
 ## 1. Firebase
 
@@ -139,8 +158,12 @@ import firebase_admin
 from firebase_admin import auth
 
 firebase_admin.initialize_app(options={"projectId": "sdfc-udp-dev"})
-user = auth.create_user(email="dean.klear@pmygroup.com", password="<temp>")
-auth.set_custom_user_claims(user.uid, {"role": "admin"})
+user = auth.get_user_by_email("dean.klear@pmygroup.com")
+# ⚠️ SHARED AUTH STORE: sdfc-udp-dev Firebase Auth also holds the scouting
+# sandbox app's users, which use their own `role` claim. The portal claim is
+# namespaced `portal_role`, and claim writes must MERGE (set_custom_user_claims
+# replaces the entire dict — read existing claims first).
+auth.set_custom_user_claims(user.uid, {**(user.custom_claims or {}), "portal_role": "admin"})
 ```
 
 Sign in once, change the password, invite others from the portal (Phase 2).
