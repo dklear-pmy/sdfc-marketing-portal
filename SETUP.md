@@ -21,12 +21,13 @@ Everything here targets GCP/Firebase project **sdfc-udp-dev**.
 >   won't create). The login page ships the button already — Google SSO for PMY
 >   and SDFC staff, invited email/password for everyone else; `portal_role`
 >   stays the gate.
-> - **BLOCKED: `allUsers` run.invoker** on `marketing-portal-api` — org
->   domain-restricted-sharing policy (allowed customers `C03qrfgnt`,
->   `C00ik0b8m`). Talent-platform's project has an exception (its Cloud Run is
->   public). Dean's identity holds `orgpolicy.policy.set` on sdfc-udp-dev, so a
->   project-level exception is possible — awaiting his call vs API Gateway.
->   Until resolved the `/api/**` Hosting rewrite returns 403s.
+> - **RESOLVED 2026-07-25 (Dean chose DRS exception over API Gateway):**
+>   project-level org policy `iam.allowedPolicyMemberDomains` on sdfc-udp-dev
+>   set to `allowAll: true` (was inherited allow-list `C03qrfgnt`/`C00ik0b8m`;
+>   talent-platform precedent), then `allUsers` → `roles/run.invoker` granted on
+>   `marketing-portal-api` ONLY. Auth boundary = Firebase token + `portal_role`
+>   on every route; do not grant allUsers on anything else in this project
+>   without the same deliberation.
 
 ## 1. Firebase
 
