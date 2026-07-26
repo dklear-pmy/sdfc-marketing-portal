@@ -154,6 +154,43 @@ export interface MessagesPage {
   next: string | null
 }
 
+export type TripwireStatus = "PASS" | "WARN" | "FAIL"
+
+export interface TripwireCheckRow {
+  check_name: string
+  status: TripwireStatus
+  detail: string | null
+  checked_at: string
+}
+
+export interface Tripwire {
+  email: string
+  label: string
+  purpose: string | null
+  expect_subscribed: boolean
+  max_quiet_days: number | null
+  active: boolean
+  created_at: string | null
+  created_by: string | null
+  overall: string
+  checks: TripwireCheckRow[]
+}
+
+export interface TripwiresState {
+  tripwires: Tripwire[]
+  workspace: { overall: string; checks: TripwireCheckRow[] }
+  last_run_at: string | null
+}
+
+export interface TripwireHistoryRow {
+  checked_at: string
+  email: string
+  check_name: string
+  status: TripwireStatus
+  detail: string | null
+  source: string | null
+}
+
 export interface HarnessRun {
   run_id: string
   slug: string

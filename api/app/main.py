@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import admin, bqstate, customers, runner
+from . import admin, bqstate, customers, runner, tripwires
 from .auth import Principal, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
 from .validator import validate_slug
@@ -119,6 +119,57 @@ def customers_messages(
         return customers.messages_page(cio_id, limit=max(1, min(limit, 50)), start=start)
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=f"Customer.io API error: {e}")
+
+
+class TripwireCreate(BaseModel):
+    email: str
+    label: str
+    purpose: str | None = None
+    expect_subscribed: bool = True
+    max_quiet_days: int | None = None
+    provision_slug: str | None = None
+
+
+@app.get("/api/tripwires")
+def tripwires_state(principal: Principal = require_role("viewer")) -> dict:
+    return tripwires.state()
+
+
+@app.get("/api/tripwires/history")
+def tripwires_history(
+    limit: int = 100,
+    email: str | None = None,
+    principal: Principal = require_role("viewer"),
+) -> dict:
+    return {"history": tripwires.history(limit=limit, email=email)}
+
+
+@app.post("/api/tripwires/run")
+def tripwires_run(principal: Principal = require_role("operator")) -> dict:
+    return tripwires.run_checks(source=principal.email or "manual")
+
+
+@app.post("/api/tripwires/tick", dependencies=[Depends(require_scheduler_oidc)])
+def tripwires_tick() -> dict:
+    return tripwires.run_checks(source="scheduler")
+
+
+@app.post("/api/tripwires")
+def tripwires_add(body: TripwireCreate, principal: Principal = require_role("operator")) -> dict:
+    if len(body.label) > 60:
+        raise HTTPException(status_code=400, detail="Label too long")
+    try:
+        return tripwires.add_tripwire(
+            _valid_email(body.email),
+            body.label.strip(),
+            (body.purpose or "").strip() or None,
+            expect_subscribed=body.expect_subscribed,
+            max_quiet_days=body.max_quiet_days,
+            provision_slug=body.provision_slug,
+            actor=principal.email,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 class InviteRequest(BaseModel):

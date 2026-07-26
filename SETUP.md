@@ -182,3 +182,24 @@ auth.set_custom_user_claims(user.uid, {**(user.custom_claims or {}), "portal_rol
 ```
 
 Sign in once, change the password, invite others from the portal (Phase 2).
+
+## 6. Tripwires (Phase 4, executed 2026-07-26)
+
+State tables `customerio_state.tripwires` / `tripwire_checks` (portal-sa
+already dataset WRITER — **no new IAM for Phase 4**). Seeded tripwires:
+`tripwire-newsletter` (quiet-days 14) / `tripwire-transport` /
+`tripwire-welcome`@qa.sdfc.dev, provisioned through the Welcome-General test
+webhook. Tripwire emails MUST be @qa.sdfc.dev — the sink rejects other
+recipient domains at RCPT.
+
+Daily check schedule (same OIDC contract as the harness tick):
+
+```bash
+gcloud scheduler jobs create http tripwire-daily-check \
+  --project=sdfc-udp-dev --location=us-west2 \
+  --schedule="0 14 * * *" \
+  --uri="https://marketing-portal-api-133738605371.us-west2.run.app/api/tripwires/tick" \
+  --http-method=POST \
+  --oidc-service-account-email=marketing-portal-sa@sdfc-udp-dev.iam.gserviceaccount.com \
+  --oidc-token-audience=sdfc-marketing-portal-tick
+```
