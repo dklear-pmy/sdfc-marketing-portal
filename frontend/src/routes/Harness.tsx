@@ -84,7 +84,7 @@ export default function Harness() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Campaign Tester</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Validate a campaign's CIO wiring, then run it end-to-end against the mail sink.
+          Validate a campaign's CIO wiring, then run it end-to-end against the mail sink (preview test).
         </p>
       </div>
 
