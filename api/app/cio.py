@@ -33,3 +33,9 @@ class CioClient:
         return self._get(
             f"/customers/{cio_id}/activities", id_type="cio_id", limit=limit
         ).get("activities", [])
+
+    def messages_for_recipient(self, email: str, limit: int = 50) -> list[dict]:
+        """Delivery ledger entries for a recipient. The API's recipient param
+        does not filter reliably — filter client-side."""
+        msgs = self._get("/messages", limit=limit).get("messages", [])
+        return [m for m in msgs if (m.get("recipient") or "").lower() == email.lower()]

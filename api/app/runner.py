@@ -22,8 +22,8 @@ from . import bqstate, mailpit
 from .cio import CioClient
 from .config import GCP_PROJECT, slug_registry
 
-EMAIL1_DEADLINE_MIN = 6
-EMAIL2_DEADLINE_MIN = 25  # +10 min journey timer with generous tolerance
+EMAIL1_DEADLINE_MIN = 12  # CIO SMTP retries after a transient failure can land within ~10 min
+EMAIL2_DEADLINE_MIN = 30  # +10 min journey timer with generous tolerance
 
 
 def _now() -> datetime:
@@ -113,6 +113,19 @@ def _diagnose_missing_email(cio: CioClient, spec: dict, identity: str) -> str:
         return "Profile exists but no event was emitted — check the trigger half's Send Event action"
     if expected and expected not in events:
         return f"Trigger half emitted {events} but the test journey listens on '{expected}' — event-name mismatch (the copy-paste bug class)"
+    # Event was correct — distinguish "journey never sent" from "sent but lost in transport".
+    ledger = cio.messages_for_recipient(identity)
+    if ledger:
+        undelivered = [
+            m for m in ledger
+            if (m.get("metrics") or {}).get("sent") and not (m.get("metrics") or {}).get("delivered")
+        ]
+        if undelivered:
+            subj = undelivered[0].get("subject")
+            return (
+                f"CIO SENT '{subj}' but delivery to the sink never completed (no bounce recorded) — "
+                "SMTP/transport issue between CIO and mail.sdfc.dev, NOT journey config. Re-run to confirm transient."
+            )
     return f"Event {events} emitted but no email sent — check journey entry filters/state"
 
 

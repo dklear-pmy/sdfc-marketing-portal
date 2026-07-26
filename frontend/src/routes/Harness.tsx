@@ -193,7 +193,12 @@ function RunPanel({ slug, wiringClean }: { slug: string; wiringClean: boolean })
     queryKey: ["harness-run", runId],
     enabled: !!runId,
     queryFn: () => api.post<HarnessRun>(`/api/harness/runs/${runId}/advance`),
-    refetchInterval: (q) => (q.state.data?.status === "RUNNING" ? 20_000 : false),
+    // Keep polling through transient errors (no data yet ⇒ poll); only stop on
+    // a terminal run status.
+    refetchInterval: (q) => {
+      const status = q.state.data?.status
+      return !status || status === "RUNNING" ? 20_000 : false
+    },
   })
 
   const current = run.data ?? start.data
@@ -235,6 +240,13 @@ function RunPanel({ slug, wiringClean }: { slug: string; wiringClean: boolean })
           <Alert variant="destructive">
             <AlertTitle>Could not start run</AlertTitle>
             <AlertDescription>{(start.error as Error).message}</AlertDescription>
+          </Alert>
+        )}
+
+        {run.isError && (
+          <Alert variant="destructive">
+            <AlertTitle>Polling hiccup (will retry)</AlertTitle>
+            <AlertDescription>{(run.error as Error).message}</AlertDescription>
           </Alert>
         )}
 
