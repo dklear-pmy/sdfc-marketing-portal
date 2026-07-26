@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
 const nav = [
-  { to: "/harness", label: "Test Harness" },
+  { to: "/harness", label: "Campaign Tester" },
   { to: "/customers", label: "Customers" },
   { to: "/tripwires", label: "Tripwires" },
 ]
