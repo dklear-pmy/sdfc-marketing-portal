@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react"
-import { useMutation } from "@tanstack/react-query"
-import { api, type ValidationReport, type CheckStatus } from "@/lib/api"
+import { useMutation, useQuery } from "@tanstack/react-query"
+import { api, type ValidationReport, type CheckStatus, type HarnessRun } from "@/lib/api"
+import { useAuth } from "@/lib/auth"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -164,17 +165,111 @@ export default function Harness() {
             </CardContent>
           </Card>
 
-          <Card className="border-dashed">
-            <CardHeader>
-              <CardTitle className="text-muted-foreground">Run test campaign</CardTitle>
-              <CardDescription>
-                Phase 2 — fires the PMY-TEST pair with a fresh scenario identity and tracks
-                delivery + engagement through the mail sink.
-              </CardDescription>
-            </CardHeader>
-          </Card>
+          <RunPanel slug={report.slug} wiringClean={report.summary.fail === 0} />
         </>
       )}
     </div>
+  )
+}
+
+const runStatusVariant: Record<HarnessRun["status"], "default" | "destructive" | "secondary"> = {
+  RUNNING: "secondary",
+  PASSED: "default",
+  FAILED: "destructive",
+  TIMED_OUT: "destructive",
+}
+
+function RunPanel({ slug, wiringClean }: { slug: string; wiringClean: boolean }) {
+  const { role } = useAuth()
+  const canRun = role === "operator" || role === "admin"
+  const [runId, setRunId] = useState<string | null>(null)
+
+  const start = useMutation({
+    mutationFn: () => api.post<HarnessRun>(`/api/harness/run/${encodeURIComponent(slug)}`),
+    onSuccess: (run) => setRunId(run.run_id),
+  })
+
+  const run = useQuery({
+    queryKey: ["harness-run", runId],
+    enabled: !!runId,
+    queryFn: () => api.post<HarnessRun>(`/api/harness/runs/${runId}/advance`),
+    refetchInterval: (q) => (q.state.data?.status === "RUNNING" ? 20_000 : false),
+  })
+
+  const current = run.data ?? start.data
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Run test campaign</CardTitle>
+        <CardDescription>
+          Fires the PMY-TEST pair with a fresh scenario identity, then tracks delivery and
+          engagement through the mail sink. Emails 1–2 verify in ~15 minutes; later journey
+          emails ride long timers and are not awaited.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        {!canRun ? (
+          <p className="text-muted-foreground text-sm">Requires the operator role.</p>
+        ) : (
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => start.mutate()}
+              disabled={start.isPending || current?.status === "RUNNING"}
+            >
+              {start.isPending
+                ? "Starting…"
+                : current?.status === "RUNNING"
+                  ? "Run in progress…"
+                  : "Start run"}
+            </Button>
+            {!wiringClean && (
+              <span className="text-muted-foreground text-sm">
+                Heads-up: static checks have failures — the run will likely surface them.
+              </span>
+            )}
+          </div>
+        )}
+
+        {start.isError && (
+          <Alert variant="destructive">
+            <AlertTitle>Could not start run</AlertTitle>
+            <AlertDescription>{(start.error as Error).message}</AlertDescription>
+          </Alert>
+        )}
+
+        {current && (
+          <div className="grid gap-3">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <Badge variant={runStatusVariant[current.status]}>{current.status}</Badge>
+              <code className="bg-muted rounded px-1.5 py-0.5 text-xs">{current.run_id}</code>
+              <span className="text-muted-foreground">identity {current.identity}</span>
+              <span className="text-muted-foreground">stage {current.stage}</span>
+            </div>
+            {current.detail && <p className="text-sm">{current.detail}</p>}
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-44">Time (UTC)</TableHead>
+                  <TableHead className="w-40">Stage</TableHead>
+                  <TableHead>Detail</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {current.timeline.map((t, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="font-mono text-xs">
+                      {new Date(t.ts).toISOString().slice(11, 19)}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">{t.stage}</TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{t.detail}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }

@@ -27,3 +27,5 @@ slugs:
     person_attributes:
       - first_name
       - last_name
+    # Runner (Phase 2)
+    test_webhook_secret: cio-trigger-url-tb-signup-dev

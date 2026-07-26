@@ -67,3 +67,23 @@ export interface ValidationReport {
   checks: ValidationCheck[]
   summary: { pass: number; fail: number; warn: number; skip: number }
 }
+
+export interface RunTimelineEntry {
+  ts: string
+  stage: string
+  detail: string
+}
+
+export interface HarnessRun {
+  run_id: string
+  slug: string
+  identity: string
+  status: "RUNNING" | "PASSED" | "FAILED" | "TIMED_OUT"
+  stage: string
+  engagement_path: string
+  started_by: string | null
+  started_at: string
+  updated_at: string
+  timeline: RunTimelineEntry[]
+  detail: string | null
+}
