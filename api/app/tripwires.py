@@ -191,7 +191,7 @@ def _check_sink_arrival(email: str, messages: list[dict]) -> dict:
             "status": "FAIL",
             "detail": "CIO says delivered but not in the sink: " + "; ".join(f"'{s}'" for s in missing[:3]),
         }
-    return {"check_name": "sink_arrival", "status": "PASS", "detail": f"{len(delivered)} deliverie(s) all present in the sink"}
+    return {"check_name": "sink_arrival", "status": "PASS", "detail": f"all {len(delivered)} deliveries present in the sink"}
 
 
 def _check_quiet(messages: list[dict], max_quiet_days: int | None) -> dict | None:
