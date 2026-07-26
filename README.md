@@ -65,6 +65,10 @@ cd api && .venv/bin/python -m app.validator Welcome-General-260715
 - API: `cd api && ./deploy.sh` (Cloud Run, `--allow-unauthenticated` is required
   for Hosting rewrites — auth is enforced in-app via Firebase tokens).
 - Frontend: `cd frontend && npm run build && firebase deploy --only hosting --project sdfc-udp-dev`
+- CI/CD: push to `main` deploys both (single environment — main IS prod). Every
+  PR gets an auto-expiring Hosting **preview channel** (URL commented on the
+  PR; frontend-only, `/api` hits the live service; email/password sign-in only
+  — preview hostnames aren't Firebase-Auth authorized domains).
 
 One-time platform setup (console steps, custom domain, SA/IAM, invites): see
 [SETUP.md](SETUP.md).

@@ -1,0 +1,85 @@
+name: Preview
+
+# Every PR gets an auto-expiring Firebase Hosting preview channel with the
+# built frontend. The /api/** rewrite in the channel still points at the LIVE
+# Cloud Run service, so previews exercise real data. Auth caveat: preview
+# hostnames aren't in Firebase Auth's authorized-domains list, so Google
+# sign-in popups won't work there — use email/password on previews.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  deploy-preview:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_FIREBASE_API_KEY: ${{ vars.FIREBASE_WEB_API_KEY }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Authenticate to Google Cloud (WIF, keyless)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/133738605371/locations/global/workloadIdentityPools/github/providers/github-oidc
+          service_account: github-actions-deployer@sdfc-udp-dev.iam.gserviceaccount.com
+
+      - name: Deploy preview channel
+        id: deploy
+        run: |
+          npx firebase-tools@latest hosting:channel:deploy "pr-${{ github.event.pull_request.number }}" \
+            --project sdfc-udp-dev --expires 7d --json > channel.json
+          URL=$(jq -r '.result[].url // empty' channel.json | head -1)
+          if [ -z "$URL" ]; then
+            echo "Could not parse channel URL:" >&2
+            cat channel.json >&2
+            exit 1
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Comment preview URL on PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BODY="🔍 Preview: ${{ steps.deploy.outputs.url }} (expires in 7 days; sign in with email/password — Google SSO is unavailable on preview hostnames)"
+          gh pr comment ${{ github.event.pull_request.number }} --edit-last --body "$BODY" \
+            || gh pr comment ${{ github.event.pull_request.number }} --body "$BODY"
+
+  cleanup-preview:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (WIF, keyless)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/133738605371/locations/global/workloadIdentityPools/github/providers/github-oidc
+          service_account: github-actions-deployer@sdfc-udp-dev.iam.gserviceaccount.com
+
+      - name: Delete preview channel
+        run: |
+          npx firebase-tools@latest hosting:channel:delete "pr-${{ github.event.pull_request.number }}" \
+            --project sdfc-udp-dev --force || true
