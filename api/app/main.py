@@ -1,8 +1,11 @@
+import re
+
+import requests
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import admin, bqstate, runner
+from . import admin, bqstate, customers, runner
 from .auth import Principal, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
 from .validator import validate_slug
@@ -68,6 +71,54 @@ def harness_advance_run(run_id: str, principal: Principal = require_role("operat
 @app.post("/api/harness/runs/tick", dependencies=[Depends(require_scheduler_oidc)])
 def harness_tick() -> dict:
     return runner.advance_all()
+
+
+_CIO_ID_RE = re.compile(r"[A-Za-z0-9_=-]{4,64}")
+
+
+def _valid_email(email: str) -> str:
+    email = email.strip().lower()
+    if "@" not in email or len(email) > 254:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    return email
+
+
+@app.get("/api/customers/lookup")
+def customers_lookup(email: str, principal: Principal = require_role("viewer")) -> dict:
+    try:
+        return customers.lookup(_valid_email(email))
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Customer.io API error: {e}")
+
+
+@app.get("/api/customers/{cio_id}/activities")
+def customers_activities(
+    cio_id: str,
+    start: str | None = None,
+    limit: int = 20,
+    principal: Principal = require_role("viewer"),
+) -> dict:
+    if not _CIO_ID_RE.fullmatch(cio_id):
+        raise HTTPException(status_code=400, detail="Invalid cio_id")
+    try:
+        return customers.activities_page(cio_id, limit=max(1, min(limit, 50)), start=start)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Customer.io API error: {e}")
+
+
+@app.get("/api/customers/{cio_id}/messages")
+def customers_messages(
+    cio_id: str,
+    start: str | None = None,
+    limit: int = 20,
+    principal: Principal = require_role("viewer"),
+) -> dict:
+    if not _CIO_ID_RE.fullmatch(cio_id):
+        raise HTTPException(status_code=400, detail="Invalid cio_id")
+    try:
+        return customers.messages_page(cio_id, limit=max(1, min(limit, 50)), start=start)
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Customer.io API error: {e}")
 
 
 class InviteRequest(BaseModel):

@@ -76,9 +76,19 @@ Per-phase additions (grant only when the phase ships):
   anyway); `roles/bigquery.jobUser` (run jobs only — carries no data access);
   IAP-secured Web App User on the Mailpit backend; accessor on further
   `cio-trigger-url-*` secrets as slugs are onboarded.
-- **Phase 3 (customer dashboard):** read-only, dataset-scoped only — READER via
-  dataset ACL on exactly the datasets the lookup queries (e.g.
-  `customerio_sync`/gold views). No project-wide `bigquery.dataViewer`, no GCS.
+- **Phase 3 (customer dashboard, executed 2026-07-26):** READER via dataset ACL
+  on `customerio_gold` **only** — the lookup does point queries on the email
+  clustering key of `fan_attributes` + `fan_attributes_cio_sync` (~15 MB/scan).
+  No project-wide `bigquery.dataViewer`, no GCS. Granted with:
+
+  ```python
+  # python google-cloud-bigquery, as a project admin
+  ds = client.get_dataset("sdfc-udp-dev.customerio_gold")
+  ds.access_entries = [*ds.access_entries, bigquery.AccessEntry(
+      "READER", "userByEmail",
+      "marketing-portal-sa@sdfc-udp-dev.iam.gserviceaccount.com")]
+  client.update_dataset(ds, ["access_entries"])
+  ```
 
 ## 3. CI/CD — Workload Identity Federation (keyless, talent-platform pattern)
 

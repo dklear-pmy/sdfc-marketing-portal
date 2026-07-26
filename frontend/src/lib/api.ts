@@ -87,6 +87,73 @@ export interface HarnessRunSummary {
   updated_at: string
 }
 
+export type AttrStatus = "match" | "differs" | "pending" | "cio_only" | "empty"
+
+export interface AttrComparison {
+  name: string
+  warehouse: unknown
+  cio: unknown
+  status: AttrStatus
+  cio_updated_at: string | null
+}
+
+export interface CustomerLookup {
+  email: string
+  generated_at: string
+  cio: {
+    found: boolean
+    cio_id?: string
+    id?: string | null
+    unsubscribed?: boolean
+    segments?: string[]
+    last_attribute_write?: string | null
+    attributes?: Record<string, unknown> | null
+  }
+  warehouse: {
+    found: boolean
+    updated_at: string | null
+    table_built_at: string | null
+    row: Record<string, unknown> | null
+  }
+  sync: {
+    in_sync_view: boolean
+    excluded_reason: string | null
+    comparison: AttrComparison[]
+    summary: Partial<Record<AttrStatus, number>>
+  }
+}
+
+export interface CioActivity {
+  id: string
+  type: string
+  timestamp: number
+  name?: string | null
+  data?: Record<string, unknown> | null
+  delivery_type?: string | null
+}
+
+export interface CioMessage {
+  id: string
+  subject: string | null
+  type: string
+  created: number
+  campaign_id: number | null
+  newsletter_id: number | null
+  transactional_message_id: number | null
+  metrics: Record<string, number | null>
+  failure_message: string | null
+}
+
+export interface ActivitiesPage {
+  activities: CioActivity[]
+  next: string | null
+}
+
+export interface MessagesPage {
+  messages: CioMessage[]
+  next: string | null
+}
+
 export interface HarnessRun {
   run_id: string
   slug: string

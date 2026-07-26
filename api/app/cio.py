@@ -34,6 +34,38 @@ class CioClient:
             f"/customers/{cio_id}/activities", id_type="cio_id", limit=limit
         ).get("activities", [])
 
+    def customer_attributes(self, cio_id: str) -> dict:
+        """Full customer object: attributes plus per-attribute write timestamps
+        (unix seconds) and the top-level unsubscribed flag."""
+        return self._get(f"/customers/{cio_id}/attributes", id_type="cio_id").get(
+            "customer", {}
+        )
+
+    def customer_segments(self, cio_id: str) -> list[dict]:
+        return self._get(f"/customers/{cio_id}/segments", id_type="cio_id").get(
+            "segments", []
+        )
+
+    def customer_activities_page(
+        self, cio_id: str, limit: int = 20, start: str | None = None
+    ) -> dict:
+        """One page of the person's activity stream; response carries a `next`
+        cursor ('' when exhausted)."""
+        params: dict = {"id_type": "cio_id", "limit": limit}
+        if start:
+            params["start"] = start
+        return self._get(f"/customers/{cio_id}/activities", **params)
+
+    def customer_messages_page(
+        self, cio_id: str, limit: int = 20, start: str | None = None
+    ) -> dict:
+        """One page of the person's delivery ledger (subject + sent/delivered/
+        opened/clicked metrics). Unlike /v1/messages this IS scoped server-side."""
+        params: dict = {"id_type": "cio_id", "limit": limit}
+        if start:
+            params["start"] = start
+        return self._get(f"/customers/{cio_id}/messages", **params)
+
     def messages_for_recipient(self, email: str, limit: int = 50) -> list[dict]:
         """Delivery ledger entries for a recipient. The API's recipient param
         does not filter reliably — filter client-side."""
