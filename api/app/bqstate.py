@@ -101,9 +101,29 @@ def get_run(run_id: str) -> dict | None:
     return r
 
 
-def list_runs(limit: int = 20) -> list[dict]:
+def list_runs(q: str | None = None, status: str | None = None, limit: int = 50) -> list[dict]:
+    limit = max(1, min(int(limit), 200))
+    where = ["TRUE"]
+    params: list[bigquery.ScalarQueryParameter] = []
+    if q:
+        where.append(
+            "(STRPOS(LOWER(slug), LOWER(@q)) > 0"
+            " OR STRPOS(LOWER(identity), LOWER(@q)) > 0"
+            " OR STRPOS(LOWER(run_id), LOWER(@q)) > 0)"
+        )
+        params.append(bigquery.ScalarQueryParameter("q", "STRING", q))
+    if status:
+        where.append("status = @status")
+        params.append(bigquery.ScalarQueryParameter("status", "STRING", status.upper()))
     rows = client().query(
-        f"SELECT run_id, slug, identity, status, stage, started_at, updated_at FROM `{_DATASET}.harness_runs` ORDER BY started_at DESC LIMIT {int(limit)}"
+        f"""
+        SELECT run_id, slug, identity, status, stage, detail, started_at, updated_at
+        FROM `{_DATASET}.harness_runs`
+        WHERE {' AND '.join(where)}
+        ORDER BY started_at DESC
+        LIMIT {limit}
+        """,
+        job_config=bigquery.QueryJobConfig(query_parameters=params),
     ).result()
     out = []
     for row in rows:

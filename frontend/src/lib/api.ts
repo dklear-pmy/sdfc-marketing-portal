@@ -74,6 +74,17 @@ export interface RunTimelineEntry {
   detail: string
 }
 
+export interface HarnessRunSummary {
+  run_id: string
+  slug: string
+  identity: string
+  status: "RUNNING" | "PASSED" | "FAILED" | "TIMED_OUT"
+  stage: string
+  detail: string | null
+  started_at: string
+  updated_at: string
+}
+
 export interface HarnessRun {
   run_id: string
   slug: string

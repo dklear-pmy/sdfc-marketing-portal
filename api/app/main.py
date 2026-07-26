@@ -37,8 +37,15 @@ def harness_start_run(slug: str, principal: Principal = require_role("operator")
 
 
 @app.get("/api/harness/runs")
-def harness_list_runs(principal: Principal = require_role("viewer")) -> dict:
-    return {"runs": bqstate.list_runs()}
+def harness_list_runs(
+    q: str | None = None,
+    status: str | None = None,
+    limit: int = 50,
+    principal: Principal = require_role("viewer"),
+) -> dict:
+    if q and len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search too long")
+    return {"runs": bqstate.list_runs(q=q, status=status, limit=limit)}
 
 
 @app.get("/api/harness/runs/{run_id}")

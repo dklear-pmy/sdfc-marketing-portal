@@ -1,6 +1,12 @@
 import { useState, type FormEvent } from "react"
-import { useMutation, useQuery } from "@tanstack/react-query"
-import { api, type ValidationReport, type CheckStatus, type HarnessRun } from "@/lib/api"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import {
+  api,
+  type ValidationReport,
+  type CheckStatus,
+  type HarnessRun,
+  type HarnessRunSummary,
+} from "@/lib/api"
 import { useAuth } from "@/lib/auth"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,6 +14,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   Table,
   TableBody,
@@ -16,6 +23,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { cn } from "@/lib/utils"
 
 const statusVariant: Record<CheckStatus, "default" | "destructive" | "secondary" | "outline"> = {
   pass: "default",
@@ -31,9 +39,19 @@ const roleLabel: Record<string, string> = {
   prod_journey: "Prod · Journey [2/2]",
 }
 
+const runStatusVariant: Record<HarnessRun["status"], "default" | "destructive" | "secondary"> = {
+  RUNNING: "secondary",
+  PASSED: "default",
+  FAILED: "destructive",
+  TIMED_OUT: "destructive",
+}
+
+const RUN_STATUSES = ["ALL", "RUNNING", "PASSED", "FAILED", "TIMED_OUT"] as const
+
 export default function Harness() {
   const [slug, setSlug] = useState("")
   const [formError, setFormError] = useState<string | null>(null)
+  const [activeRunId, setActiveRunId] = useState<string | null>(null)
 
   const validation = useMutation({
     mutationFn: (s: string) => api.get<ValidationReport>(`/api/harness/validate/${encodeURIComponent(s)}`),
@@ -165,43 +183,41 @@ export default function Harness() {
             </CardContent>
           </Card>
 
-          <RunPanel slug={report.slug} wiringClean={report.summary.fail === 0} />
+          <StartRunCard
+            slug={report.slug}
+            wiringClean={report.summary.fail === 0}
+            onStarted={setActiveRunId}
+          />
         </>
       )}
+
+      {activeRunId && <RunDetail runId={activeRunId} onClose={() => setActiveRunId(null)} />}
+
+      <RunHistory activeRunId={activeRunId} onSelect={setActiveRunId} />
     </div>
   )
 }
 
-const runStatusVariant: Record<HarnessRun["status"], "default" | "destructive" | "secondary"> = {
-  RUNNING: "secondary",
-  PASSED: "default",
-  FAILED: "destructive",
-  TIMED_OUT: "destructive",
-}
-
-function RunPanel({ slug, wiringClean }: { slug: string; wiringClean: boolean }) {
+function StartRunCard({
+  slug,
+  wiringClean,
+  onStarted,
+}: {
+  slug: string
+  wiringClean: boolean
+  onStarted: (runId: string) => void
+}) {
   const { role } = useAuth()
+  const queryClient = useQueryClient()
   const canRun = role === "operator" || role === "admin"
-  const [runId, setRunId] = useState<string | null>(null)
 
   const start = useMutation({
     mutationFn: () => api.post<HarnessRun>(`/api/harness/run/${encodeURIComponent(slug)}`),
-    onSuccess: (run) => setRunId(run.run_id),
-  })
-
-  const run = useQuery({
-    queryKey: ["harness-run", runId],
-    enabled: !!runId,
-    queryFn: () => api.post<HarnessRun>(`/api/harness/runs/${runId}/advance`),
-    // Keep polling through transient errors (no data yet ⇒ poll); only stop on
-    // a terminal run status.
-    refetchInterval: (q) => {
-      const status = q.state.data?.status
-      return !status || status === "RUNNING" ? 20_000 : false
+    onSuccess: (run) => {
+      onStarted(run.run_id)
+      void queryClient.invalidateQueries({ queryKey: ["harness-runs"] })
     },
   })
-
-  const current = run.data ?? start.data
 
   return (
     <Card>
@@ -218,15 +234,8 @@ function RunPanel({ slug, wiringClean }: { slug: string; wiringClean: boolean })
           <p className="text-muted-foreground text-sm">Requires the operator role.</p>
         ) : (
           <div className="flex items-center gap-3">
-            <Button
-              onClick={() => start.mutate()}
-              disabled={start.isPending || current?.status === "RUNNING"}
-            >
-              {start.isPending
-                ? "Starting…"
-                : current?.status === "RUNNING"
-                  ? "Run in progress…"
-                  : "Start run"}
+            <Button onClick={() => start.mutate()} disabled={start.isPending}>
+              {start.isPending ? "Starting…" : `Start run for ${slug}`}
             </Button>
             {!wiringClean && (
               <span className="text-muted-foreground text-sm">
@@ -235,28 +244,69 @@ function RunPanel({ slug, wiringClean }: { slug: string; wiringClean: boolean })
             )}
           </div>
         )}
-
         {start.isError && (
           <Alert variant="destructive">
             <AlertTitle>Could not start run</AlertTitle>
             <AlertDescription>{(start.error as Error).message}</AlertDescription>
           </Alert>
         )}
+      </CardContent>
+    </Card>
+  )
+}
 
+function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
+  const { role } = useAuth()
+  const canAdvance = role === "operator" || role === "admin"
+
+  // Operators advance the run as they watch; viewers just read its state.
+  const run = useQuery({
+    queryKey: ["harness-run", runId, canAdvance],
+    queryFn: () =>
+      canAdvance
+        ? api.post<HarnessRun>(`/api/harness/runs/${runId}/advance`)
+        : api.get<HarnessRun>(`/api/harness/runs/${runId}`),
+    refetchInterval: (q) => {
+      const status = q.state.data?.status
+      return !status || status === "RUNNING" ? 20_000 : false
+    },
+  })
+
+  const current = run.data
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <CardTitle>Run {runId}</CardTitle>
+            {current && (
+              <CardDescription>
+                {current.slug} · {current.identity}
+                {current.started_by ? ` · started by ${current.started_by}` : ""}
+              </CardDescription>
+            )}
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-3">
         {run.isError && (
           <Alert variant="destructive">
             <AlertTitle>Polling hiccup (will retry)</AlertTitle>
             <AlertDescription>{(run.error as Error).message}</AlertDescription>
           </Alert>
         )}
-
         {current && (
-          <div className="grid gap-3">
+          <>
             <div className="flex flex-wrap items-center gap-3 text-sm">
               <Badge variant={runStatusVariant[current.status]}>{current.status}</Badge>
-              <code className="bg-muted rounded px-1.5 py-0.5 text-xs">{current.run_id}</code>
-              <span className="text-muted-foreground">identity {current.identity}</span>
               <span className="text-muted-foreground">stage {current.stage}</span>
+              {current.status === "RUNNING" && canAdvance && (
+                <span className="text-muted-foreground">advancing every 20s…</span>
+              )}
             </div>
             {current.detail && <p className="text-sm">{current.detail}</p>}
             <Table>
@@ -271,7 +321,7 @@ function RunPanel({ slug, wiringClean }: { slug: string; wiringClean: boolean })
                 {current.timeline.map((t, i) => (
                   <TableRow key={i}>
                     <TableCell className="font-mono text-xs">
-                      {new Date(t.ts).toISOString().slice(11, 19)}
+                      {new Date(t.ts).toISOString().slice(0, 19).replace("T", " ")}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{t.stage}</TableCell>
                     <TableCell className="text-muted-foreground text-sm">{t.detail}</TableCell>
@@ -279,7 +329,114 @@ function RunPanel({ slug, wiringClean }: { slug: string; wiringClean: boolean })
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function RunHistory({
+  activeRunId,
+  onSelect,
+}: {
+  activeRunId: string | null
+  onSelect: (runId: string) => void
+}) {
+  const [search, setSearch] = useState("")
+  const [status, setStatus] = useState<(typeof RUN_STATUSES)[number]>("ALL")
+
+  const runs = useQuery({
+    queryKey: ["harness-runs", search, status],
+    queryFn: () => {
+      const params = new URLSearchParams()
+      if (search.trim()) params.set("q", search.trim())
+      if (status !== "ALL") params.set("status", status)
+      params.set("limit", "50")
+      return api.get<{ runs: HarnessRunSummary[] }>(`/api/harness/runs?${params}`)
+    },
+    // Refresh the list while anything is in flight.
+    refetchInterval: (q) =>
+      q.state.data?.runs.some((r) => r.status === "RUNNING") ? 30_000 : false,
+  })
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Run history</CardTitle>
+        <CardDescription>
+          Every harness run, newest first. Click a row for its full timeline — opening a
+          RUNNING run resumes its progress tracking.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <Input
+            className="max-w-xs"
+            placeholder="Search slug, identity, run id…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <Tabs value={status} onValueChange={(v) => setStatus(v as typeof status)}>
+            <TabsList>
+              {RUN_STATUSES.map((s) => (
+                <TabsTrigger key={s} value={s}>
+                  {s === "ALL" ? "All" : s.replace("_", " ")}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        </div>
+
+        {runs.isError && (
+          <Alert variant="destructive">
+            <AlertTitle>Could not load runs</AlertTitle>
+            <AlertDescription>{(runs.error as Error).message}</AlertDescription>
+          </Alert>
+        )}
+
+        {runs.data && runs.data.runs.length === 0 && (
+          <p className="text-muted-foreground text-sm">No runs match.</p>
+        )}
+
+        {runs.data && runs.data.runs.length > 0 && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Started (UTC)</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Slug</TableHead>
+                <TableHead>Identity</TableHead>
+                <TableHead>Stage</TableHead>
+                <TableHead>Detail</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {runs.data.runs.map((r) => (
+                <TableRow
+                  key={r.run_id}
+                  onClick={() => onSelect(r.run_id)}
+                  className={cn(
+                    "cursor-pointer",
+                    r.run_id === activeRunId && "bg-accent/50",
+                  )}
+                >
+                  <TableCell className="font-mono text-xs whitespace-nowrap">
+                    {r.started_at.slice(0, 19).replace("T", " ")}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={runStatusVariant[r.status]}>{r.status}</Badge>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">{r.slug}</TableCell>
+                  <TableCell className="font-mono text-xs">{r.identity}</TableCell>
+                  <TableCell className="whitespace-nowrap">{r.stage}</TableCell>
+                  <TableCell className="text-muted-foreground max-w-sm truncate text-sm">
+                    {r.detail ?? "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </CardContent>
     </Card>
