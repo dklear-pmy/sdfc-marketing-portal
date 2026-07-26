@@ -53,7 +53,7 @@ jobs:
             --region=us-west2 \
             --image="$IMAGE" \
             --service-account=marketing-portal-sa@sdfc-udp-dev.iam.gserviceaccount.com \
-            --set-env-vars="CORS_ORIGINS=https://marketing.sdfc.dev" \
+            --set-env-vars="CORS_ORIGINS=https://marketing.sdfc.dev,TICK_AUDIENCE=sdfc-marketing-portal-tick" \
             --min-instances=0 \
             --max-instances=2 \
             --memory=512Mi

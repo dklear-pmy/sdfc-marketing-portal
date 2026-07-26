@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-from . import bqstate, runner
-from .auth import Principal, require_role
+from . import admin, bqstate, runner
+from .auth import Principal, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
 from .validator import validate_slug
 
@@ -62,3 +63,42 @@ def harness_advance_run(run_id: str, principal: Principal = require_role("operat
         return runner.advance_run(run_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Unknown run")
+
+
+@app.post("/api/harness/runs/tick", dependencies=[Depends(require_scheduler_oidc)])
+def harness_tick() -> dict:
+    return runner.advance_all()
+
+
+class InviteRequest(BaseModel):
+    email: str
+    role: str
+
+
+class RoleRequest(BaseModel):
+    role: str | None
+
+
+@app.get("/api/admin/users")
+def admin_list_users(principal: Principal = require_role("admin")) -> dict:
+    return {"users": admin.list_portal_users()}
+
+
+@app.post("/api/admin/invites")
+def admin_invite(body: InviteRequest, principal: Principal = require_role("admin")) -> dict:
+    if "@" not in body.email or len(body.email) > 254:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    try:
+        return admin.invite(body.email.strip().lower(), body.role)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/api/admin/users/{uid}/role")
+def admin_set_role(uid: str, body: RoleRequest, principal: Principal = require_role("admin")) -> dict:
+    if principal.uid == uid and body.role != "admin":
+        raise HTTPException(status_code=400, detail="You cannot demote your own admin role")
+    try:
+        return admin.set_role(uid, body.role)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

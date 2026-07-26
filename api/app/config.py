@@ -21,6 +21,10 @@ CORS_ORIGINS = [
 # switched on in a deployed revision by a stray env var.
 AUTH_DISABLED = os.environ.get("DISABLE_AUTH") == "1" and os.environ.get("ENV") == "local"
 
+# Cloud Scheduler → tick endpoint OIDC contract.
+PORTAL_SA_EMAIL = "marketing-portal-sa@sdfc-udp-dev.iam.gserviceaccount.com"
+TICK_AUDIENCE = os.environ.get("TICK_AUDIENCE", "sdfc-marketing-portal-tick")
+
 _SLUG_REGISTRY_PATH = Path(__file__).parent.parent / "config" / "slugs.yaml"
 
 

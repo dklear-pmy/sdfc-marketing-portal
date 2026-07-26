@@ -226,6 +226,19 @@ def advance_run(run_id: str) -> dict:
     return run
 
 
+def advance_all() -> dict:
+    """Scheduler tick: advance every RUNNING run. Failures on one run don't
+    block the rest."""
+    results: dict[str, str] = {}
+    for run_id in bqstate.running_run_ids():
+        try:
+            run = advance_run(run_id)
+            results[run_id] = f"{run['status']}:{run['stage']}"
+        except Exception as e:  # noqa: BLE001 — tick must survive per-run failures
+            results[run_id] = f"ERROR:{e}"
+    return {"advanced": len(results), "runs": results}
+
+
 def main() -> None:
     import argparse
 

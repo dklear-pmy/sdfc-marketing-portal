@@ -12,6 +12,7 @@ const nav = [
 
 export default function AppLayout() {
   const { user, role, signOut } = useAuth()
+  const items = role === "admin" ? [...nav, { to: "/admin", label: "Admin" }] : nav
 
   return (
     <div className="min-h-svh">
@@ -19,7 +20,7 @@ export default function AppLayout() {
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-4">
           <span className="font-semibold tracking-tight">SDFC Marketing Ops</span>
           <nav className="flex items-center gap-1">
-            {nav.map((item) => (
+            {items.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}

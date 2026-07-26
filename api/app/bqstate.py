@@ -135,6 +135,13 @@ def list_runs(q: str | None = None, status: str | None = None, limit: int = 50) 
     return out
 
 
+def running_run_ids() -> list[str]:
+    rows = client().query(
+        f"SELECT run_id FROM `{_DATASET}.harness_runs` WHERE status = 'RUNNING' ORDER BY started_at"
+    ).result()
+    return [r.run_id for r in rows]
+
+
 def update_run(run_id: str, *, status: str, stage: str, timeline: list[dict], detail: str | None = None) -> None:
     q = f"""
     UPDATE `{_DATASET}.harness_runs`

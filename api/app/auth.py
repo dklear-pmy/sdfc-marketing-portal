@@ -11,7 +11,7 @@ import firebase_admin
 from fastapi import Depends, HTTPException, Request
 from firebase_admin import auth as fb_auth
 
-from .config import AUTH_DISABLED, GCP_PROJECT
+from .config import AUTH_DISABLED, GCP_PROJECT, PORTAL_SA_EMAIL, TICK_AUDIENCE
 
 Role = Literal["viewer", "operator", "admin"]
 _ROLE_RANK: dict[str, int] = {"viewer": 0, "operator": 1, "admin": 2}
@@ -31,6 +31,28 @@ class Principal:
         self.uid = uid
         self.email = email
         self.role = role
+
+
+async def require_scheduler_oidc(request: Request) -> None:
+    """Authorize the Cloud Scheduler tick: a Google-signed OIDC token minted for
+    the portal SA with our fixed audience. Not a Firebase token."""
+    if AUTH_DISABLED:
+        return
+    header = request.headers.get("Authorization", "")
+    if not header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = header.removeprefix("Bearer ")
+    try:
+        import google.auth.transport.requests
+        from google.oauth2 import id_token as google_id_token
+
+        payload = google_id_token.verify_oauth2_token(
+            token, google.auth.transport.requests.Request(), audience=TICK_AUDIENCE
+        )
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid OIDC token")
+    if not payload.get("email_verified") or payload.get("email") != PORTAL_SA_EMAIL:
+        raise HTTPException(status_code=403, detail="Wrong OIDC identity")
 
 
 def require_role(minimum: Role):

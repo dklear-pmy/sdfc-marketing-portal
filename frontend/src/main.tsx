@@ -8,6 +8,7 @@ import Login from "@/routes/Login"
 import Harness from "@/routes/Harness"
 import Customers from "@/routes/Customers"
 import Tripwires from "@/routes/Tripwires"
+import Admin from "@/routes/Admin"
 import "./index.css"
 
 const queryClient = new QueryClient({
@@ -30,6 +31,7 @@ const router = createBrowserRouter([
       { path: "harness", element: <Harness /> },
       { path: "customers", element: <Customers /> },
       { path: "tripwires", element: <Tripwires /> },
+      { path: "admin", element: <Admin /> },
     ],
   },
 ])

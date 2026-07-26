@@ -12,7 +12,7 @@ gcloud run deploy "${SERVICE}" \
   --region="${REGION}" \
   --source=. \
   --service-account="${SA}" \
-  --set-env-vars="CORS_ORIGINS=https://marketing.sdfc.dev" \
+  --set-env-vars="CORS_ORIGINS=https://marketing.sdfc.dev,TICK_AUDIENCE=sdfc-marketing-portal-tick" \
   --allow-unauthenticated \
   --min-instances=0 \
   --max-instances=2 \
