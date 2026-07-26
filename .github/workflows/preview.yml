@@ -50,7 +50,7 @@ jobs:
         id: deploy
         run: |
           npx firebase-tools@latest hosting:channel:deploy "pr-${{ github.event.pull_request.number }}" \
-            --project sdfc-udp-dev --expires 7d --json > channel.json
+            --project sdfc-udp-dev --site sdfc-marketing-portal --expires 7d --json > channel.json
           URL=$(jq -r '.result[].url // empty' channel.json | head -1)
           if [ -z "$URL" ]; then
             echo "Could not parse channel URL:" >&2
@@ -81,5 +81,8 @@ jobs:
 
       - name: Delete preview channel
         run: |
+          # --site is REQUIRED: without it firebase-tools targets the project's
+          # DEFAULT site (the scouting sandbox), not ours — found via a 404 on
+          # the first cleanup run.
           npx firebase-tools@latest hosting:channel:delete "pr-${{ github.event.pull_request.number }}" \
-            --project sdfc-udp-dev --force || true
+            --project sdfc-udp-dev --site sdfc-marketing-portal --force || true
