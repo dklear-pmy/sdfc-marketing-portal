@@ -203,3 +203,23 @@ gcloud scheduler jobs create http tripwire-daily-check \
   --oidc-service-account-email=marketing-portal-sa@sdfc-udp-dev.iam.gserviceaccount.com \
   --oidc-token-audience=sdfc-marketing-portal-tick
 ```
+
+## 7. Proactive alerting via Postmark (Phase 4b, executed 2026-07-26)
+
+Postmark server **"sdfc.dev"** (ID 20070642); server token stored as secret
+`postmark-marketing-token` (portal-sa: accessor granted). Alert sender
+`api/app/emailer.py` — best-effort by contract, a failed send can never break
+the tick that produced it. Hooks: tripwire check runs email on any FAIL;
+harness runs that go FAILED/TIMED_OUT on the *scheduler* tick email (manual
+advances don't — the operator is watching). Recipients default to
+dean.klear@pmygroup.com; override with `ALERT_EMAILS` (comma-separated — use
+`gcloud run deploy --set-env-vars="^|^ALERT_EMAILS=a@x,b@y"` delimiter form).
+
+DNS on sdfc.dev (via `cloudflare-dns-sdfc-dev` token): `pm-bounces` CNAME →
+pm.mtasv.net (Return-Path), apex TXT SPF `v=spf1 include:spf.mtasv.net ~all`,
+`_dmarc` TXT `v=DMARC1; p=none;` (tighten after DKIM verifies).
+
+**Pending — the one manual step:** add domain `sdfc.dev` in Postmark
+(Sender Signatures → Domains; account-scope, server tokens can't) and create
+its DKIM TXT record in Cloudflare. Until DKIM verifies, sends return
+"not a Sender Signature" and alerts report `sent: false`.

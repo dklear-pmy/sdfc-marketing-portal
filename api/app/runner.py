@@ -228,15 +228,33 @@ def advance_run(run_id: str) -> dict:
 
 def advance_all() -> dict:
     """Scheduler tick: advance every RUNNING run. Failures on one run don't
-    block the rest."""
+    block the rest. Runs that go terminal-bad while nobody is watching get a
+    proactive alert email (manual advances don't — the operator is looking)."""
+    from . import emailer
+
     results: dict[str, str] = {}
+    went_bad: list[dict] = []
     for run_id in bqstate.running_run_ids():
         try:
             run = advance_run(run_id)
             results[run_id] = f"{run['status']}:{run['stage']}"
+            if run["status"] in ("FAILED", "TIMED_OUT"):
+                went_bad.append(run)
         except Exception as e:  # noqa: BLE001 — tick must survive per-run failures
             results[run_id] = f"ERROR:{e}"
-    return {"advanced": len(results), "runs": results}
+
+    alert = None
+    if went_bad:
+        lines = "\n".join(
+            f"- {r['run_id']} ({r['slug']}, {r['identity']}): {r['status']} — {r.get('detail')}"
+            for r in went_bad
+        )
+        alert = emailer.send_alert(
+            subject=f"[Campaign Tester] {len(went_bad)} run{'s' if len(went_bad) > 1 else ''} failed unattended",
+            text_body=f"Runs that went terminal on the scheduler tick:\n\n{lines}\n\n"
+            "Details: https://marketing.sdfc.dev/harness",
+        )
+    return {"advanced": len(results), "runs": results, "alert": alert}
 
 
 def main() -> None:

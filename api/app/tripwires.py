@@ -26,7 +26,7 @@ import datetime as dt
 import requests
 from google.cloud import bigquery
 
-from . import mailpit
+from . import emailer, mailpit
 from .bqstate import client
 from .cio import CioClient
 from .config import GCP_PROJECT, slug_registry
@@ -275,7 +275,27 @@ def run_checks(source: str) -> dict:
     _record(results, source)
     failing = sum(1 for r in results if r["status"] == "FAIL")
     warning = sum(1 for r in results if r["status"] == "WARN")
-    return {"checked_at": _now().isoformat(), "checks": len(results), "fail": failing, "warn": warning, "results": results}
+
+    alert = None
+    if failing:
+        fails = [r for r in results if r["status"] == "FAIL"]
+        lines = "\n".join(f"- {r['email']} · {r['check_name']}: {r['detail']}" for r in fails)
+        alert = emailer.send_alert(
+            subject=f"[Tripwires] {failing} failing check{'s' if failing > 1 else ''}",
+            text_body=(
+                f"Tripwire check run ({source}) found {failing} FAIL / {warning} WARN:\n\n"
+                f"{lines}\n\nFull state: https://marketing.sdfc.dev/tripwires"
+            ),
+        )
+
+    return {
+        "checked_at": _now().isoformat(),
+        "checks": len(results),
+        "fail": failing,
+        "warn": warning,
+        "alert": alert,
+        "results": results,
+    }
 
 
 def _record(results: list[dict], source: str) -> None:
