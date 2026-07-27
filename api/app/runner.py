@@ -24,6 +24,11 @@ from .config import GCP_PROJECT, slug_registry
 
 EMAIL1_DEADLINE_MIN = 12  # CIO SMTP retries after a transient failure can land within ~10 min
 EMAIL2_DEADLINE_MIN = 30  # +10 min journey timer with generous tolerance
+# Soft deadlines only kill a run when CIO's delivery ledger shows nothing in
+# flight; when a send exists but hasn't delivered, the run waits up to the hard
+# cap instead (run 005: email 1 delivered at +21 min, after the timer email).
+EMAIL1_HARD_MIN = 35
+EMAIL2_HARD_MIN = 50
 
 
 def _now() -> datetime:
@@ -35,10 +40,45 @@ def _elapsed_min(run: dict) -> float:
     return (_now() - started).total_seconds() / 60
 
 
-def _tl(run: dict, stage: str, detail: str) -> list[dict]:
+def _tl(run: dict, stage: str, detail: str, msg_id: str | None = None) -> list[dict]:
     timeline = run["timeline"]
-    timeline.append({"ts": _now().isoformat(), "stage": stage, "detail": detail})
+    entry: dict = {"ts": _now().isoformat(), "stage": stage, "detail": detail}
+    if msg_id:
+        entry["msg_id"] = msg_id
+    timeline.append(entry)
     return timeline
+
+
+def _engaged_ids(run: dict) -> set[str]:
+    return {e["msg_id"] for e in run["timeline"] if e.get("msg_id")}
+
+
+def _transport_in_flight(cio: CioClient, identity: str) -> bool:
+    """True when CIO's delivery ledger has a message for this recipient that
+    hasn't recorded delivery yet — the send exists, transport is still working."""
+    try:
+        ledger = cio.messages_for_recipient(identity)
+    except requests.RequestException:
+        return False
+    return any(not (m.get("metrics") or {}).get("delivered") for m in ledger)
+
+
+def _hold_for_transport(run_id: str, run: dict, stage: str, hard_min: int) -> None:
+    """Note (once) that the run is past its soft deadline but a send is in
+    flight; the run stays RUNNING until delivery or the hard cap."""
+    if run["timeline"] and run["timeline"][-1].get("stage") == "transport_wait":
+        return
+    bqstate.update_run(
+        run_id,
+        status="RUNNING",
+        stage=stage,
+        timeline=_tl(
+            run,
+            "transport_wait",
+            f"past the {stage} soft deadline but CIO's ledger shows a send still in "
+            f"flight — waiting up to {hard_min} min",
+        ),
+    )
 
 
 def _webhook_url(spec: dict) -> str:
@@ -142,53 +182,59 @@ def advance_run(run_id: str) -> dict:
     stage = run["stage"]
     messages = mailpit.search_to(identity)
     messages.sort(key=lambda m: m.get("Created", ""))
+    # Journey emails can arrive out of order (run 005: the +10-min timer email
+    # delivered before email 1's delayed SMTP retry). Engage deliveries in
+    # arrival order, tracking which sink messages this run already engaged.
+    pending = [m for m in messages if m["ID"] not in _engaged_ids(run)]
+
+    def _engage_next(next_stage: str, ordinal: int) -> None:
+        msg = pending[0]
+        raw = mailpit.raw_message(msg["ID"])
+        result = mailpit.engage(raw, open_pixel=True, click_first=True)
+        bqstate.update_run(
+            run_id,
+            status="RUNNING",
+            stage=next_stage,
+            timeline=_tl(
+                run,
+                next_stage,
+                f"delivery {ordinal} '{msg.get('Subject')}' arrived {msg.get('Created')}; engaged {result}",
+                msg_id=msg["ID"],
+            ),
+        )
 
     if stage == "fired":
-        if messages:
-            msg = messages[0]
-            raw = mailpit.raw_message(msg["ID"])
-            result = mailpit.engage(raw, open_pixel=True, click_first=True)
-            bqstate.update_run(
-                run_id,
-                status="RUNNING",
-                stage="email1_engaged",
-                timeline=_tl(
-                    run,
-                    "email1_engaged",
-                    f"email 1 '{msg.get('Subject')}' delivered {msg.get('Created')}; engaged {result}",
-                ),
-            )
+        if pending:
+            _engage_next("email1_engaged", 1)
         elif _elapsed_min(run) > EMAIL1_DEADLINE_MIN:
-            diagnosis = _diagnose_missing_email(cio, spec, identity)
-            bqstate.update_run(
-                run_id,
-                status="TIMED_OUT",
-                stage="fired",
-                timeline=_tl(run, "timeout", diagnosis),
-                detail=diagnosis,
-            )
+            if _elapsed_min(run) <= EMAIL1_HARD_MIN and _transport_in_flight(cio, identity):
+                _hold_for_transport(run_id, run, stage, EMAIL1_HARD_MIN)
+            else:
+                diagnosis = _diagnose_missing_email(cio, spec, identity)
+                if _elapsed_min(run) > EMAIL1_HARD_MIN:
+                    diagnosis = f"hard cap {EMAIL1_HARD_MIN} min reached: {diagnosis}"
+                bqstate.update_run(
+                    run_id,
+                    status="TIMED_OUT",
+                    stage="fired",
+                    timeline=_tl(run, "timeout", diagnosis),
+                    detail=diagnosis,
+                )
         return bqstate.get_run(run_id)
 
     if stage == "email1_engaged":
-        if len(messages) >= 2:
-            msg = messages[1]
-            raw = mailpit.raw_message(msg["ID"])
-            result = mailpit.engage(raw, open_pixel=True, click_first=True)
-            bqstate.update_run(
-                run_id,
-                status="RUNNING",
-                stage="email2_engaged",
-                timeline=_tl(
-                    run,
-                    "email2_engaged",
-                    f"email 2 '{msg.get('Subject')}' delivered {msg.get('Created')}; engaged {result}",
-                ),
-            )
+        if pending:
+            _engage_next("email2_engaged", 2)
         elif _elapsed_min(run) > EMAIL2_DEADLINE_MIN:
-            detail = "email 2 never arrived — journey timer/branch misconfigured?"
-            bqstate.update_run(
-                run_id, status="TIMED_OUT", stage=stage, timeline=_tl(run, "timeout", detail), detail=detail
-            )
+            if _elapsed_min(run) <= EMAIL2_HARD_MIN and _transport_in_flight(cio, identity):
+                _hold_for_transport(run_id, run, stage, EMAIL2_HARD_MIN)
+            else:
+                detail = "second delivery never arrived — journey timer/branch misconfigured?"
+                if _elapsed_min(run) > EMAIL2_HARD_MIN:
+                    detail = f"hard cap {EMAIL2_HARD_MIN} min reached: {detail}"
+                bqstate.update_run(
+                    run_id, status="TIMED_OUT", stage=stage, timeline=_tl(run, "timeout", detail), detail=detail
+                )
         return bqstate.get_run(run_id)
 
     if stage == "email2_engaged":
