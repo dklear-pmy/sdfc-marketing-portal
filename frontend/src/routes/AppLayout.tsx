@@ -217,7 +217,9 @@ export default function AppLayout() {
         </aside>
 
         <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-6xl px-4 py-8 md:px-8">
+          {/* Left-aligned rather than centred, and wide enough for the run /
+              fan / ledger tables to breathe on a large display. */}
+          <div className="w-full max-w-[1600px] px-4 py-8 md:px-8">
             <Outlet />
           </div>
         </main>
