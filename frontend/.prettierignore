@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+public
+package-lock.json
+*.lock
+
+# Generated, not source. snapdragon_sections.json is built by build_stadium.py
+# in PMY-Group/sdfc-stadium-map and copied in verbatim — reformatting it here
+# would make every re-copy show a spurious diff.
+src/assets/*.json
