@@ -207,6 +207,39 @@ export interface FanLedgerPage {
   has_more: boolean
 }
 
+export interface LedgerEventRow extends LedgerEvent {
+  customer: string
+}
+
+export interface LedgerEventsPage {
+  events: LedgerEventRow[]
+  total: number
+  limit: number
+  offset: number
+  activities: string[]
+  sources: string[]
+}
+
+export interface LedgerStatusRow {
+  email: string
+  status_domain: string
+  status: string
+  status_since: string | null
+  latched: boolean
+  authority: string | null
+  last_event_at: string | null
+  updated_at: string | null
+}
+
+export interface LedgerStatusesPage {
+  statuses: LedgerStatusRow[]
+  total: number
+  limit: number
+  offset: number
+  domains: string[]
+  status_values: string[]
+}
+
 export type TripwireStatus = "PASS" | "WARN" | "FAIL"
 
 export interface TripwireCheckRow {

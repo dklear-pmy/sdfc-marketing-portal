@@ -1,4 +1,5 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { useSearchParams } from "react-router"
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query"
 import {
   createColumnHelper,
@@ -44,6 +45,16 @@ import { cn } from "@/lib/utils"
 export default function Fans() {
   const [email, setEmail] = useState("")
   const [submitted, setSubmitted] = useState<string | null>(null)
+  const [searchParams] = useSearchParams()
+
+  // Deep link from the Fan Ledger (and anywhere else): /fans?email=…
+  useEffect(() => {
+    const em = searchParams.get("email")
+    if (em) {
+      setEmail(em)
+      setSubmitted(em.trim().toLowerCase())
+    }
+  }, [searchParams])
 
   const lookup = useQuery<CustomerLookup>({
     queryKey: ["customer-lookup", submitted],
@@ -138,9 +149,9 @@ function LookupResult({ data }: { data: CustomerLookup }) {
         <SyncCard data={data} />
         <SnapshotCard row={warehouse.row} />
       </div>
+      <LedgerCard email={data.email} />
       {sync.comparison.length > 0 && <AttributesCard comparison={sync.comparison} />}
       {cio.found && cio.cio_id && <ActivityCard cioId={cio.cio_id} />}
-      <LedgerCard email={data.email} />
     </>
   )
 }

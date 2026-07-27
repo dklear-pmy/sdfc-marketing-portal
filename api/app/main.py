@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import admin, bqstate, customers, runner, tripwires
+from . import admin, bqstate, customers, ledger, runner, tripwires
 from .auth import Principal, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
 from .validator import validate_slug
@@ -89,6 +89,45 @@ def customers_lookup(email: str, principal: Principal = require_role("viewer")) 
         return customers.lookup(_valid_email(email))
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=f"Customer.io API error: {e}")
+
+
+@app.get("/api/ledger/events")
+def ledger_events(
+    q: str | None = None,
+    activity: str | None = None,
+    source: str | None = None,
+    window: str = "7d",
+    include_echo: bool = False,
+    limit: int = 20,
+    offset: int = 0,
+    principal: Principal = require_role("viewer"),
+) -> dict:
+    if window not in ledger.WINDOWS:
+        raise HTTPException(status_code=400, detail=f"window must be one of {list(ledger.WINDOWS)}")
+    if q and len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search too long")
+    return ledger.events_page(
+        q, activity, source, window=window, include_echo=include_echo,
+        limit=max(1, min(limit, 100)), offset=max(0, min(offset, 100_000)),
+    )
+
+
+@app.get("/api/ledger/statuses")
+def ledger_statuses(
+    q: str | None = None,
+    domain: str | None = None,
+    status: str | None = None,
+    latched_only: bool = False,
+    limit: int = 20,
+    offset: int = 0,
+    principal: Principal = require_role("viewer"),
+) -> dict:
+    if q and len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search too long")
+    return ledger.statuses_page(
+        q, domain, status, latched_only=latched_only,
+        limit=max(1, min(limit, 100)), offset=max(0, min(offset, 100_000)),
+    )
 
 
 @app.get("/api/customers/ledger")

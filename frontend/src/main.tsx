@@ -7,6 +7,7 @@ import AppLayout from "@/routes/AppLayout"
 import Login from "@/routes/Login"
 import Harness from "@/routes/Harness"
 import Fans from "@/routes/Fans"
+import FanLedger from "@/routes/FanLedger"
 import Tripwires from "@/routes/Tripwires"
 import Admin from "@/routes/Admin"
 import "./index.css"
@@ -30,6 +31,7 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="/harness" replace /> },
       { path: "harness", element: <Harness /> },
       { path: "fans", element: <Fans /> },
+      { path: "ledger", element: <FanLedger /> },
       { path: "customers", element: <Navigate to="/fans" replace /> },
       { path: "tripwires", element: <Tripwires /> },
       { path: "admin", element: <Admin /> },
