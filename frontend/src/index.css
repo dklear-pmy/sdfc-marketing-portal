@@ -162,3 +162,30 @@
     letter-spacing: 0.01em;
     }
 }
+
+/* Stadium heatmap section labels (HTML markers — no glyph server needed). */
+.stadium-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #1a1a19;
+  text-shadow:
+    0 0 3px rgba(252, 252, 251, 0.9),
+    0 0 6px rgba(252, 252, 251, 0.7);
+  user-select: none;
+}
+.dark .stadium-section-label {
+  color: #e8ecf0;
+  text-shadow:
+    0 0 3px rgba(6, 23, 41, 0.95),
+    0 0 6px rgba(6, 23, 41, 0.8);
+}
+.stadium-section-label {
+  text-align: center;
+  line-height: 1.1;
+}
+.stadium-section-label .pct {
+  font-size: 9px;
+  font-weight: 500;
+  opacity: 0.85;
+}

@@ -278,6 +278,43 @@ export interface TripwireHistoryRow {
   source: string | null
 }
 
+export interface StadiumEventRow {
+  event_name: string
+  event_date: string | null
+  sections: number
+  sold: number | null
+  occupied: number | null
+  scanned: number | null
+  total_seats: number | null
+  pct_sold: number | null
+  pct_occupied: number | null
+}
+
+export interface StadiumEventsResponse {
+  events: StadiumEventRow[]
+  next_event: string | null
+  generated_at: string
+}
+
+export interface StadiumSectionHeat {
+  section: string
+  data_code: string
+  category: string
+  sold: number | null
+  occupied: number | null
+  scanned: number | null
+  total_seats: number | null
+  pct_sold: number | null
+  cx: number | null
+  cy: number | null
+}
+
+export interface StadiumHeatResponse {
+  event: string
+  sections: StadiumSectionHeat[]
+  generated_at: string
+}
+
 export interface HarnessRun {
   run_id: string
   slug: string

@@ -5,6 +5,11 @@ import tailwindcss from "@tailwindcss/vite"
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // MapLibre spawns its worker via `new Worker(new URL(...))`; Vite's dep
+  // pre-bundling breaks that resolution in dev, so leave it unbundled.
+  optimizeDeps: {
+    exclude: ["maplibre-gl"],
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

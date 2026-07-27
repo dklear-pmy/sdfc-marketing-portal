@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import admin, bqstate, customers, emailer, ledger, runner, tripwires
+from . import admin, bqstate, customers, emailer, ledger, runner, stadium, tripwires
 from .auth import Principal, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
 from .validator import validate_slug
@@ -74,6 +74,22 @@ def harness_tick() -> dict:
 
 
 _CIO_ID_RE = re.compile(r"[A-Za-z0-9_=-]{4,64}")
+_EVENT_RE = re.compile(r"[A-Za-z0-9 /&'.-]{1,60}")
+
+
+@app.get("/api/stadium-heat/events")
+def stadium_events(principal: Principal = require_role("viewer")) -> dict:
+    return stadium.events()
+
+
+@app.get("/api/stadium-heat")
+def stadium_heat(event: str = "next", principal: Principal = require_role("viewer")) -> dict:
+    if not _EVENT_RE.fullmatch(event):
+        raise HTTPException(status_code=400, detail="Invalid event name")
+    try:
+        return stadium.heat(event)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 def _valid_email(email: str) -> str:

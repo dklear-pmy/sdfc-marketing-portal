@@ -1,4 +1,4 @@
-import { StrictMode } from "react"
+import { lazy, StrictMode, Suspense } from "react"
 import { createRoot } from "react-dom/client"
 import { createBrowserRouter, RouterProvider, Navigate } from "react-router"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -9,6 +9,9 @@ import Harness from "@/routes/Harness"
 import Fans from "@/routes/Fans"
 import FanLedger from "@/routes/FanLedger"
 import Tripwires from "@/routes/Tripwires"
+
+// Stadium pulls in MapLibre GL (~250 KB gzip) — split it out of the main bundle.
+const Stadium = lazy(() => import("@/routes/Stadium"))
 import Admin from "@/routes/Admin"
 import "./index.css"
 
@@ -33,6 +36,14 @@ const router = createBrowserRouter([
       { path: "fans", element: <Fans /> },
       { path: "ledger", element: <FanLedger /> },
       { path: "customers", element: <Navigate to="/fans" replace /> },
+      {
+        path: "stadium",
+        element: (
+          <Suspense fallback={null}>
+            <Stadium />
+          </Suspense>
+        ),
+      },
       { path: "tripwires", element: <Tripwires /> },
       { path: "admin", element: <Admin /> },
     ],
