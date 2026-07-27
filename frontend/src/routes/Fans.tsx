@@ -74,8 +74,9 @@ export default function Fans() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Fans</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Look up a fan by email — live Customer.io profile, warehouse attributes and the activity
-          ledger — or browse the latest active fans below.
+          Everything we know about a fan in one place — their live Customer.io profile, our
+          warehouse data and their full history. Look one up by email, or browse the most
+          recently active fans below.
         </p>
       </div>
 
@@ -236,7 +237,7 @@ function SyncCard({ data }: { data: CustomerLookup }) {
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Sync status</CardTitle>
-        <CardDescription>Warehouse → Customer.io reverse ETL</CardDescription>
+        <CardDescription>Is this fan's data reaching Customer.io correctly?</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2">
         <div className="flex flex-wrap gap-1.5">
@@ -257,8 +258,8 @@ function SyncCard({ data }: { data: CustomerLookup }) {
         )}
         {!warehouse.found && (
           <p className="text-muted-foreground text-sm">
-            No fan_attributes row — profiles created directly in Customer.io (imports, harness
-            identities, trigger webhooks) appear in the warehouse after the next spine rebuild.
+            Not in the warehouse yet — fans created directly in Customer.io (imports, test
+            identities, signup webhooks) are picked up by the next hourly refresh.
           </p>
         )}
         {warehouse.updated_at && (
@@ -333,7 +334,7 @@ function SnapshotCard({ row }: { row: Record<string, unknown> | null }) {
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Fan snapshot</CardTitle>
-        <CardDescription>From warehouse fan_attributes</CardDescription>
+        <CardDescription>Who this fan is to the club — tickets, attendance and spend.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2">
         {present.length === 0 && (
@@ -472,7 +473,8 @@ function AttributesCard({ comparison }: { comparison: AttrComparison[] }) {
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Attributes</CardTitle>
         <CardDescription>
-          Sync payload vs the live Customer.io profile, per attribute.
+          What we send to Customer.io vs what their profile actually shows — differences here
+          mean campaigns could target this fan with wrong or stale data.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
@@ -654,7 +656,9 @@ function ActivityCard({ cioId }: { cioId: string }) {
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Activity</CardTitle>
-        <CardDescription>Live from Customer.io, newest first.</CardDescription>
+        <CardDescription>
+          What Customer.io has done with this fan — messages, opens, clicks — live, newest first.
+        </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
         <Tabs value={tab} onValueChange={(v) => setTab(v as "timeline" | "messages")}>
@@ -802,8 +806,8 @@ function FanList({ onSelect }: { onSelect: (email: string) => void }) {
           <div>
             <CardTitle className="text-base">Latest active fans</CardTitle>
             <CardDescription>
-              Subscribed fans, most recent attribute change first. Click a row for the full
-              profile.
+              Subscribed fans whose data changed most recently — new signups, purchases,
+              attendance. Click a row for the full profile.
             </CardDescription>
           </div>
           <form onSubmit={onSearch} className="flex items-center gap-2">
@@ -955,8 +959,8 @@ function LedgerCard({ email }: { email: string }) {
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Activity ledger</CardTitle>
         <CardDescription>
-          Warehouse source of truth — status domains and the cross-source event stream
-          (materialized hourly).
+          The audited source of truth for this fan — current statuses and their history across
+          every system, refreshed hourly.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">

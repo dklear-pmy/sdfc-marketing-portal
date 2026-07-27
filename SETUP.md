@@ -199,12 +199,13 @@ already dataset WRITER — **no new IAM for Phase 4**). Seeded tripwires:
 webhook. Tripwire emails MUST be @qa.sdfc.dev — the sink rejects other
 recipient domains at RCPT.
 
-Daily check schedule (same OIDC contract as the harness tick):
+Hourly check schedule (same OIDC contract as the harness tick; bumped from
+daily 2026-07-27 so the "checked every hour" product copy is literally true):
 
 ```bash
 gcloud scheduler jobs create http tripwire-daily-check \
   --project=sdfc-udp-dev --location=us-west2 \
-  --schedule="0 14 * * *" \
+  --schedule="0 * * * *" \
   --uri="https://marketing-portal-api-133738605371.us-west2.run.app/api/tripwires/tick" \
   --http-method=POST \
   --oidc-service-account-email=marketing-portal-sa@sdfc-udp-dev.iam.gserviceaccount.com \

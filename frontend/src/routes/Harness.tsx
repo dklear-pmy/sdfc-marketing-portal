@@ -84,7 +84,8 @@ export default function Harness() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Campaign Tester</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Validate a campaign's CIO wiring, then run it end-to-end against the mail sink.
+          Prove a campaign works before any fan sees it — check its setup, then send a real
+          end-to-end test to a safe test inbox.
         </p>
       </div>
 
@@ -92,8 +93,9 @@ export default function Harness() {
         <CardHeader>
           <CardTitle>Validate wiring</CardTitle>
           <CardDescription>
-            Enter the campaign slug as it appears in the CIO campaign names, e.g.{" "}
-            <code className="bg-muted rounded px-1 py-0.5">Welcome-General-260715</code>
+            Enter the campaign's name code as it appears in Customer.io, e.g.{" "}
+            <code className="bg-muted rounded px-1 py-0.5">Welcome-General-260715</code>. This
+            confirms the test and live versions are wired identically before anything is sent.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -234,9 +236,10 @@ function StartRunCard({
       <CardHeader>
         <CardTitle>Run test campaign</CardTitle>
         <CardDescription>
-          Fires the PMY-TEST pair with a fresh scenario identity, then tracks delivery and
-          engagement through the mail sink. Emails 1–2 verify in ~15 minutes; later journey
-          emails ride long timers and are not awaited.
+          Sends the campaign's test twin to a brand-new test identity and follows it end to end —
+          delivery, opens and clicks — without touching a single real fan. The first two emails
+          verify in about 15 minutes; emails on multi-day timers arrive later in the test inbox
+          and aren't awaited.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">

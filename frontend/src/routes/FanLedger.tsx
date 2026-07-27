@@ -120,8 +120,9 @@ export default function FanLedger() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Fan Ledger</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            The warehouse source of truth — cross-source event stream and per-fan status domains.
-            Click a fan to open their full profile.
+            The audited record behind every fan-facing decision — what happened across all our
+            systems (Events) and where each fan stands today (Statuses). Click any row to open
+            the fan's full profile.
           </p>
         </div>
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
@@ -373,8 +374,9 @@ function StatusesTab() {
           </label>
         </div>
         <CardDescription className="mt-2">
-          One row per fan and status domain — the latch means the value is write-once outward and
-          cannot be overwritten by upstream syncs.
+          Each fan's current standing, one row per area (email subscription today; tickets and
+          engagement to follow). “Latched” marks protected statuses — like opt-outs — that no
+          automated sync is allowed to overwrite.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">

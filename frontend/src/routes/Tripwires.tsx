@@ -102,8 +102,10 @@ export default function Tripwires() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Tripwire Accounts</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Persistent sink-backed profiles asserted daily: profile integrity, subscription state,
-            transport, sink arrival and workspace lint.
+            Fan-like accounts planted inside our real campaign audiences, checked automatically
+            every hour to catch problems before fans do — broken profiles, wrongful
+            unsubscribes, emails that stop delivering, and test campaigns leaking into real
+            audiences.
           </p>
         </div>
         {canOperate && (
@@ -163,7 +165,8 @@ export default function Tripwires() {
                   {overallBadge(data.workspace.overall)}
                 </div>
                 <CardDescription>
-                  Workspace-wide assertions, independent of any tripwire account.
+                  Checks on the Customer.io workspace itself — currently: no live campaign can
+                  ever fire on a test-only trigger.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-2">
@@ -248,8 +251,8 @@ function AddTripwireCard() {
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Add tripwire</CardTitle>
         <CardDescription>
-          Must be @qa.sdfc.dev (the sink only accepts that domain). Provisioning creates the CIO
-          profile through the test welcome webhook.
+          New tripwires need a @qa.sdfc.dev address so their mail lands in our test inbox.
+          Provisioning signs them up like a real fan through the test welcome flow.
         </CardDescription>
       </CardHeader>
       <CardContent>
