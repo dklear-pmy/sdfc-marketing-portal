@@ -63,6 +63,204 @@ const transformed: FeatureCollection = (() => {
   } as unknown as FeatureCollection
 })()
 
+/* Soccer pitch overlay, sized off the section lines themselves: this is the
+   largest 105:68 rounded rectangle that fits the bowl's interior, found by
+   binary-searching the fit against the section polygons. It comes out flush
+   against the west sideline stands (116–119) on the left and against the
+   bottom edge of the PITCH 1 / PITCH 2 field boxes (y = 5104) on top — the
+   "Home/Visitor Pitch Boxes" of the Ticketmaster map. Rounded corners follow
+   the bowl's curve and buy ~4% over a hard-cornered rectangle. */
+const FIELD_CX = 5035
+const FIELD_CY = 3765
+const FIELD_HW = 2058
+const FIELD_HH = 1332
+const FIELD_R = 333
+
+/* Page units per meter for the markings. The marked pitch is inset inside the
+   grass to leave run-off: ~4.7 m behind each goal, ~3.0 m past each touchline. */
+const PITCH_M = 36
+const PITCH_CX = FIELD_CX
+const PITCH_CY = FIELD_CY
+
+const GRASS_LIGHT = "#2e9d4c"
+const GRASS_DARK = "#1f6f3a"
+const PITCH_LINE_LIGHT = "#fcfcfb"
+const PITCH_LINE_DARK = "#d7e2e8"
+
+const pitchPoint = ([mx, my]: number[]): [number, number] =>
+  toLngLat([PITCH_CX + mx * PITCH_M, PITCH_CY + my * PITCH_M]) as [number, number]
+
+/* The grass is built in page units (it is sized off the sections, not off the
+   pitch's metric grid), unlike the markings below which are laid out in meters
+   about the pitch centre. */
+function roundedField(): [number, number][] {
+  const sw = FIELD_HW - FIELD_R
+  const sh = FIELD_HH - FIELD_R
+  const corners: [number, number, number][] = [
+    [FIELD_CX + sw, FIELD_CY + sh, 0],
+    [FIELD_CX - sw, FIELD_CY + sh, Math.PI / 2],
+    [FIELD_CX - sw, FIELD_CY - sh, Math.PI],
+    [FIELD_CX + sw, FIELD_CY - sh, Math.PI * 1.5],
+  ]
+  const pts: [number, number][] = []
+  for (const [ox, oy, a0] of corners) {
+    for (let i = 0; i <= 14; i++) {
+      const a = a0 + (Math.PI / 2) * (i / 14)
+      pts.push(
+        toLngLat([ox + FIELD_R * Math.cos(a), oy + FIELD_R * Math.sin(a)]) as [number, number],
+      )
+    }
+  }
+  pts.push(pts[0])
+  return pts
+}
+
+const PITCH = (() => {
+  const arc = (cx: number, cy: number, r: number, a0: number, a1: number, n = 48) =>
+    Array.from({ length: n + 1 }, (_, i) => {
+      const a = a0 + ((a1 - a0) * i) / n
+      return [cx + r * Math.cos(a), cy + r * Math.sin(a)]
+    })
+  const rect = (x1: number, y1: number, x2: number, y2: number) => [
+    [x1, y1],
+    [x2, y1],
+    [x2, y2],
+    [x1, y2],
+    [x1, y1],
+  ]
+  // Penalty arc meets the area edge where cos(a) = (16.5 − 11) / 9.15
+  const A = Math.acos(5.5 / 9.15)
+  const lines: number[][][] = [
+    rect(-52.5, -34, 52.5, 34), // touchlines + goal lines
+    [
+      [0, -34],
+      [0, 34],
+    ], // halfway line
+    arc(0, 0, 9.15, 0, Math.PI * 2, 72), // center circle
+    [
+      [-52.5, -20.16],
+      [-36, -20.16],
+      [-36, 20.16],
+      [-52.5, 20.16],
+    ], // penalty areas
+    [
+      [52.5, -20.16],
+      [36, -20.16],
+      [36, 20.16],
+      [52.5, 20.16],
+    ],
+    [
+      [-52.5, -9.16],
+      [-47, -9.16],
+      [-47, 9.16],
+      [-52.5, 9.16],
+    ], // goal areas
+    [
+      [52.5, -9.16],
+      [47, -9.16],
+      [47, 9.16],
+      [52.5, 9.16],
+    ],
+    arc(-41.5, 0, 9.15, -A, A), // penalty arcs
+    arc(41.5, 0, 9.15, Math.PI - A, Math.PI + A),
+    arc(-52.5, -34, 1, 0, Math.PI / 2, 8), // corner arcs
+    arc(52.5, -34, 1, Math.PI / 2, Math.PI, 8),
+    arc(52.5, 34, 1, Math.PI, Math.PI * 1.5, 8),
+    arc(-52.5, 34, 1, Math.PI * 1.5, Math.PI * 2, 8),
+    rect(-54.4, -3.66, -52.5, 3.66), // goal frames
+    rect(52.5, -3.66, 54.4, 3.66),
+  ]
+  const feature = (geometry: object) => ({
+    type: "Feature",
+    properties: {},
+    geometry,
+  })
+  const fc = (features: object[]) =>
+    ({ type: "FeatureCollection", features }) as unknown as FeatureCollection
+  return {
+    grass: fc([feature({ type: "Polygon", coordinates: [roundedField()] })]),
+    lines: fc(lines.map((c) => feature({ type: "LineString", coordinates: c.map(pitchPoint) }))),
+    spots: fc(
+      [
+        [0, 0],
+        [-41.5, 0],
+        [41.5, 0],
+      ].map((p) => feature({ type: "Point", coordinates: pitchPoint(p) })),
+    ),
+    tags: [
+      { lngLat: pitchPoint([-22, 0]), label: "HOME", cls: "home" },
+      { lngLat: pitchPoint([22, 0]), label: "VISITOR", cls: "visitor" },
+    ],
+  }
+})()
+
+function collectRings(c: CoordTree, out: number[][][]): void {
+  if (Array.isArray(c[0]) && typeof (c[0] as number[])[0] === "number") {
+    out.push(c as number[][])
+    return
+  }
+  for (const k of c as CoordTree[]) collectRings(k, out)
+}
+
+/* Point on each section's top edge, horizontally centred on the widest span
+   just below it — taking a span rather than the topmost vertex keeps the label
+   off sloped corners. The code label anchors here: MapLibre hangs it below the
+   edge (inside the section) when that position is free, and flips it above when
+   the metric or a neighbour is in the way. */
+const TOP_ANCHORS: Record<string, [number, number]> = (() => {
+  const out: Record<string, [number, number]> = {}
+  const src = sectionsRaw as unknown as { features: SectionFeature[] }
+  for (const f of src.features) {
+    const rings: number[][][] = []
+    collectRings(f.geometry.coordinates as unknown as CoordTree, rings)
+    let yTop = -Infinity
+    let yBot = Infinity
+    for (const r of rings) {
+      for (const [, y] of r) {
+        if (y > yTop) yTop = y
+        if (y < yBot) yBot = y
+      }
+    }
+    if (!Number.isFinite(yTop)) continue
+    const scan = yTop - Math.max(8, (yTop - yBot) * 0.14)
+    const xs: number[] = []
+    for (const r of rings) {
+      for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+        const [xi, yi] = r[i]
+        const [xj, yj] = r[j]
+        if (yi > scan !== yj > scan) xs.push(xi + ((scan - yi) / (yj - yi)) * (xj - xi))
+      }
+    }
+    xs.sort((a, b) => a - b)
+    let widest = 0
+    let mid = 0
+    for (let i = 0; i + 1 < xs.length; i += 2) {
+      const w = xs[i + 1] - xs[i]
+      if (w > widest) {
+        widest = w
+        mid = (xs[i] + xs[i + 1]) / 2
+      }
+    }
+    if (widest <= 0) continue
+    /* Anchor on the top edge *at that x*, not the polygon's highest point —
+       on a slanted section like 323 those differ by most of its height, and
+       using the global max would float the chip off the section. */
+    const ys: number[] = []
+    for (const r of rings) {
+      for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+        const [xi, yi] = r[i]
+        const [xj, yj] = r[j]
+        if (xi > mid !== xj > mid) ys.push(yi + ((mid - xi) / (xj - xi)) * (yj - yi))
+      }
+    }
+    out[f.properties.section] = toLngLat([mid, ys.length ? Math.max(...ys) : yTop]) as [
+      number,
+      number,
+    ]
+  }
+  return out
+})()
+
 /* Sequential single-hue ramps, generated in OKLCH (hue 45, monotone lightness)
    and validated with the dataviz palette checker: monotone L, ΔL ≥ 0.06/step,
    endpoint ≥ 2:1 against each mode's surface. Dark mode flips the anchor:
@@ -145,21 +343,75 @@ interface Props {
   heat: StadiumSectionHeat[]
   /** Normalized 0..1 value per section name; null/absent = no data (grey). */
   values: Record<string, number | null>
+  /** Second label line for a section, spelling out the active metric
+      (e.g. "39% SOLD"). Return null to show the section code alone. */
+  labelFor?: (r: StadiumSectionHeat) => string | null
   onHover?: (info: HoverInfo | null) => void
 }
 
-interface LabelEntry {
-  marker: maplibregl.Marker
-  lngLat: [number, number]
-  seats: number
-  width: number
-  height: number
+/* Labels grow with zoom, reaching the 24px cap at max zoom. Growing slower
+   than the geometry means labels keep revealing as you zoom in rather than
+   freezing at whatever fit at the default view. */
+const LABEL_MIN_PX = 15
+const LABEL_MAX_PX = 24
+const LABEL_ZOOM_SPAN = 4
+/** The metric reads as secondary at a slightly smaller size. */
+const METRIC_SCALE = 0.88
+
+/* No `glyphs` URL is set on the style, so MapLibre treats text-font as a
+   cascading list of local font names and rasterises glyphs itself — symbol
+   layers with no glyph server and no font assets to ship. */
+const LABEL_FONT = ["Inter Variable", "Inter", "Helvetica Neue", "Arial"]
+
+const CHIP_LIGHT = "chip-light"
+const CHIP_DARK = "chip-dark"
+
+/* The chip behind a label: a rounded rect drawn once and registered as a
+   stretchable image, so `icon-text-fit` grows it around whatever text it
+   carries. Corners sit outside the stretch bands so they never distort. */
+const CHIP_PX = 32
+const CHIP_IMAGE_OPTIONS = {
+  pixelRatio: 2,
+  stretchX: [[14, 18]] as [number, number][],
+  stretchY: [[14, 18]] as [number, number][],
+  content: [8, 6, 24, 26] as [number, number, number, number],
 }
 
-export default function StadiumHeatmap({ heat, values, onHover }: Props) {
+function chipImage(fill: string, stroke: string): ImageData {
+  const canvas = document.createElement("canvas")
+  canvas.width = CHIP_PX
+  canvas.height = CHIP_PX
+  const ctx = canvas.getContext("2d")!
+  const lw = 2
+  const r = 8
+  const a = lw / 2
+  const b = CHIP_PX - lw / 2
+  ctx.beginPath()
+  ctx.moveTo(a + r, a)
+  ctx.arcTo(b, a, b, b, r)
+  ctx.arcTo(b, b, a, b, r)
+  ctx.arcTo(a, b, a, a, r)
+  ctx.arcTo(a, a, b, a, r)
+  ctx.closePath()
+  ctx.fillStyle = fill
+  ctx.fill()
+  ctx.lineWidth = lw
+  ctx.strokeStyle = stroke
+  ctx.stroke()
+  return ctx.getImageData(0, 0, CHIP_PX, CHIP_PX)
+}
+
+const CHIP_FILL_LIGHT = "#fcfcfb"
+const CHIP_STROKE_LIGHT = "#c9d1d8"
+const CHIP_FILL_DARK = "#0b2341"
+const CHIP_STROKE_DARK = "#35506e"
+const LABEL_TEXT_LIGHT = "#1a1a19"
+const LABEL_TEXT_DARK = "#e8ecf0"
+
+export default function StadiumHeatmap({ heat, values, labelFor, onHover }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<maplibregl.Map | null>(null)
-  const markersRef = useRef<LabelEntry[]>([])
+  const baseZoomRef = useRef<number | null>(null)
   const [loaded, setLoaded] = useState(false)
   const dark = useIsDark()
 
@@ -199,15 +451,55 @@ export default function StadiumHeatmap({ heat, values, onHover }: Props) {
     mapRef.current = map
 
     map.on("load", () => {
-      map.setMaxZoom(map.getZoom() + 4)
+      baseZoomRef.current = map.getZoom()
+      map.setMaxZoom(map.getZoom() + LABEL_ZOOM_SPAN)
       map.setMinZoom(map.getZoom() - 0.4)
+
+      const d = document.documentElement.classList.contains("dark")
+
+      /* Pitch first so sections (non-overlapping anyway) draw above it. */
+      map.addSource("pitch-grass", { type: "geojson", data: PITCH.grass })
+      map.addLayer({
+        id: "pitch-grass",
+        type: "fill",
+        source: "pitch-grass",
+        paint: { "fill-color": d ? GRASS_DARK : GRASS_LIGHT },
+      })
+      map.addSource("pitch-lines", { type: "geojson", data: PITCH.lines })
+      map.addLayer({
+        id: "pitch-lines",
+        type: "line",
+        source: "pitch-lines",
+        paint: {
+          "line-color": d ? PITCH_LINE_DARK : PITCH_LINE_LIGHT,
+          "line-width": 1,
+          "line-opacity": 0.9,
+        },
+      })
+      map.addSource("pitch-spots", { type: "geojson", data: PITCH.spots })
+      map.addLayer({
+        id: "pitch-spots",
+        type: "circle",
+        source: "pitch-spots",
+        paint: {
+          "circle-radius": 2,
+          "circle-color": d ? PITCH_LINE_DARK : PITCH_LINE_LIGHT,
+          "circle-opacity": 0.9,
+        },
+      })
+      for (const tag of PITCH.tags) {
+        const el = document.createElement("div")
+        el.className = `stadium-pitch-tag ${tag.cls}`
+        el.textContent = tag.label
+        el.style.pointerEvents = "none"
+        new maplibregl.Marker({ element: el }).setLngLat(tag.lngLat).addTo(map)
+      }
 
       map.addSource("sections", {
         type: "geojson",
         data: transformed,
         promoteId: "section",
       })
-      const d = document.documentElement.classList.contains("dark")
       map.addLayer({
         id: "section-fill",
         type: "fill",
@@ -225,6 +517,80 @@ export default function StadiumHeatmap({ heat, values, onHover }: Props) {
           "line-color": d ? OUTLINE_DARK : OUTLINE_LIGHT,
           "line-width": ["case", ["boolean", ["feature-state", "hover"], false], 2.5, 0.75],
         },
+      })
+
+      /* Section labels as symbol layers, so MapLibre owns collision, priority
+         and zoom sizing rather than us measuring DOM nodes every frame.
+
+         Placement order is what produces the inside/above behaviour: the
+         metric layer is added first and so claims the centroid, then the code
+         layer resolves its `text-variable-anchor` — "top" hangs it below the
+         section's top edge (inside), and when that box would hit the metric or
+         a neighbour it falls back to "bottom" and sits above the section. A
+         short section blocks the inside position and pushes the code out; a
+         tall one leaves room and it settles inside. `symbol-sort-key` carries
+         the seat count negated, so the biggest sections place first.
+
+         Deferred until the webfont resolves: MapLibre rasterises local glyphs
+         on first use and caches them, so adding these before Inter has loaded
+         would bake a fallback face into the atlas. */
+      void document.fonts.ready.then(() => {
+        if (!mapRef.current) return
+        const emptyFC = { type: "FeatureCollection" as const, features: [] }
+        const textSize = (scale: number): maplibregl.ExpressionSpecification =>
+          [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            baseZoomRef.current ?? map.getZoom(),
+            LABEL_MIN_PX * scale,
+            (baseZoomRef.current ?? map.getZoom()) + LABEL_ZOOM_SPAN,
+            LABEL_MAX_PX * scale,
+          ] as unknown as maplibregl.ExpressionSpecification
+
+        map.addImage(CHIP_LIGHT, chipImage(CHIP_FILL_LIGHT, CHIP_STROKE_LIGHT), CHIP_IMAGE_OPTIONS)
+        map.addImage(CHIP_DARK, chipImage(CHIP_FILL_DARK, CHIP_STROKE_DARK), CHIP_IMAGE_OPTIONS)
+        const chip = d ? CHIP_DARK : CHIP_LIGHT
+        const ink = d ? LABEL_TEXT_DARK : LABEL_TEXT_LIGHT
+
+        map.addSource("metric-labels", { type: "geojson", data: emptyFC })
+        map.addLayer({
+          id: "metric-label",
+          type: "symbol",
+          source: "metric-labels",
+          layout: {
+            "text-field": ["get", "label"],
+            "text-font": LABEL_FONT,
+            "text-size": textSize(METRIC_SCALE),
+            "text-anchor": "center",
+            "text-padding": 2,
+            "symbol-sort-key": ["get", "sortKey"],
+            "icon-image": chip,
+            "icon-text-fit": "both",
+          },
+          paint: { "text-color": ink },
+        })
+
+        map.addSource("code-labels", { type: "geojson", data: emptyFC })
+        map.addLayer({
+          id: "code-label",
+          type: "symbol",
+          source: "code-labels",
+          layout: {
+            "text-field": ["get", "label"],
+            "text-font": LABEL_FONT,
+            "text-size": textSize(1),
+            "text-variable-anchor": ["top", "bottom"],
+            "text-radial-offset": 0.2,
+            "text-justify": "center",
+            "text-padding": 2,
+            "symbol-sort-key": ["get", "sortKey"],
+            "icon-image": chip,
+            "icon-text-fit": "both",
+          },
+          paint: { "text-color": ink },
+        })
+        setLoaded(true)
       })
 
       let hovered: string | number | null = null
@@ -259,13 +625,9 @@ export default function StadiumHeatmap({ heat, values, onHover }: Props) {
         map.getCanvas().style.cursor = ""
         onHover?.(null)
       })
-
-      setLoaded(true)
     })
 
     return () => {
-      markersRef.current.forEach((m) => m.marker.remove())
-      markersRef.current = []
       map.remove()
       mapRef.current = null
     }
@@ -274,68 +636,46 @@ export default function StadiumHeatmap({ heat, values, onHover }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  /* Section labels: HTML markers at the BQ centroids (Y-up, same plane as the
-     polygons) showing the section code with % sold beneath. Symbol layers need
-     remote glyph PBFs; markers keep the page self-contained — so collision is
-     ours to handle: on every settle, greedily keep labels big-sections-first
-     and hide any whose estimated box overlaps one already placed. */
+  /* Feed the two label layers. Placement, priority and zoom sizing are the
+     renderer's job now, so this only has to produce points and text. */
   useEffect(() => {
     const map = mapRef.current
     if (!map || !loaded) return
-    markersRef.current.forEach((m) => m.marker.remove())
-    markersRef.current = heat
-      .filter((r) => r.cx != null && r.cy != null)
-      .map((r) => {
-        const el = document.createElement("div")
-        el.className = "stadium-section-label"
-        el.style.pointerEvents = "none"
-        const code = document.createElement("div")
-        code.textContent = r.data_code
-        el.appendChild(code)
-        let lines = 1
-        let widest = r.data_code.length
-        if (r.pct_sold != null) {
-          const pct = document.createElement("div")
-          pct.className = "pct"
-          pct.textContent = `${Math.round(r.pct_sold * 100)}%`
-          el.appendChild(pct)
-          lines = 2
-          widest = Math.max(widest, pct.textContent.length)
-        }
-        const lngLat = toLngLat([r.cx!, r.cy!]) as [number, number]
-        return {
-          marker: new maplibregl.Marker({ element: el }).setLngLat(lngLat).addTo(map),
-          lngLat,
-          seats: r.total_seats ?? 0,
-          width: widest * 6.5 + 6,
-          height: lines * 12 + 4,
-        }
+    const codes: GeoJSON.Feature[] = []
+    const metrics: GeoJSON.Feature[] = []
+    for (const r of heat) {
+      if (r.cx == null || r.cy == null) continue
+      // Negated so the biggest sections carry the lowest key and place first.
+      const sortKey = -(r.total_seats ?? 0)
+      const centroid = toLngLat([r.cx, r.cy])
+      codes.push({
+        type: "Feature",
+        properties: { label: r.data_code, sortKey },
+        geometry: {
+          type: "Point",
+          coordinates: TOP_ANCHORS[r.section] ?? centroid,
+        },
       })
-
-    const sync = () => {
-      const placed: { x1: number; y1: number; x2: number; y2: number }[] = []
-      const bySize = [...markersRef.current].sort((a, b) => b.seats - a.seats)
-      for (const entry of bySize) {
-        const p = map.project(entry.lngLat)
-        const box = {
-          x1: p.x - entry.width / 2,
-          y1: p.y - entry.height / 2,
-          x2: p.x + entry.width / 2,
-          y2: p.y + entry.height / 2,
-        }
-        const collides = placed.some(
-          (o) => box.x1 < o.x2 && box.x2 > o.x1 && box.y1 < o.y2 && box.y2 > o.y1,
-        )
-        entry.marker.getElement().style.display = collides ? "none" : ""
-        if (!collides) placed.push(box)
+      const metricText = labelFor
+        ? labelFor(r)
+        : r.pct_sold == null
+          ? null
+          : `${Math.round(r.pct_sold * 100)}%`
+      if (metricText) {
+        metrics.push({
+          type: "Feature",
+          properties: { label: metricText, sortKey },
+          geometry: { type: "Point", coordinates: centroid },
+        })
       }
     }
-    sync()
-    map.on("moveend", sync)
-    return () => {
-      map.off("moveend", sync)
-    }
-  }, [heat, loaded])
+    const src = (id: string) => map.getSource(id) as maplibregl.GeoJSONSource | undefined
+    src("code-labels")?.setData({ type: "FeatureCollection", features: codes })
+    src("metric-labels")?.setData({
+      type: "FeatureCollection",
+      features: metrics,
+    })
+  }, [heat, labelFor, loaded])
 
   /* Push metric values into feature state (null = grey no-data). */
   useEffect(() => {
@@ -361,6 +701,13 @@ export default function StadiumHeatmap({ heat, values, onHover }: Props) {
       fillExpression(dark ? BUCKETS_DARK : BUCKETS_LIGHT, dark ? NO_DATA_DARK : NO_DATA_LIGHT),
     )
     map.setPaintProperty("section-outline", "line-color", dark ? OUTLINE_DARK : OUTLINE_LIGHT)
+    map.setPaintProperty("pitch-grass", "fill-color", dark ? GRASS_DARK : GRASS_LIGHT)
+    map.setPaintProperty("pitch-lines", "line-color", dark ? PITCH_LINE_DARK : PITCH_LINE_LIGHT)
+    map.setPaintProperty("pitch-spots", "circle-color", dark ? PITCH_LINE_DARK : PITCH_LINE_LIGHT)
+    for (const id of ["code-label", "metric-label"]) {
+      map.setPaintProperty(id, "text-color", dark ? LABEL_TEXT_DARK : LABEL_TEXT_LIGHT)
+      map.setLayoutProperty(id, "icon-image", dark ? CHIP_DARK : CHIP_LIGHT)
+    }
   }, [dark, loaded])
 
   return <div ref={containerRef} className="h-full w-full" />
