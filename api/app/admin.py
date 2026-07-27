@@ -38,22 +38,26 @@ def _merged_claims(user: fb_auth.UserRecord, portal_role: str | None) -> dict:
 
 
 def list_portal_users() -> list[dict]:
+    """ONLY accounts holding a portal_role. The shared store's other tenants
+    (and their existence) are never exposed through this API — granting access
+    to an unlisted account goes through invite(), which role-stamps an
+    existing user in place."""
     _ensure_app()
     out = []
     for u in fb_auth.list_users().iterate_all():
-        claims = u.custom_claims or {}
+        role = (u.custom_claims or {}).get("portal_role")
+        if role is None:
+            continue
         out.append(
             {
                 "uid": u.uid,
                 "email": u.email,
-                "portal_role": claims.get("portal_role"),
-                "has_other_claims": bool(set(claims) - {"portal_role"}),
+                "portal_role": role,
                 "providers": [p.provider_id for p in u.provider_data],
                 "disabled": u.disabled,
             }
         )
-    # Portal users first, then the rest of the shared store.
-    out.sort(key=lambda r: (r["portal_role"] is None, (r["email"] or "").lower()))
+    out.sort(key=lambda r: (r["email"] or "").lower())
     return out
 
 

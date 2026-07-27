@@ -21,7 +21,6 @@ interface PortalUser {
   uid: string
   email: string | null
   portal_role: string | null
-  has_other_claims: boolean
   providers: string[]
   disabled: boolean
 }
@@ -72,8 +71,7 @@ export default function Admin() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Admin</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Invite teammates and manage portal roles. This Firebase user store is shared with the
-          scouting sandbox app — the portal only touches its own <code>portal_role</code> claim.
+          Invite teammates and manage their portal roles.
         </p>
       </div>
 
@@ -82,8 +80,8 @@ export default function Admin() {
           <CardTitle>Invite</CardTitle>
           <CardDescription>
             Google-workspace users can just sign in with Google after this — the role is what
-            unlocks access. The generated link sets a password for email/password sign-in
-            (needed on PR previews, where Google SSO is unavailable).
+            unlocks access. The generated link sets a password for optional email/password
+            sign-in.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
@@ -152,8 +150,8 @@ export default function Admin() {
         <CardHeader>
           <CardTitle>Users</CardTitle>
           <CardDescription>
-            Accounts without a portal role (including the scouting app's users) have no portal
-            access.
+            Everyone with portal access. To add someone new, use Invite — an existing account
+            gets the role added in place; revoking removes them from this list.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -176,12 +174,12 @@ export default function Admin() {
                   <TableHead>Email</TableHead>
                   <TableHead>Portal role</TableHead>
                   <TableHead>Sign-in</TableHead>
-                  <TableHead>Other app</TableHead>
                   <TableHead className="text-right">Change role</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {users.data.users.map((u) => (
+                {/* Client-side guard mirrors the server filter: portal users only. */}
+                {users.data.users.filter((u) => u.portal_role).map((u) => (
                   <TableRow key={u.uid}>
                     <TableCell>{u.email ?? u.uid}</TableCell>
                     <TableCell>
@@ -193,9 +191,6 @@ export default function Admin() {
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
                       {u.providers.join(", ") || "—"}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm">
-                      {u.has_other_claims ? "scouting" : ""}
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
