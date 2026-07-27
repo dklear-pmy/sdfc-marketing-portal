@@ -91,6 +91,30 @@ def customers_lookup(email: str, principal: Principal = require_role("viewer")) 
         raise HTTPException(status_code=502, detail=f"Customer.io API error: {e}")
 
 
+@app.get("/api/customers/ledger")
+def customers_ledger(
+    email: str,
+    limit: int = 25,
+    offset: int = 0,
+    principal: Principal = require_role("viewer"),
+) -> dict:
+    return customers.fan_ledger(
+        _valid_email(email), limit=max(1, min(limit, 100)), offset=max(0, min(offset, 100_000))
+    )
+
+
+@app.get("/api/customers/list")
+def customers_list(
+    q: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    principal: Principal = require_role("viewer"),
+) -> dict:
+    if q and len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search too long")
+    return customers.list_fans(q, limit=max(1, min(limit, 100)), offset=max(0, min(offset, 100_000)))
+
+
 @app.get("/api/customers/{cio_id}/activities")
 def customers_activities(
     cio_id: str,

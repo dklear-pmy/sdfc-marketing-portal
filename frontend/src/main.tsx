@@ -6,7 +6,7 @@ import { AuthProvider, RequireAuth } from "@/lib/auth"
 import AppLayout from "@/routes/AppLayout"
 import Login from "@/routes/Login"
 import Harness from "@/routes/Harness"
-import Customers from "@/routes/Customers"
+import Fans from "@/routes/Fans"
 import Tripwires from "@/routes/Tripwires"
 import Admin from "@/routes/Admin"
 import "./index.css"
@@ -29,7 +29,8 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/harness" replace /> },
       { path: "harness", element: <Harness /> },
-      { path: "customers", element: <Customers /> },
+      { path: "fans", element: <Fans /> },
+      { path: "customers", element: <Navigate to="/fans" replace /> },
       { path: "tripwires", element: <Tripwires /> },
       { path: "admin", element: <Admin /> },
     ],

@@ -16,6 +16,10 @@ import {
   type CioActivity,
   type CioMessage,
   type CustomerLookup,
+  type FanLedgerPage,
+  type FanListPage,
+  type LedgerEvent,
+  type LedgerStatus,
   type MessagesPage,
 } from "@/lib/api"
 import { formatUnix, formatUtc, humanizeAttr, relativeFrom } from "@/lib/format"
@@ -37,7 +41,7 @@ import {
 } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 
-export default function Customers() {
+export default function Fans() {
   const [email, setEmail] = useState("")
   const [submitted, setSubmitted] = useState<string | null>(null)
 
@@ -57,10 +61,10 @@ export default function Customers() {
   return (
     <div className="grid gap-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Customer Activity</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Fans</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Look up a person by email — live Customer.io profile and activity next to the warehouse
-          attributes that feed the sync.
+          Look up a fan by email — live Customer.io profile, warehouse attributes and the activity
+          ledger — or browse the latest active fans below.
         </p>
       </div>
 
@@ -101,6 +105,14 @@ export default function Customers() {
       )}
 
       {lookup.data && !lookup.isFetching && <LookupResult data={lookup.data} />}
+
+      <FanList
+        onSelect={(em) => {
+          setEmail(em)
+          setSubmitted(em)
+          document.querySelector("main")?.scrollTo({ top: 0, behavior: "smooth" })
+        }}
+      />
     </div>
   )
 }
@@ -128,6 +140,7 @@ function LookupResult({ data }: { data: CustomerLookup }) {
       </div>
       {sync.comparison.length > 0 && <AttributesCard comparison={sync.comparison} />}
       {cio.found && cio.cio_id && <ActivityCard cioId={cio.cio_id} />}
+      <LedgerCard email={data.email} />
     </>
   )
 }
@@ -734,6 +747,274 @@ function ActivityCard({ cioId }: { cioId: string }) {
               disabled={active.isFetchingNextPage}
             >
               {active.isFetchingNextPage ? "Loading…" : "Load more"}
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---- Latest active fans (server-paged browse list) ----
+
+const FAN_PAGE = 20
+
+function FanList({ onSelect }: { onSelect: (email: string) => void }) {
+  const [qInput, setQInput] = useState("")
+  const [q, setQ] = useState("")
+  const [offset, setOffset] = useState(0)
+
+  const list = useQuery<FanListPage>({
+    queryKey: ["fan-list", q, offset],
+    queryFn: () =>
+      api.get(
+        `/api/customers/list?limit=${FAN_PAGE}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}`,
+      ),
+    placeholderData: (prev) => prev,
+    staleTime: 60_000,
+  })
+
+  function onSearch(e: FormEvent) {
+    e.preventDefault()
+    setOffset(0)
+    setQ(qInput.trim())
+  }
+
+  const money = (v: number | null) =>
+    v != null ? `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"
+  const data = list.data
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">Latest active fans</CardTitle>
+            <CardDescription>
+              Subscribed fans, most recent attribute change first. Click a row for the full
+              profile.
+            </CardDescription>
+          </div>
+          <form onSubmit={onSearch} className="flex items-center gap-2">
+            <Input
+              className="w-64"
+              placeholder="Search email, name, TM account, zip…"
+              value={qInput}
+              onChange={(e) => setQInput(e.target.value)}
+            />
+            <Button type="submit" variant="outline" disabled={list.isFetching}>
+              Search
+            </Button>
+          </form>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {list.isError && (
+          <Alert variant="destructive">
+            <AlertDescription>{(list.error as Error).message}</AlertDescription>
+          </Alert>
+        )}
+        {list.isPending && <Skeleton className="h-64" />}
+        {data && (
+          <>
+            <div className={cn("overflow-x-auto rounded-md border", list.isFetching && "opacity-60")}>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Fan</TableHead>
+                    <TableHead>Segment</TableHead>
+                    <TableHead>STM</TableHead>
+                    <TableHead className="text-right">2026 matches</TableHead>
+                    <TableHead>Last attended</TableHead>
+                    <TableHead className="text-right">Spend</TableHead>
+                    <TableHead>Updated</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.fans.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={7} className="text-muted-foreground h-16 text-center">
+                        No fans match{q ? ` “${q}”` : ""}.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {data.fans.map((f) => (
+                    <TableRow
+                      key={f.email}
+                      className="cursor-pointer"
+                      onClick={() => onSelect(f.email)}
+                    >
+                      <TableCell>
+                        <div className="font-medium">{f.full_name || "—"}</div>
+                        <div className="text-muted-foreground text-xs">{f.email}</div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground whitespace-nowrap text-sm">
+                        {f.sprocket_macro ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground max-w-44 truncate text-sm">
+                        {f.stm_product ?? f.stm_type ?? f.ticketing_member_status ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right text-sm">
+                        {f.matches_attended_2026 ?? 0}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground whitespace-nowrap text-sm">
+                        {f.last_attendance_date ? formatUtc(f.last_attendance_date) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right text-sm">{money(f.lifetime_spend)}</TableCell>
+                      <TableCell className="text-muted-foreground whitespace-nowrap text-xs">
+                        {relativeFrom(f.updated_at)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground text-sm">
+                {data.total === 0
+                  ? "0 fans"
+                  : `${data.offset + 1}–${data.offset + data.fans.length} of ${data.total.toLocaleString()} fans`}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={offset === 0 || list.isFetching}
+                  onClick={() => setOffset(Math.max(0, offset - FAN_PAGE))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={offset + FAN_PAGE >= data.total || list.isFetching}
+                  onClick={() => setOffset(offset + FAN_PAGE)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---- Warehouse activity ledger (customer_events + customer_status_ledger) ----
+
+const ledgerSourceDot: Record<string, string> = {
+  customerio: "bg-sky-500",
+  tradablebits: "bg-violet-500",
+}
+
+function ledgerStatusVariant(s: LedgerStatus): "default" | "destructive" | "secondary" | "outline" {
+  if (/unsub|dropped|lapsed|inactive/i.test(s.status)) return "destructive"
+  return "secondary"
+}
+
+function ledgerEventDetail(e: LedgerEvent): string {
+  if (!e.feature_json) return ""
+  try {
+    const obj = JSON.parse(e.feature_json) as Record<string, unknown>
+    return Object.entries(obj)
+      .filter(([, v]) => v !== null && v !== "" && v !== undefined)
+      .slice(0, 3)
+      .map(([k, v]) => `${k}: ${String(v)}`)
+      .join(" · ")
+  } catch {
+    return e.feature_json
+  }
+}
+
+function LedgerCard({ email }: { email: string }) {
+  const ledger = useInfiniteQuery<FanLedgerPage>({
+    queryKey: ["fan-ledger", email],
+    queryFn: ({ pageParam }) =>
+      api.get(`/api/customers/ledger?email=${encodeURIComponent(email)}&limit=25&offset=${pageParam}`),
+    initialPageParam: 0,
+    getNextPageParam: (last) => (last.has_more ? last.offset + last.limit : undefined),
+  })
+
+  const statuses = ledger.data?.pages[0]?.statuses ?? []
+  const events = ledger.data?.pages.flatMap((p) => p.events) ?? []
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Activity ledger</CardTitle>
+        <CardDescription>
+          Warehouse source of truth — status domains and the cross-source event stream
+          (materialized hourly).
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {ledger.isError && (
+          <Alert variant="destructive">
+            <AlertDescription>{(ledger.error as Error).message}</AlertDescription>
+          </Alert>
+        )}
+        {ledger.isPending && <Skeleton className="h-32" />}
+
+        {statuses.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {statuses.map((s) => (
+              <div
+                key={s.status_domain}
+                className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm"
+                title={`authority: ${s.authority ?? "—"}${s.status_since ? ` · since ${formatUtc(s.status_since)}` : ""}`}
+              >
+                <span className="text-muted-foreground">{humanizeAttr(s.status_domain)}</span>
+                <Badge variant={ledgerStatusVariant(s)}>{s.status}</Badge>
+                {s.latched && <Badge variant="outline">latched</Badge>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!ledger.isPending && (
+          <div className="grid">
+            {events.length === 0 && (
+              <p className="text-muted-foreground py-3 text-sm">No ledger events for this fan.</p>
+            )}
+            {events.map((e) => (
+              <div
+                key={e.event_id}
+                className={cn(
+                  "flex items-center gap-3 border-b py-2.5 text-sm last:border-b-0",
+                  e.is_system_echo && "opacity-60",
+                )}
+              >
+                <span
+                  className={cn(
+                    "size-2 shrink-0 rounded-full",
+                    ledgerSourceDot[e.source_system ?? ""] ?? "bg-muted-foreground/40",
+                  )}
+                />
+                <span className="w-44 shrink-0 font-medium">
+                  {humanizeAttr(e.activity)}
+                  {e.is_system_echo && <span className="text-muted-foreground ml-1 text-xs">(echo)</span>}
+                </span>
+                <span className="text-muted-foreground min-w-0 flex-1 truncate" title={ledgerEventDetail(e)}>
+                  {ledgerEventDetail(e)}
+                </span>
+                <span className="text-muted-foreground shrink-0 whitespace-nowrap text-xs">
+                  {e.source_system ?? ""} · {formatUtc(e.ts)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {ledger.hasNextPage && (
+          <div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void ledger.fetchNextPage()}
+              disabled={ledger.isFetchingNextPage}
+            >
+              {ledger.isFetchingNextPage ? "Loading…" : "Load more"}
             </Button>
           </div>
         )}

@@ -233,6 +233,113 @@ def lookup(email: str) -> dict:
     }
 
 
+_LIST_COLUMNS = (
+    "email, full_name, sprocket_macro, stm_product, stm_type, ticketing_member_status, "
+    "matches_attended_2026, matches_attended_lifetime, last_attendance_date, "
+    "lifetime_spend, tb_fan_source, updated_at"
+)
+
+
+def list_fans(q: str | None, limit: int = 20, offset: int = 0) -> dict:
+    """Latest active fans: subscribed, ordered by most recent attribute change
+    (updated_at only moves when row content changes — it is the sync watermark,
+    not the build time). Free-text q matches email, name, TM account and
+    postal code."""
+    where = ["unsubscribed = FALSE"]
+    params: list[bigquery.ScalarQueryParameter] = [
+        bigquery.ScalarQueryParameter("limit", "INT64", limit),
+        bigquery.ScalarQueryParameter("offset", "INT64", offset),
+    ]
+    if q:
+        where.append(
+            "(STRPOS(LOWER(email), LOWER(@q)) > 0"
+            " OR STRPOS(LOWER(COALESCE(full_name, '')), LOWER(@q)) > 0"
+            " OR STRPOS(COALESCE(tm_acct_id, ''), @q) > 0"
+            " OR STRPOS(COALESCE(postal_code, ''), @q) > 0)"
+        )
+        params.append(bigquery.ScalarQueryParameter("q", "STRING", q))
+    cond = " AND ".join(where)
+
+    rows = [
+        _safe_dict(dict(r))
+        for r in client()
+        .query(
+            f"""
+            SELECT {_LIST_COLUMNS}
+            FROM `{_GOLD}.fan_attributes`
+            WHERE {cond}
+            ORDER BY updated_at DESC
+            LIMIT @limit OFFSET @offset
+            """,
+            job_config=bigquery.QueryJobConfig(query_parameters=params),
+        )
+        .result()
+    ]
+    total = list(
+        client()
+        .query(
+            f"SELECT COUNT(*) AS n FROM `{_GOLD}.fan_attributes` WHERE {cond}",
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[p for p in params if p.name == "q"]
+            ),
+        )
+        .result()
+    )[0].n
+    return {"fans": rows, "total": total, "limit": limit, "offset": offset}
+
+
+_LEDGER = f"{GCP_PROJECT}.customerdata_gold.customer_status_ledger"
+_EVENTS = f"{GCP_PROJECT}.customerdata_silver.customer_events"
+
+
+def fan_ledger(email: str, limit: int = 25, offset: int = 0) -> dict:
+    """Warehouse activity ledger for one fan: status-domain rows from
+    customer_status_ledger plus a page of customer_events (materialized
+    hourly; the CIO card on the same page covers real-time CIO activity)."""
+    email = email.strip().lower()
+    eparam = [bigquery.ScalarQueryParameter("email", "STRING", email)]
+
+    statuses = [
+        _safe_dict(dict(r))
+        for r in client()
+        .query(
+            f"SELECT * FROM `{_LEDGER}` WHERE email = @email ORDER BY status_domain",
+            job_config=bigquery.QueryJobConfig(query_parameters=eparam),
+        )
+        .result()
+    ]
+    events = [
+        _safe_dict(dict(r))
+        for r in client()
+        .query(
+            f"""
+            SELECT event_id, ts, activity, source_system, is_system_echo,
+                   revenue_impact, TO_JSON_STRING(feature_json) AS feature_json
+            FROM `{_EVENTS}`
+            WHERE customer = @email
+            ORDER BY ts DESC
+            LIMIT @limit OFFSET @offset
+            """,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    *eparam,
+                    bigquery.ScalarQueryParameter("limit", "INT64", limit),
+                    bigquery.ScalarQueryParameter("offset", "INT64", offset),
+                ]
+            ),
+        )
+        .result()
+    ]
+    return {
+        "email": email,
+        "statuses": statuses,
+        "events": events,
+        "limit": limit,
+        "offset": offset,
+        "has_more": len(events) == limit,
+    }
+
+
 def activities_page(cio_id: str, limit: int, start: str | None) -> dict:
     page = CioClient().customer_activities_page(cio_id, limit=limit, start=start)
     return {"activities": page.get("activities", []), "next": page.get("next") or None}

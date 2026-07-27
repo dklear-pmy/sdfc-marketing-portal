@@ -90,6 +90,13 @@ Per-phase additions (grant only when the phase ships):
   client.update_dataset(ds, ["access_entries"])
   ```
 
+  Fans list + activity ledger (executed 2026-07-27) added the same dataset-ACL
+  READER on `customerdata_silver` (customer_events) and `customerdata_gold`
+  (customer_status_ledger). Deliberately NOT granted: `customerio_webhooks` or
+  `tradablebits_bronze` — the ledger card reads the hourly-materialized tables,
+  not `vw_customer_events_live`, because the live view unions TB *bronze
+  externals* whose GCS objects would drag bucket read into this SA.
+
 ## 3. CI/CD — Workload Identity Federation (keyless, talent-platform pattern)
 
 `sdfc-udp-dev` has no GitHub WIF pool yet (checked 2026-07-25). Bootstrap:

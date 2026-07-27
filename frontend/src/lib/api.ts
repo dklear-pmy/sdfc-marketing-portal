@@ -154,6 +154,59 @@ export interface MessagesPage {
   next: string | null
 }
 
+export interface FanRow {
+  email: string
+  full_name: string | null
+  sprocket_macro: string | null
+  stm_product: string | null
+  stm_type: string | null
+  ticketing_member_status: string | null
+  matches_attended_2026: number | null
+  matches_attended_lifetime: number | null
+  last_attendance_date: string | null
+  lifetime_spend: number | null
+  tb_fan_source: string | null
+  updated_at: string
+}
+
+export interface FanListPage {
+  fans: FanRow[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface LedgerStatus {
+  email: string
+  status_domain: string
+  status: string
+  status_since: string | null
+  latched: boolean
+  authority: string | null
+  last_event_at: string | null
+  last_event_id: string | null
+  updated_at: string | null
+}
+
+export interface LedgerEvent {
+  event_id: string
+  ts: string
+  activity: string
+  source_system: string | null
+  is_system_echo: boolean
+  revenue_impact: number | null
+  feature_json: string | null
+}
+
+export interface FanLedgerPage {
+  email: string
+  statuses: LedgerStatus[]
+  events: LedgerEvent[]
+  limit: number
+  offset: number
+  has_more: boolean
+}
+
 export type TripwireStatus = "PASS" | "WARN" | "FAIL"
 
 export interface TripwireCheckRow {

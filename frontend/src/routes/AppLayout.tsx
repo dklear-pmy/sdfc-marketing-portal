@@ -41,7 +41,7 @@ const paths = {
 
 const nav = [
   { to: "/harness", label: "Campaign Tester", icon: paths.beaker },
-  { to: "/customers", label: "Customers", icon: paths.users },
+  { to: "/fans", label: "Fans", icon: paths.users },
   { to: "/tripwires", label: "Tripwires", icon: paths.bell },
 ]
 
