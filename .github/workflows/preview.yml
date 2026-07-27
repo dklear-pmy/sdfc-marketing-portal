@@ -2,9 +2,9 @@ name: Preview
 
 # Every PR gets an auto-expiring Firebase Hosting preview channel with the
 # built frontend. The /api/** rewrite in the channel still points at the LIVE
-# Cloud Run service, so previews exercise real data. Auth caveat: preview
-# hostnames aren't in Firebase Auth's authorized-domains list, so Google
-# sign-in popups won't work there — use email/password on previews.
+# Cloud Run service, so previews exercise real data. firebase-tools ≥15.24
+# syncs channel domains into Firebase Auth authorized domains on deploy, so
+# Google sign-in works on previews too.
 
 on:
   pull_request:
@@ -49,8 +49,10 @@ jobs:
       - name: Deploy preview channel
         id: deploy
         run: |
+          # channel:deploy lost --site in firebase-tools 15.24; the site is
+          # pinned by firebase.json ("site": "sdfc-marketing-portal").
           npx firebase-tools@latest hosting:channel:deploy "pr-${{ github.event.pull_request.number }}" \
-            --project sdfc-udp-dev --site sdfc-marketing-portal --expires 7d --json > channel.json
+            --project sdfc-udp-dev --expires 7d --json > channel.json
           URL=$(jq -r '.result[].url // empty' channel.json | head -1)
           if [ -z "$URL" ]; then
             echo "Could not parse channel URL:" >&2

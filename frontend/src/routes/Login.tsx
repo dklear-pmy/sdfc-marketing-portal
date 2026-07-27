@@ -45,11 +45,18 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-svh items-center justify-center bg-muted/40 p-4">
-      <Card className="w-full max-w-sm">
+    <div className="from-sdfc-azul-dark via-sdfc-azul to-sdfc-azul-light flex min-h-svh items-center justify-center bg-gradient-to-br p-4">
+      <div className="w-full max-w-sm">
+        <div className="mb-6 flex items-center justify-center gap-2.5">
+          <span className="bg-sdfc-orange size-2 rounded-[2px]" aria-hidden />
+          <span className="font-heading text-3xl font-bold tracking-wide text-white">SDFC</span>
+          <span className="bg-sdfc-overlay h-6 w-px" aria-hidden />
+          <span className="text-sdfc-chrome-light text-base font-medium">Marketing Ops</span>
+        </div>
+        <Card className="w-full">
         <CardHeader>
-          <CardTitle>SDFC Marketing Ops</CardTitle>
-          <CardDescription>Sign in with your invited account.</CardDescription>
+          <CardTitle>Sign in</CardTitle>
+          <CardDescription>Use your invited account or staff Google login.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           <Button type="button" variant="outline" disabled={busy} onClick={() => void onGoogle()}>
@@ -95,7 +102,8 @@ export default function Login() {
             </Button>
           </form>
         </CardContent>
-      </Card>
+        </Card>
+      </div>
     </div>
   )
 }

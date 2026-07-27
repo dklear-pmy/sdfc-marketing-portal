@@ -1,13 +1,40 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import "@fontsource-variable/inter";
+@import "@fontsource/barlow-condensed/500.css";
+@import "@fontsource/barlow-condensed/600.css";
+@import "@fontsource/barlow-condensed/700.css";
 
 @custom-variant dark (&:is(.dark *));
 
+/* SDFC brand palette (ported from sdfc-talent-platform tailwind.config.ts).
+   The shell (header/sidebar) uses these literally and stays navy in both
+   themes, like the talent platform; page content flips via the semantic
+   tokens below. */
+@theme {
+    --color-sdfc-azul: #0B2341;
+    --color-sdfc-azul-light: #1A3A5C;
+    --color-sdfc-azul-medium: #0F2D4F;
+    --color-sdfc-azul-dark: #061729;
+    --color-sdfc-azul-bright: #1E5799;
+    --color-sdfc-chrome: #8A9BA8;
+    --color-sdfc-chrome-light: #C4CED6;
+    --color-sdfc-chrome-medium: #6B7D8A;
+    --color-sdfc-chrome-dark: #4A5966;
+    --color-sdfc-chrome-shine: #E8ECF0;
+    --color-sdfc-orange: #FF6B35;
+    --color-sdfc-orange-light: #FF8F66;
+    --color-sdfc-orange-dark: #CC4A1A;
+    --color-sdfc-dark: #061729;
+    --color-sdfc-surface: #0B2341;
+    --color-sdfc-elevated: #0F2D4F;
+    --color-sdfc-overlay: #1A3A5C;
+}
+
 @theme inline {
-    --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
+    --font-sans: 'Inter Variable', system-ui, sans-serif;
+    --font-heading: 'Barlow Condensed', 'Inter Variable', system-ui, sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,73 +75,75 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Light theme — cool chrome neutrals, azul primaries */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+    --background: #F5F7FA;
+    --foreground: #0B2341;
+    --card: #FFFFFF;
+    --card-foreground: #0B2341;
+    --popover: #FFFFFF;
+    --popover-foreground: #0B2341;
+    --primary: #0B2341;
+    --primary-foreground: #FFFFFF;
+    --secondary: #E8ECF0;
+    --secondary-foreground: #0B2341;
+    --muted: #EEF2F6;
+    --muted-foreground: #6B7D8A;
+    --accent: #E8ECF0;
+    --accent-foreground: #0B2341;
+    --destructive: #EF4444;
+    --border: #D9E0E7;
+    --input: #D9E0E7;
+    --ring: #1E5799;
+    --chart-1: #1E5799;
+    --chart-2: #8A9BA8;
+    --chart-3: #FF6B35;
+    --chart-4: #10B981;
+    --chart-5: #0B2341;
     --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --sidebar: #0B2341;
+    --sidebar-foreground: #E8ECF0;
+    --sidebar-primary: #FF6B35;
+    --sidebar-primary-foreground: #FFFFFF;
+    --sidebar-accent: #0F2D4F;
+    --sidebar-accent-foreground: #FFFFFF;
+    --sidebar-border: #0F2D4F;
+    --sidebar-ring: #1E5799;
 }
 
+/* Dark theme — SDFC navy layering (base → surface → elevated → overlay) */
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --background: #061729;
+    --foreground: #E8ECF0;
+    --card: #0B2341;
+    --card-foreground: #E8ECF0;
+    --popover: #0F2D4F;
+    --popover-foreground: #E8ECF0;
+    --primary: #1E5799;
+    --primary-foreground: #FFFFFF;
+    --secondary: #0F2D4F;
+    --secondary-foreground: #E8ECF0;
+    --muted: #0F2D4F;
+    --muted-foreground: #8A9BA8;
+    --accent: #1A3A5C;
+    --accent-foreground: #FFFFFF;
+    --destructive: #F87171;
+    --border: #1A3A5C;
+    --input: #1A3A5C;
+    --ring: #1E5799;
+    --chart-1: #1E5799;
+    --chart-2: #8A9BA8;
+    --chart-3: #FF6B35;
+    --chart-4: #34D399;
+    --chart-5: #C4CED6;
+    --sidebar: #0B2341;
+    --sidebar-foreground: #E8ECF0;
+    --sidebar-primary: #FF6B35;
+    --sidebar-primary-foreground: #FFFFFF;
+    --sidebar-accent: #0F2D4F;
+    --sidebar-accent-foreground: #FFFFFF;
+    --sidebar-border: #0F2D4F;
+    --sidebar-ring: #1E5799;
 }
 
 @layer base {
@@ -126,5 +155,10 @@
     }
   html {
     @apply font-sans;
+    }
+  /* SDFC heading font — Barlow Condensed, matching the talent platform */
+  h1, h2, h3 {
+    font-family: var(--font-heading);
+    letter-spacing: 0.01em;
     }
 }
