@@ -102,10 +102,11 @@ export default function Tripwires() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Tripwire Accounts</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Fan-like accounts planted inside our real campaign audiences, checked automatically
-            every hour to catch problems before fans do — broken profiles, wrongful
-            unsubscribes, emails that stop delivering, and test campaigns leaking into real
-            audiences.
+            Fan-like accounts planted inside our real campaign audiences, checked around the
+            clock — every five minutes — to catch problems before fans do: broken profiles,
+            wrongful unsubscribes, emails that stop delivering, and test campaigns leaking into
+            real audiences. Failures email the team immediately, remind hourly until resolved,
+            and confirm when fixed (recipients are managed in Admin).
           </p>
         </div>
         {canOperate && (

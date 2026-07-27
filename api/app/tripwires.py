@@ -22,6 +22,7 @@ same proven path the harness runner uses.
 """
 
 import datetime as dt
+import json
 
 import requests
 from google.cloud import bigquery
@@ -275,18 +276,7 @@ def run_checks(source: str) -> dict:
     _record(results, source)
     failing = sum(1 for r in results if r["status"] == "FAIL")
     warning = sum(1 for r in results if r["status"] == "WARN")
-
-    alert = None
-    if failing:
-        fails = [r for r in results if r["status"] == "FAIL"]
-        lines = "\n".join(f"- {r['email']} · {r['check_name']}: {r['detail']}" for r in fails)
-        alert = emailer.send_alert(
-            subject=f"[Tripwires] {failing} failing check{'s' if failing > 1 else ''}",
-            text_body=(
-                f"Tripwire check run ({source}) found {failing} FAIL / {warning} WARN:\n\n"
-                f"{lines}\n\nFull state: https://marketing.sdfc.dev/tripwires"
-            ),
-        )
+    alert = _alerting([r for r in results if r["status"] == "FAIL"])
 
     return {
         "checked_at": _now().isoformat(),
@@ -296,6 +286,148 @@ def run_checks(source: str) -> dict:
         "alert": alert,
         "results": results,
     }
+
+
+# ---- alert policy: immediate on new/changed failures, hourly reminders
+# ---- until resolved, one recovery email when clear. State survives Cloud Run
+# ---- instance churn in customerio_state.tripwire_alert_state.
+
+REMINDER_MINUTES = 60
+_PORTAL_LINK = "https://marketing.sdfc.dev/tripwires"
+
+
+def _humanize_dur(seconds: float) -> str:
+    m = int(seconds // 60)
+    if m < 60:
+        return f"{m}m"
+    h, m = divmod(m, 60)
+    if h < 48:
+        return f"{h}h {m:02d}m"
+    return f"{h // 24}d {h % 24}h"
+
+
+def _decide(cur: set[str], state: dict | None, now: dt.datetime) -> tuple[str | None, dict | None]:
+    """Pure decision: (email_kind, new_state). Kinds: new/changed/reminder/
+    recovery/None. new_state None clears the stored state."""
+    prev = set((state or {}).get("failures") or [])
+    if not cur:
+        return ("recovery" if prev else None), None
+    since = (state or {}).get("failing_since") if prev else None
+    since = since or now
+    last = (state or {}).get("last_alert_at")
+    if cur != prev:
+        kind = "new" if not prev else "changed"
+        return kind, {"failures": sorted(cur), "failing_since": since, "last_alert_at": now}
+    if last is None or (now - last).total_seconds() >= REMINDER_MINUTES * 60:
+        return "reminder", {"failures": sorted(cur), "failing_since": since, "last_alert_at": now}
+    return None, {"failures": sorted(cur), "failing_since": since, "last_alert_at": last}
+
+
+def _load_alert_state() -> dict | None:
+    rows = list(
+        client()
+        .query(
+            f"SELECT failures_json, failing_since, last_alert_at "
+            f"FROM `{_DATASET}.tripwire_alert_state` WHERE id = 'current'"
+        )
+        .result()
+    )
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "failures": json.loads(r.failures_json or "[]"),
+        "failing_since": r.failing_since,
+        "last_alert_at": r.last_alert_at,
+    }
+
+
+def _save_alert_state(state: dict | None) -> None:
+    if state is None:
+        client().query(
+            f"DELETE FROM `{_DATASET}.tripwire_alert_state` WHERE id = 'current'"
+        ).result()
+        return
+    client().query(
+        f"""
+        MERGE `{_DATASET}.tripwire_alert_state` t USING (SELECT 'current' AS id) s ON t.id = s.id
+        WHEN MATCHED THEN UPDATE SET failures_json = @f, failing_since = @since,
+          last_alert_at = @last, updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN INSERT (id, failures_json, failing_since, last_alert_at, updated_at)
+          VALUES ('current', @f, @since, @last, CURRENT_TIMESTAMP())
+        """,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("f", "STRING", json.dumps(state["failures"])),
+                bigquery.ScalarQueryParameter("since", "TIMESTAMP", state["failing_since"]),
+                bigquery.ScalarQueryParameter("last", "TIMESTAMP", state["last_alert_at"]),
+            ]
+        ),
+    ).result()
+
+
+def _alerting(fails: list[dict]) -> dict | None:
+    now = _now()
+    cur = {f"{r['email']}·{r['check_name']}" for r in fails}
+    try:
+        state = _load_alert_state()
+        kind, new_state = _decide(cur, state, now)
+        alert: dict | None = None
+        if kind:
+            lines = "\n".join(f"- {r['email']} · {r['check_name']}: {r['detail']}" for r in fails)
+            n = len(fails)
+            plural = "s" if n > 1 else ""
+            if kind == "recovery":
+                dur = (
+                    _humanize_dur((now - state["failing_since"]).total_seconds())
+                    if state and state.get("failing_since")
+                    else "?"
+                )
+                subj = "[Tripwires] Resolved — all clear"
+                body = f"All tripwire checks are passing again (outage lasted {dur}).\n\n{_PORTAL_LINK}"
+            elif kind == "reminder":
+                dur = _humanize_dur((now - new_state["failing_since"]).total_seconds())
+                subj = f"[Tripwires] STILL FAILING after {dur}: {n} check{plural}"
+                body = (
+                    f"Unresolved for {dur} — hourly reminders continue until fixed:\n\n"
+                    f"{lines}\n\n{_PORTAL_LINK}"
+                )
+            else:
+                prev = set((state or {}).get("failures") or [])
+                subj = f"[Tripwires] {n} failing check{plural}"
+                delta = ""
+                if kind == "changed":
+                    newly, cleared = sorted(cur - prev), sorted(prev - cur)
+                    if newly:
+                        delta += "\nNew since last alert: " + ", ".join(newly)
+                    if cleared:
+                        delta += "\nNo longer failing: " + ", ".join(cleared)
+                body = (
+                    "Failing now (checks run every 5 minutes; reminders hourly until "
+                    f"resolved):\n\n{lines}{delta}\n\n{_PORTAL_LINK}"
+                )
+            sent = emailer.send_alert(subj, body)
+            alert = {"kind": kind, **sent}
+            if not sent["sent"]:
+                # keep the alarm armed so the next 5-minute run retries this email
+                if new_state is not None:
+                    new_state = {**new_state, "last_alert_at": (state or {}).get("last_alert_at")}
+                else:
+                    new_state = state
+
+        prev_failures = sorted((state or {}).get("failures") or [])
+        if new_state is None:
+            if state is not None:
+                _save_alert_state(None)
+        elif (
+            state is None
+            or new_state["failures"] != prev_failures
+            or new_state.get("last_alert_at") != (state or {}).get("last_alert_at")
+        ):
+            _save_alert_state(new_state)
+        return alert
+    except Exception as e:  # noqa: BLE001 — alerting must never break the tick
+        return {"kind": "error", "sent": False, "detail": f"alerting failed: {str(e)[:150]}"}
 
 
 def _record(results: list[dict], source: str) -> None:

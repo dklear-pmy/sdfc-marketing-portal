@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import admin, bqstate, customers, ledger, runner, tripwires
+from . import admin, bqstate, customers, emailer, ledger, runner, tripwires
 from .auth import Principal, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
 from .validator import validate_slug
@@ -233,6 +233,36 @@ def tripwires_add(body: TripwireCreate, principal: Principal = require_role("ope
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class RecipientRequest(BaseModel):
+    email: str
+    label: str | None = None
+
+
+@app.get("/api/admin/alert-recipients")
+def alert_recipients_list(principal: Principal = require_role("admin")) -> dict:
+    rows = emailer.list_recipients()
+    return {
+        "recipients": rows,
+        "fallback": emailer.FALLBACK_RECIPIENT if not rows else None,
+    }
+
+
+@app.post("/api/admin/alert-recipients")
+def alert_recipients_add(
+    body: RecipientRequest, principal: Principal = require_role("admin")
+) -> dict:
+    if body.label and len(body.label) > 80:
+        raise HTTPException(status_code=400, detail="Label too long")
+    return emailer.add_recipient(
+        _valid_email(body.email), (body.label or "").strip() or None, principal.email
+    )
+
+
+@app.delete("/api/admin/alert-recipients/{email}")
+def alert_recipients_remove(email: str, principal: Principal = require_role("admin")) -> dict:
+    return emailer.remove_recipient(_valid_email(email))
 
 
 class InviteRequest(BaseModel):

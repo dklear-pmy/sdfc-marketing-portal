@@ -199,13 +199,14 @@ already dataset WRITER — **no new IAM for Phase 4**). Seeded tripwires:
 webhook. Tripwire emails MUST be @qa.sdfc.dev — the sink rejects other
 recipient domains at RCPT.
 
-Hourly check schedule (same OIDC contract as the harness tick; bumped from
-daily 2026-07-27 so the "checked every hour" product copy is literally true):
+Check schedule: every 5 minutes (same OIDC contract as the harness tick;
+daily → hourly → */5 on 2026-07-27 — detection latency matters more than the
+~$2-3/mo compute):
 
 ```bash
 gcloud scheduler jobs create http tripwire-daily-check \
   --project=sdfc-udp-dev --location=us-west2 \
-  --schedule="0 * * * *" \
+  --schedule="*/5 * * * *" \
   --uri="https://marketing-portal-api-133738605371.us-west2.run.app/api/tripwires/tick" \
   --http-method=POST \
   --oidc-service-account-email=marketing-portal-sa@sdfc-udp-dev.iam.gserviceaccount.com \
@@ -219,9 +220,12 @@ Postmark server **"sdfc.dev"** (ID 20070642); server token stored as secret
 `api/app/emailer.py` — best-effort by contract, a failed send can never break
 the tick that produced it. Hooks: tripwire check runs email on any FAIL;
 harness runs that go FAILED/TIMED_OUT on the *scheduler* tick email (manual
-advances don't — the operator is watching). Recipients default to
-dean.klear@pmygroup.com; override with `ALERT_EMAILS` (comma-separated — use
-`gcloud run deploy --set-env-vars="^|^ALERT_EMAILS=a@x,b@y"` delimiter form).
+advances don't — the operator is watching). Recipients are UI-managed (Admin → Alert recipients →
+`customerio_state.alert_recipients`); empty table falls back to the ops owner
+so alerts can never go nowhere. Alert policy (state in
+`customerio_state.tripwire_alert_state`): immediate email on new/changed
+failure set, reminder every 60 min while unresolved, recovery email on clear;
+failed sends stay armed and retry on the next 5-minute run.
 
 DNS on sdfc.dev (via `cloudflare-dns-sdfc-dev` token): `pm-bounces` CNAME →
 pm.mtasv.net (Return-Path), apex TXT SPF `v=spf1 include:spf.mtasv.net ~all`,
