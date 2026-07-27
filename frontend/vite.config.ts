@@ -20,4 +20,11 @@ export default defineConfig({
       "/api": "http://localhost:8123",
     },
   },
+  // `vite preview` serves the production build — used to verify bundling
+  // (e.g. the MapLibre worker) before deploying; same API proxy as dev.
+  preview: {
+    proxy: {
+      "/api": "http://localhost:8123",
+    },
+  },
 })

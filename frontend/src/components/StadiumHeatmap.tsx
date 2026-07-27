@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import * as maplibregl from "maplibre-gl"
+// MapLibre resolves its worker by URL relative to the page at runtime; in the
+// built SPA that URL doesn't exist and the hosting rewrite answers with
+// index.html (MIME error, blank map). Bundle the worker as its own Vite worker
+// entry (it imports maplibre's shared chunk) and point the library at it.
+import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url"
 import type { FeatureCollection } from "geojson"
 import "maplibre-gl/dist/maplibre-gl.css"
+
+maplibregl.setWorkerUrl(workerUrl)
 // Static export of the Snapdragon Stadium section polygons. Source of truth:
 // PMY-Group/sdfc-stadium-map (Ticketmaster placeDetail, venueConfigId 131357);
 // regenerate there with build_stadium.py and re-copy — do not edit here.
