@@ -15,11 +15,11 @@ import StadiumHeatmap, {
   NO_DATA_LIGHT,
 } from "@/components/StadiumHeatmap"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { cn } from "@/lib/utils"
 
 type Metric = "pct_sold" | "occupied" | "sold" | "comps" | "scans"
 
@@ -75,6 +75,39 @@ interface EventGroups {
   upcoming: StadiumEventRow[]
   past: StadiumEventRow[]
   undated: StadiumEventRow[]
+}
+
+/* Gradient stat tiles in the talent-platform dashboard style (StatCard). */
+const TILE_GRADIENTS = {
+  azul: "from-sdfc-azul-dark to-sdfc-azul",
+  chrome: "from-sdfc-chrome-dark to-sdfc-chrome",
+  green: "from-sdfc-green-dark to-sdfc-green",
+  orange: "from-sdfc-orange-dark to-sdfc-orange",
+} as const
+
+function StatTile({
+  title,
+  value,
+  description,
+  gradient,
+}: {
+  title: string
+  value: string
+  description: string
+  gradient: keyof typeof TILE_GRADIENTS
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-xl bg-gradient-to-br p-6 text-white shadow-lg",
+        TILE_GRADIENTS[gradient],
+      )}
+    >
+      <div className="text-sm font-medium tracking-wide text-white/90 uppercase">{title}</div>
+      <div className="mt-2 text-4xl font-bold">{value}</div>
+      <div className="mt-4 text-sm text-white/90">{description}</div>
+    </div>
+  )
 }
 
 export default function Stadium() {
@@ -215,105 +248,121 @@ export default function Stadium() {
         </Alert>
       )}
 
-      <Card>
-        <CardHeader className="gap-4">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div className="relative grid gap-1.5">
-              <Label htmlFor="stadium-event-search">Event</Label>
-              <Input
-                id="stadium-event-search"
-                ref={searchRef}
-                value={pickerOpen ? search : (eventName ?? "")}
-                placeholder={
-                  events.isPending ? "Loading events…" : "Search 6SD code or date…"
-                }
-                autoComplete="off"
-                className="min-w-72"
-                onFocus={() => {
-                  setPickerOpen(true)
-                  setSearch("")
-                }}
-                onBlur={() => setPickerOpen(false)}
-                onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    setPickerOpen(false)
-                    searchRef.current?.blur()
-                  }
-                  if (e.key === "Enter") {
-                    const first =
-                      grouped.upcoming[0] ?? grouped.past[0] ?? grouped.undated[0]
-                    if (first) selectEvent(first.event_name)
-                  }
-                }}
-              />
-              {pickerOpen && (
-                <div className="bg-popover text-popover-foreground absolute top-full z-20 mt-1 max-h-80 w-full min-w-72 overflow-y-auto rounded-md border py-1 shadow-md">
-                  {renderGroup("Upcoming", grouped.upcoming)}
-                  {renderGroup("Past", grouped.past)}
-                  {renderGroup("Other", grouped.undated)}
-                  {grouped.upcoming.length + grouped.past.length + grouped.undated.length ===
-                    0 && (
-                    <div className="text-muted-foreground px-3 py-2 text-sm">
-                      No events match "{search}"
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {eventRow ? (
+          <>
+            <StatTile
+              gradient="azul"
+              title="Seats sold"
+              value={num(eventRow.sold)}
+              description={`of ${num(eventRow.total_seats)} sellable`}
+            />
+            <StatTile
+              gradient="chrome"
+              title="Comps"
+              value={num(comps(eventRow))}
+              description={`${num(eventRow.occupied)} total tickets out`}
+            />
+            <StatTile
+              gradient="orange"
+              title="% sold"
+              value={pct(eventRow.pct_sold)}
+              description="overall sell-through"
+            />
+            <StatTile
+              gradient="green"
+              title="Scanned in"
+              value={eventRow.scanned != null ? num(eventRow.scanned) : "—"}
+              description={
+                eventRow.scanned != null && eventRow.occupied
+                  ? `${pct(eventRow.scanned / eventRow.occupied)} of tickets out`
+                  : "future event — no scans yet"
+              }
+            />
+          </>
+        ) : (
+          Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-36 rounded-xl" />)
+        )}
+      </div>
 
-            <div className="flex flex-wrap items-center gap-4">
-              <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)}>
-                <TabsList>
-                  <TabsTrigger value="pct_sold">{METRIC_LABEL.pct_sold}</TabsTrigger>
-                  <TabsTrigger value="occupied">{METRIC_LABEL.occupied}</TabsTrigger>
-                  <TabsTrigger value="sold">{METRIC_LABEL.sold}</TabsTrigger>
-                  <TabsTrigger value="comps">{METRIC_LABEL.comps}</TabsTrigger>
-                  <TabsTrigger value="scans">{METRIC_LABEL.scans}</TabsTrigger>
-                </TabsList>
-              </Tabs>
-              {metric !== "pct_sold" && (
-                <label className="text-muted-foreground flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={normalize}
-                    onChange={(e) => setNormalize(e.target.checked)}
-                    className="accent-sdfc-orange size-4"
-                  />
-                  {metric === "scans" ? "scan rate (% of tickets out)" : "% of section capacity"}
-                </label>
-              )}
-            </div>
+      <Card className="gap-0 overflow-hidden py-0">
+        {/* Navy panel header strip, talent-platform style */}
+        <div className="bg-sdfc-panel flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-6 py-4">
+          <div>
+            <h2 className="font-heading text-xl font-bold tracking-wide text-white">
+              Section Heatmap
+            </h2>
+            <p className="text-sdfc-chrome-light text-sm">
+              {eventName ?? "…"}
+              {eventRow?.event_date ? ` · ${fmtDate(eventRow.event_date)}` : ""}
+            </p>
           </div>
+          <div className="relative">
+            <label htmlFor="stadium-event-search" className="sr-only">
+              Event
+            </label>
+            <Input
+              id="stadium-event-search"
+              ref={searchRef}
+              value={pickerOpen ? search : (eventName ?? "")}
+              placeholder={events.isPending ? "Loading events…" : "Search 6SD code or date…"}
+              autoComplete="off"
+              className="min-w-72 border-white/20 bg-white/10 text-white placeholder:text-white/50 focus-visible:ring-white/40"
+              onFocus={() => {
+                setPickerOpen(true)
+                setSearch("")
+              }}
+              onBlur={() => setPickerOpen(false)}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  setPickerOpen(false)
+                  searchRef.current?.blur()
+                }
+                if (e.key === "Enter") {
+                  const first = grouped.upcoming[0] ?? grouped.past[0] ?? grouped.undated[0]
+                  if (first) selectEvent(first.event_name)
+                }
+              }}
+            />
+            {pickerOpen && (
+              <div className="bg-popover text-popover-foreground absolute top-full right-0 z-20 mt-1 max-h-80 w-full min-w-72 overflow-y-auto rounded-md border py-1 shadow-md">
+                {renderGroup("Upcoming", grouped.upcoming)}
+                {renderGroup("Past", grouped.past)}
+                {renderGroup("Other", grouped.undated)}
+                {grouped.upcoming.length + grouped.past.length + grouped.undated.length === 0 && (
+                  <div className="text-muted-foreground px-3 py-2 text-sm">
+                    No events match "{search}"
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
 
-          {eventRow && (
-            <CardDescription className="flex flex-wrap gap-x-6 gap-y-1">
-              <span>
-                <span className="text-foreground font-medium">{num(eventRow.sold)}</span> sold
-              </span>
-              <span>
-                <span className="text-foreground font-medium">{num(comps(eventRow))}</span> comps
-              </span>
-              {eventRow.scanned != null && (
-                <span>
-                  <span className="text-foreground font-medium">{num(eventRow.scanned)}</span>{" "}
-                  scanned in
-                  {eventRow.occupied ? ` (${pct(eventRow.scanned / eventRow.occupied)})` : ""}
-                </span>
-              )}
-              <span>
-                <span className="text-foreground font-medium">{num(eventRow.total_seats)}</span>{" "}
-                sellable seats
-              </span>
-              <span>
-                <span className="text-foreground font-medium">{pct(eventRow.pct_sold)}</span> sold
-                overall
-              </span>
-            </CardDescription>
-          )}
-        </CardHeader>
-
-        <CardContent>
+        <CardContent className="grid gap-4 p-6">
+          <div className="flex flex-wrap items-center gap-4">
+            <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)}>
+              <TabsList>
+                <TabsTrigger value="pct_sold">{METRIC_LABEL.pct_sold}</TabsTrigger>
+                <TabsTrigger value="occupied">{METRIC_LABEL.occupied}</TabsTrigger>
+                <TabsTrigger value="sold">{METRIC_LABEL.sold}</TabsTrigger>
+                <TabsTrigger value="comps">{METRIC_LABEL.comps}</TabsTrigger>
+                <TabsTrigger value="scans">{METRIC_LABEL.scans}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            {metric !== "pct_sold" && (
+              <label className="text-muted-foreground flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={normalize}
+                  onChange={(e) => setNormalize(e.target.checked)}
+                  className="accent-sdfc-orange size-4"
+                />
+                {metric === "scans" ? "scan rate (% of tickets out)" : "% of section capacity"}
+              </label>
+            )}
+          </div>
           <div className="relative">
             {heat.isPending && <Skeleton className="aspect-[4/3] w-full rounded-lg" />}
             {heat.isError && (
