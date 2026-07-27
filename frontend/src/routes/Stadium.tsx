@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import {
   api,
@@ -27,12 +27,13 @@ type Metric = "pct_sold" | "occupied" | "sold" | "comps" | "scans"
 // expected occupancy (paid + comps), not attendance. "scans" = distinct seats
 // with an accepted entry scan (valid=Y, result A) — only past events have them.
 const METRIC_LABEL: Record<Metric, string> = {
-  pct_sold: "% sold",
-  occupied: "Sold + comps",
+  pct_sold: "% Sold",
+  occupied: "Sold + Comps",
   sold: "Sold",
   comps: "Comps",
   scans: "Scans",
 }
+
 
 function fmtDate(d: string | null): string {
   if (!d) return ""
@@ -77,6 +78,13 @@ interface EventGroups {
   undated: StadiumEventRow[]
 }
 
+type EventWhen = "future" | "past" | "all"
+const EVENT_WHEN: { key: EventWhen; label: string }[] = [
+  { key: "future", label: "Future" },
+  { key: "past", label: "Past" },
+  { key: "all", label: "All" },
+]
+
 /* Gradient stat tiles in the talent-platform dashboard style (StatCard). */
 const TILE_GRADIENTS = {
   azul: "from-sdfc-azul-dark to-sdfc-azul",
@@ -116,7 +124,10 @@ export default function Stadium() {
   const [normalize, setNormalize] = useState(true)
   const [hover, setHover] = useState<HoverInfo | null>(null)
   const [search, setSearch] = useState("")
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo, setDateTo] = useState("")
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [when, setWhen] = useState<EventWhen>("future")
   const searchRef = useRef<HTMLInputElement>(null)
 
   const events = useQuery<StadiumEventsResponse>({
@@ -133,27 +144,41 @@ export default function Stadium() {
     staleTime: 5 * 60_000,
   })
 
-  /* Search matches the 6SD code and the date in both ISO and pretty forms. */
+  /* Text matches the 6SD code and the date in both ISO and pretty forms; the
+     date window keeps only events inside [from, to] (undated events drop out
+     whenever a window is set). */
   const grouped: EventGroups = useMemo(() => {
     const q = search.trim().toLowerCase()
-    const rows = (events.data?.events ?? []).filter(
-      (r) =>
+    const rows = (events.data?.events ?? []).filter((r) => {
+      const textHit =
         !q ||
         r.event_name.toLowerCase().includes(q) ||
         (r.event_date ?? "").includes(q) ||
-        fmtDate(r.event_date).toLowerCase().includes(q),
-    )
+        fmtDate(r.event_date).toLowerCase().includes(q)
+      if (!textHit) return false
+      if ((dateFrom || dateTo) && !r.event_date) return false
+      if (dateFrom && r.event_date! < dateFrom) return false
+      if (dateTo && r.event_date! > dateTo) return false
+      return true
+    })
     const today = new Date().toISOString().slice(0, 10)
+    // Undated events are neither future nor past, so they surface only under All.
     return {
-      upcoming: rows
-        .filter((r) => r.event_date && r.event_date >= today)
-        .sort((a, b) => a.event_date!.localeCompare(b.event_date!)),
-      past: rows
-        .filter((r) => r.event_date && r.event_date < today)
-        .sort((a, b) => b.event_date!.localeCompare(a.event_date!)),
-      undated: rows.filter((r) => !r.event_date),
+      upcoming:
+        when === "past"
+          ? []
+          : rows
+              .filter((r) => r.event_date && r.event_date >= today)
+              .sort((a, b) => a.event_date!.localeCompare(b.event_date!)),
+      past:
+        when === "future"
+          ? []
+          : rows
+              .filter((r) => r.event_date && r.event_date < today)
+              .sort((a, b) => b.event_date!.localeCompare(a.event_date!)),
+      undated: when === "all" ? rows.filter((r) => !r.event_date) : [],
     }
-  }, [events.data, search])
+  }, [events.data, search, dateFrom, dateTo, when])
 
   const eventRow = events.data?.events.find((e) => e.event_name === eventName)
 
@@ -183,17 +208,55 @@ export default function Stadium() {
     return out
   }, [heat.data, metric, normalize])
 
+  /* Section chip text — the bare number the fill encodes. Which metric it is
+     comes from the overlay, so the chip stays small. */
+  const labelFor = useCallback(
+    (r: StadiumSectionHeat): string | null => {
+      if (metric === "pct_sold") {
+        return r.pct_sold == null ? null : `${Math.round(r.pct_sold * 100)}%`
+      }
+      const raw = rawValue(r, metric)
+      if (raw == null) return null
+      if (normalize) {
+        const denom = metric === "scans" ? r.occupied : r.total_seats
+        if (!denom) return null
+        return `${Math.round(Math.min(1, raw / denom) * 100)}%`
+      }
+      return raw.toLocaleString("en-US")
+    },
+    [metric, normalize],
+  )
+
   const isPctScale = metric === "pct_sold" || normalize
   const countMax = Math.max(
     0,
     ...(heat.data?.sections ?? []).map((r) => rawValue(r, metric) ?? 0),
   )
-  const bucketLabel = (i: number): string => {
-    if (isPctScale) return i === 9 ? "90–100%" : `${i * 10}–${i * 10 + 9}%`
-    const lo = Math.round((i / 10) * countMax)
-    const hi = i === 9 ? countMax : Math.round(((i + 1) / 10) * countMax) - 1
-    return `${lo.toLocaleString()}–${hi.toLocaleString()}`
-  }
+  /* The overlay legend is too narrow for ten range labels, so it ticks the
+     scale at both ends and the middle instead. */
+  const scaleTick = (f: number): string =>
+    isPctScale ? `${Math.round(f * 100)}%` : Math.round(f * countMax).toLocaleString()
+
+  /* Stadium-wide figure for whatever metric is selected, so the overlay reads
+     as a standalone summary. */
+  const headline = ((): string => {
+    if (!eventRow) return "—"
+    switch (metric) {
+      case "pct_sold":
+        return pct(eventRow.pct_sold)
+      case "sold":
+        return num(eventRow.sold)
+      case "occupied":
+        return num(eventRow.occupied)
+      case "comps":
+        return num(comps(eventRow))
+      case "scans":
+        if (eventRow.scanned == null) return "—"
+        return normalize && eventRow.occupied
+          ? pct(eventRow.scanned / eventRow.occupied)
+          : num(eventRow.scanned)
+    }
+  })()
 
   const selectEvent = (name: string) => {
     setSelected(name)
@@ -287,52 +350,126 @@ export default function Stadium() {
 
       <Card className="gap-0 overflow-hidden py-0">
         {/* Navy panel header strip, talent-platform style */}
-        <div className="bg-sdfc-panel flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-6 py-4">
-          <div>
-            <h2 className="font-heading text-xl font-bold tracking-wide text-white">
-              Section Heatmap
-            </h2>
-            <p className="text-sdfc-chrome-light text-sm">
-              {eventName ?? "…"}
-              {eventRow?.event_date ? ` · ${fmtDate(eventRow.event_date)}` : ""}
-            </p>
-          </div>
-          <div className="relative">
-            <label htmlFor="stadium-event-search" className="sr-only">
-              Event
-            </label>
-            <Input
-              id="stadium-event-search"
-              ref={searchRef}
-              value={pickerOpen ? search : (eventName ?? "")}
-              placeholder={events.isPending ? "Loading events…" : "Search 6SD code or date…"}
-              autoComplete="off"
-              className="min-w-72 border-white/20 bg-white/10 text-white placeholder:text-white/50 focus-visible:ring-white/40"
-              onFocus={() => {
-                setPickerOpen(true)
-                setSearch("")
-              }}
-              onBlur={() => setPickerOpen(false)}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setPickerOpen(false)
-                  searchRef.current?.blur()
-                }
-                if (e.key === "Enter") {
-                  const first = grouped.upcoming[0] ?? grouped.past[0] ?? grouped.undated[0]
-                  if (first) selectEvent(first.event_name)
-                }
-              }}
-            />
+        <div className="bg-sdfc-panel flex flex-wrap items-end justify-between gap-x-6 gap-y-3 px-6 py-4">
+          {/* The shown event now reads off the overlay on the map itself. */}
+          <h2 className="font-heading self-center text-xl font-bold tracking-wide text-white">
+            Section Heatmap
+          </h2>
+
+          {/* Dedicated search set: free text + date window, filtering the picker */}
+          <div
+            className="relative flex flex-wrap items-end gap-3"
+            onFocusCapture={() => setPickerOpen(true)}
+            onBlurCapture={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) setPickerOpen(false)
+            }}
+          >
+            <div className="grid gap-1">
+              <span className="text-[10px] font-semibold tracking-wide text-white/60 uppercase">
+                Show
+              </span>
+              <div
+                role="group"
+                aria-label="Filter events by date"
+                className="flex h-8 items-center gap-0.5 rounded-lg border border-white/20 bg-white/10 p-0.5"
+              >
+                {EVENT_WHEN.map((w) => (
+                  <button
+                    key={w.key}
+                    type="button"
+                    aria-pressed={when === w.key}
+                    onClick={() => setWhen(w.key)}
+                    className={cn(
+                      "h-full rounded-md px-3 text-xs font-medium transition-colors",
+                      when === w.key
+                        ? "text-sdfc-azul bg-white shadow-sm"
+                        : "text-white/70 hover:bg-white/10 hover:text-white",
+                    )}
+                  >
+                    {w.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid gap-1">
+              <label
+                htmlFor="stadium-event-search"
+                className="text-[10px] font-semibold tracking-wide text-white/60 uppercase"
+              >
+                Search
+              </label>
+              <Input
+                id="stadium-event-search"
+                ref={searchRef}
+                value={search}
+                placeholder={events.isPending ? "Loading events…" : "6SD code or date…"}
+                autoComplete="off"
+                className="w-52 border-white/20 bg-white/10 text-white placeholder:text-white/50 focus-visible:ring-white/40"
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    setPickerOpen(false)
+                    searchRef.current?.blur()
+                  }
+                  if (e.key === "Enter") {
+                    const first = grouped.upcoming[0] ?? grouped.past[0] ?? grouped.undated[0]
+                    if (first) selectEvent(first.event_name)
+                  }
+                }}
+              />
+            </div>
+            <div className="grid gap-1">
+              <label
+                htmlFor="stadium-date-from"
+                className="text-[10px] font-semibold tracking-wide text-white/60 uppercase"
+              >
+                From
+              </label>
+              <Input
+                id="stadium-date-from"
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="w-38 border-white/20 bg-white/10 text-white [color-scheme:dark] focus-visible:ring-white/40"
+              />
+            </div>
+            <div className="grid gap-1">
+              <label
+                htmlFor="stadium-date-to"
+                className="text-[10px] font-semibold tracking-wide text-white/60 uppercase"
+              >
+                To
+              </label>
+              <Input
+                id="stadium-date-to"
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="w-38 border-white/20 bg-white/10 text-white [color-scheme:dark] focus-visible:ring-white/40"
+              />
+            </div>
+            {(search || dateFrom || dateTo) && (
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  setSearch("")
+                  setDateFrom("")
+                  setDateTo("")
+                }}
+                className="pb-2 text-xs text-white/60 hover:text-white"
+              >
+                clear
+              </button>
+            )}
             {pickerOpen && (
-              <div className="bg-popover text-popover-foreground absolute top-full right-0 z-20 mt-1 max-h-80 w-full min-w-72 overflow-y-auto rounded-md border py-1 shadow-md">
+              <div className="bg-popover text-popover-foreground absolute top-full right-0 z-20 mt-1 max-h-80 w-80 overflow-y-auto rounded-md border py-1 shadow-md">
                 {renderGroup("Upcoming", grouped.upcoming)}
                 {renderGroup("Past", grouped.past)}
                 {renderGroup("Other", grouped.undated)}
                 {grouped.upcoming.length + grouped.past.length + grouped.undated.length === 0 && (
                   <div className="text-muted-foreground px-3 py-2 text-sm">
-                    No events match "{search}"
+                    No events match the current search
                   </div>
                 )}
               </div>
@@ -373,7 +510,77 @@ export default function Stadium() {
             )}
             {heat.data && (
               <div className="relative aspect-[4/3] w-full overflow-hidden rounded-lg">
-                <StadiumHeatmap heat={heat.data.sections} values={values} onHover={setHover} />
+                <StadiumHeatmap
+                  heat={heat.data.sections}
+                  values={values}
+                  labelFor={labelFor}
+                  onHover={setHover}
+                />
+
+                {/* Floating readout: which event, which metric, and the scale
+                    to read the fills against — all without leaving the map. */}
+                <div className="bg-card/95 pointer-events-none absolute top-3 right-3 z-20 w-[330px] rounded-lg border p-3 shadow-lg backdrop-blur-sm">
+                  <div className="font-heading text-lg leading-tight font-bold">
+                    {eventName ?? "…"}
+                  </div>
+                  <div className="text-muted-foreground text-xs">
+                    {eventRow?.event_date ? fmtDate(eventRow.event_date) : "no date"}
+                    {eventName && eventName === events.data?.next_event ? " · next home event" : ""}
+                  </div>
+
+                  <div className="mt-3 flex items-end justify-between gap-3">
+                    <span className="text-muted-foreground text-[11px] leading-tight font-semibold tracking-wide uppercase">
+                      {METRIC_LABEL[metric]}
+                      {metric === "scans" && normalize ? (
+                        <>
+                          <br />
+                          of tickets out
+                        </>
+                      ) : null}
+                    </span>
+                    <span className="font-heading text-3xl leading-none font-bold">{headline}</span>
+                  </div>
+
+                  <div
+                    className="mt-3"
+                    role="img"
+                    aria-label={`${METRIC_LABEL[metric]} legend in ten steps`}
+                  >
+                    <div className="flex overflow-hidden rounded-sm">
+                      {Array.from({ length: 10 }, (_, i) => (
+                        <span key={i} className="h-5 flex-1" aria-hidden>
+                          <span
+                            className="block h-full w-full dark:hidden"
+                            style={{ background: BUCKETS_LIGHT[i] }}
+                          />
+                          <span
+                            className="hidden h-full w-full dark:block"
+                            style={{ background: BUCKETS_DARK[i] }}
+                          />
+                        </span>
+                      ))}
+                    </div>
+                    <div className="text-muted-foreground mt-1 flex justify-between text-[10px] leading-none">
+                      <span>{scaleTick(0)}</span>
+                      <span>{scaleTick(0.5)}</span>
+                      <span>{scaleTick(1)}</span>
+                    </div>
+                  </div>
+
+                  <div className="text-muted-foreground mt-2 flex items-center gap-2 text-[11px]">
+                    <span
+                      className="size-3 shrink-0 rounded-sm dark:hidden"
+                      style={{ background: NO_DATA_LIGHT }}
+                      aria-hidden
+                    />
+                    <span
+                      className="hidden size-3 shrink-0 rounded-sm dark:block"
+                      style={{ background: NO_DATA_DARK }}
+                      aria-hidden
+                    />
+                    {metric === "scans" ? "no scans / no inventory" : "no inventory"}
+                  </div>
+                </div>
                 {hover && (
                   <div
                     className="bg-popover text-popover-foreground pointer-events-none absolute z-10 rounded-md border px-3 py-2 text-xs shadow-md"
@@ -418,49 +625,11 @@ export default function Stadium() {
               </div>
             )}
 
+            {/* Scale and metric now live on the map overlay; this keeps the
+                freshness stamp only. */}
             {heat.data && (
-              <div className="text-muted-foreground mt-3 flex flex-wrap items-end gap-x-6 gap-y-2 text-xs">
-                <div className="flex items-end gap-3">
-                  <div
-                    className="flex items-end"
-                    role="img"
-                    aria-label={`${METRIC_LABEL[metric]} legend in ten steps`}
-                  >
-                    {Array.from({ length: 10 }, (_, i) => (
-                      <div key={i} className="flex flex-col items-center gap-1">
-                        <span
-                          className="h-3 w-9 first:rounded-l-sm dark:hidden"
-                          style={{ background: BUCKETS_LIGHT[i] }}
-                          aria-hidden
-                        />
-                        <span
-                          className="hidden h-3 w-9 dark:inline-block"
-                          style={{ background: BUCKETS_DARK[i] }}
-                          aria-hidden
-                        />
-                        <span className="text-[9px] leading-none">{bucketLabel(i)}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <span className="pb-0.5">
-                    {METRIC_LABEL[metric]}
-                    {metric === "scans" && normalize ? " (of tickets out)" : ""}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 pb-0.5">
-                  <span
-                    className="size-2.5 rounded-sm dark:hidden"
-                    style={{ background: NO_DATA_LIGHT }}
-                    aria-hidden
-                  />
-                  <span
-                    className="hidden size-2.5 rounded-sm dark:inline-block"
-                    style={{ background: NO_DATA_DARK }}
-                    aria-hidden
-                  />
-                  <span>{metric === "scans" ? "no scans / no inventory" : "no inventory"}</span>
-                </div>
-                <span className="ml-auto pb-0.5">
+              <div className="text-muted-foreground mt-3 flex justify-end text-sm">
+                <span>
                   Zoom in for more sections · data as of{" "}
                   {new Date(heat.data.generated_at).toLocaleTimeString()}
                 </span>
