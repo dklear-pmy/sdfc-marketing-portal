@@ -1,30 +1,30 @@
-import path from "node:path"
-import { defineConfig } from "vite"
-import react from "@vitejs/plugin-react"
-import tailwindcss from "@tailwindcss/vite"
+import path from 'node:path';
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   // MapLibre spawns its worker via `new Worker(new URL(...))`; Vite's dep
   // pre-bundling breaks that resolution in dev, so leave it unbundled.
   optimizeDeps: {
-    exclude: ["maplibre-gl"],
+    exclude: ['maplibre-gl'],
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      '@': path.resolve(__dirname, './src'),
     },
   },
   server: {
     proxy: {
-      "/api": "http://localhost:8123",
+      '/api': 'http://localhost:8123',
     },
   },
   // `vite preview` serves the production build — used to verify bundling
   // (e.g. the MapLibre worker) before deploying; same API proxy as dev.
   preview: {
     proxy: {
-      "/api": "http://localhost:8123",
+      '/api': 'http://localhost:8123',
     },
   },
-})
+});

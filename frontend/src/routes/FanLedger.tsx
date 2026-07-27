@@ -1,20 +1,20 @@
-import { useState, type ChangeEvent, type FormEvent } from "react"
-import { useNavigate } from "react-router"
-import { useQuery } from "@tanstack/react-query"
+import { useState, type ChangeEvent, type FormEvent } from 'react';
+import { useNavigate } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
 import {
   api,
   type LedgerEventRow,
   type LedgerEventsPage,
   type LedgerStatusesPage,
-} from "@/lib/api"
-import { formatUtc, humanizeAttr, relativeFrom } from "@/lib/format"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+} from '@/lib/api';
+import { formatUtc, humanizeAttr, relativeFrom } from '@/lib/format';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -22,14 +22,14 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
-import { cn } from "@/lib/utils"
+} from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 
-const PAGE = 20
-const WINDOWS = ["24h", "7d", "30d", "all"] as const
+const PAGE = 20;
+const WINDOWS = ['24h', '7d', '30d', 'all'] as const;
 
 const selectCls =
-  "border-input bg-card h-9 max-w-[400px] rounded-md border px-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+  'border-input bg-card h-9 max-w-[400px] rounded-md border px-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50';
 
 function FacetSelect({
   value,
@@ -37,10 +37,10 @@ function FacetSelect({
   options,
   allLabel,
 }: {
-  value: string
-  onChange: (v: string) => void
-  options: string[]
-  allLabel: string
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  allLabel: string;
 }) {
   return (
     <select
@@ -55,7 +55,7 @@ function FacetSelect({
         </option>
       ))}
     </select>
-  )
+  );
 }
 
 function Pager({
@@ -65,16 +65,16 @@ function Pager({
   busy,
   onOffset,
 }: {
-  total: number
-  offset: number
-  count: number
-  busy: boolean
-  onOffset: (n: number) => void
+  total: number;
+  offset: number;
+  count: number;
+  busy: boolean;
+  onOffset: (n: number) => void;
 }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-muted-foreground text-sm">
-        {total === 0 ? "0 rows" : `${offset + 1}–${offset + count} of ${total.toLocaleString()}`}
+      <span className="text-sm text-muted-foreground">
+        {total === 0 ? '0 rows' : `${offset + 1}–${offset + count} of ${total.toLocaleString()}`}
       </span>
       <div className="flex items-center gap-2">
         <Button
@@ -95,34 +95,34 @@ function Pager({
         </Button>
       </div>
     </div>
-  )
+  );
 }
 
 function eventDetail(e: LedgerEventRow): string {
-  if (!e.feature_json) return ""
+  if (!e.feature_json) return '';
   try {
-    const obj = JSON.parse(e.feature_json) as Record<string, unknown>
+    const obj = JSON.parse(e.feature_json) as Record<string, unknown>;
     return Object.entries(obj)
-      .filter(([, v]) => v !== null && v !== "" && v !== undefined)
+      .filter(([, v]) => v !== null && v !== '' && v !== undefined)
       .slice(0, 3)
       .map(([k, v]) => `${k}: ${String(v)}`)
-      .join(" · ")
+      .join(' · ');
   } catch {
-    return e.feature_json
+    return e.feature_json;
   }
 }
 
 export default function FanLedger() {
-  const [tab, setTab] = useState<"events" | "statuses">("events")
+  const [tab, setTab] = useState<'events' | 'statuses'>('events');
   return (
     <div className="grid gap-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Fan Ledger</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
+          <p className="mt-1 text-sm text-muted-foreground">
             The audited record behind every fan-facing decision — what happened across all our
-            systems (Events) and where each fan stands today (Statuses). Click any row to open
-            the fan's full profile.
+            systems (Events) and where each fan stands today (Statuses). Click any row to open the
+            fan's full profile.
           </p>
         </div>
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
@@ -132,49 +132,49 @@ export default function FanLedger() {
           </TabsList>
         </Tabs>
       </div>
-      {tab === "events" ? <EventsTab /> : <StatusesTab />}
+      {tab === 'events' ? <EventsTab /> : <StatusesTab />}
     </div>
-  )
+  );
 }
 
 function EventsTab() {
-  const navigate = useNavigate()
-  const [qInput, setQInput] = useState("")
-  const [q, setQ] = useState("")
-  const [window, setWindow] = useState<(typeof WINDOWS)[number]>("7d")
-  const [activity, setActivity] = useState("")
-  const [source, setSource] = useState("")
-  const [includeEcho, setIncludeEcho] = useState(false)
-  const [offset, setOffset] = useState(0)
+  const navigate = useNavigate();
+  const [qInput, setQInput] = useState('');
+  const [q, setQ] = useState('');
+  const [window, setWindow] = useState<(typeof WINDOWS)[number]>('7d');
+  const [activity, setActivity] = useState('');
+  const [source, setSource] = useState('');
+  const [includeEcho, setIncludeEcho] = useState(false);
+  const [offset, setOffset] = useState(0);
 
   const query = useQuery<LedgerEventsPage>({
-    queryKey: ["ledger-events", q, window, activity, source, includeEcho, offset],
+    queryKey: ['ledger-events', q, window, activity, source, includeEcho, offset],
     queryFn: () => {
-      const p = new URLSearchParams({ window, limit: String(PAGE), offset: String(offset) })
-      if (q) p.set("q", q)
-      if (activity) p.set("activity", activity)
-      if (source) p.set("source", source)
-      if (includeEcho) p.set("include_echo", "true")
-      return api.get(`/api/ledger/events?${p.toString()}`)
+      const p = new URLSearchParams({ window, limit: String(PAGE), offset: String(offset) });
+      if (q) p.set('q', q);
+      if (activity) p.set('activity', activity);
+      if (source) p.set('source', source);
+      if (includeEcho) p.set('include_echo', 'true');
+      return api.get(`/api/ledger/events?${p.toString()}`);
     },
     placeholderData: (prev) => prev,
     staleTime: 30_000,
-  })
+  });
 
   function reset<T>(setter: (v: T) => void) {
     return (v: T) => {
-      setOffset(0)
-      setter(v)
-    }
+      setOffset(0);
+      setter(v);
+    };
   }
 
   function onSearch(e: FormEvent) {
-    e.preventDefault()
-    setOffset(0)
-    setQ(qInput.trim())
+    e.preventDefault();
+    setOffset(0);
+    setQ(qInput.trim());
   }
 
-  const data = query.data
+  const data = query.data;
 
   return (
     <Card>
@@ -195,7 +195,7 @@ function EventsTab() {
             <TabsList>
               {WINDOWS.map((w) => (
                 <TabsTrigger key={w} value={w}>
-                  {w === "all" ? "All time" : `Last ${w}`}
+                  {w === 'all' ? 'All time' : `Last ${w}`}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -231,7 +231,9 @@ function EventsTab() {
         {query.isPending && <Skeleton className="h-72" />}
         {data && (
           <>
-            <div className={cn("overflow-x-auto rounded-md border", query.isFetching && "opacity-60")}>
+            <div
+              className={cn('overflow-x-auto rounded-md border', query.isFetching && 'opacity-60')}
+            >
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -245,7 +247,7 @@ function EventsTab() {
                 <TableBody>
                   {data.events.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-muted-foreground h-16 text-center">
+                      <TableCell colSpan={5} className="h-16 text-center text-muted-foreground">
                         No events match these filters.
                       </TableCell>
                     </TableRow>
@@ -253,10 +255,10 @@ function EventsTab() {
                   {data.events.map((e) => (
                     <TableRow
                       key={e.event_id}
-                      className={cn("cursor-pointer", e.is_system_echo && "opacity-60")}
+                      className={cn('cursor-pointer', e.is_system_echo && 'opacity-60')}
                       onClick={() => navigate(`/fans?email=${encodeURIComponent(e.customer)}`)}
                     >
-                      <TableCell className="text-muted-foreground whitespace-nowrap text-xs">
+                      <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
                         <div>{formatUtc(e.ts)}</div>
                         <div>{relativeFrom(e.ts)}</div>
                       </TableCell>
@@ -265,16 +267,16 @@ function EventsTab() {
                           {e.customer}
                         </span>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-sm font-medium">
+                      <TableCell className="text-sm font-medium whitespace-nowrap">
                         {humanizeAttr(e.activity)}
                         {e.is_system_echo && (
-                          <span className="text-muted-foreground ml-1 text-xs">(echo)</span>
+                          <span className="ml-1 text-xs text-muted-foreground">(echo)</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-muted-foreground text-sm">
-                        {e.source_system ?? "—"}
+                      <TableCell className="text-sm text-muted-foreground">
+                        {e.source_system ?? '—'}
                       </TableCell>
-                      <TableCell className="text-muted-foreground max-w-96">
+                      <TableCell className="max-w-96 text-muted-foreground">
                         <span className="block truncate text-xs" title={eventDetail(e)}>
                           {eventDetail(e)}
                           {e.revenue_impact != null && ` · $${e.revenue_impact}`}
@@ -296,46 +298,46 @@ function EventsTab() {
         )}
       </CardContent>
     </Card>
-  )
+  );
 }
 
 function StatusesTab() {
-  const navigate = useNavigate()
-  const [qInput, setQInput] = useState("")
-  const [q, setQ] = useState("")
-  const [domain, setDomain] = useState("")
-  const [status, setStatus] = useState("")
-  const [latchedOnly, setLatchedOnly] = useState(false)
-  const [offset, setOffset] = useState(0)
+  const navigate = useNavigate();
+  const [qInput, setQInput] = useState('');
+  const [q, setQ] = useState('');
+  const [domain, setDomain] = useState('');
+  const [status, setStatus] = useState('');
+  const [latchedOnly, setLatchedOnly] = useState(false);
+  const [offset, setOffset] = useState(0);
 
   const query = useQuery<LedgerStatusesPage>({
-    queryKey: ["ledger-statuses", q, domain, status, latchedOnly, offset],
+    queryKey: ['ledger-statuses', q, domain, status, latchedOnly, offset],
     queryFn: () => {
-      const p = new URLSearchParams({ limit: String(PAGE), offset: String(offset) })
-      if (q) p.set("q", q)
-      if (domain) p.set("domain", domain)
-      if (status) p.set("status", status)
-      if (latchedOnly) p.set("latched_only", "true")
-      return api.get(`/api/ledger/statuses?${p.toString()}`)
+      const p = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
+      if (q) p.set('q', q);
+      if (domain) p.set('domain', domain);
+      if (status) p.set('status', status);
+      if (latchedOnly) p.set('latched_only', 'true');
+      return api.get(`/api/ledger/statuses?${p.toString()}`);
     },
     placeholderData: (prev) => prev,
     staleTime: 30_000,
-  })
+  });
 
   function reset<T>(setter: (v: T) => void) {
     return (v: T) => {
-      setOffset(0)
-      setter(v)
-    }
+      setOffset(0);
+      setter(v);
+    };
   }
 
   function onSearch(e: FormEvent) {
-    e.preventDefault()
-    setOffset(0)
-    setQ(qInput.trim())
+    e.preventDefault();
+    setOffset(0);
+    setQ(qInput.trim());
   }
 
-  const data = query.data
+  const data = query.data;
 
   return (
     <Card>
@@ -388,7 +390,9 @@ function StatusesTab() {
         {query.isPending && <Skeleton className="h-72" />}
         {data && (
           <>
-            <div className={cn("overflow-x-auto rounded-md border", query.isFetching && "opacity-60")}>
+            <div
+              className={cn('overflow-x-auto rounded-md border', query.isFetching && 'opacity-60')}
+            >
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -403,7 +407,7 @@ function StatusesTab() {
                 <TableBody>
                   {data.statuses.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-muted-foreground h-16 text-center">
+                      <TableCell colSpan={6} className="h-16 text-center text-muted-foreground">
                         No rows match these filters.
                       </TableCell>
                     </TableRow>
@@ -419,7 +423,7 @@ function StatusesTab() {
                           {s.email}
                         </span>
                       </TableCell>
-                      <TableCell className="text-muted-foreground whitespace-nowrap text-sm">
+                      <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
                         {humanizeAttr(s.status_domain)}
                       </TableCell>
                       <TableCell>
@@ -427,8 +431,8 @@ function StatusesTab() {
                           <Badge
                             variant={
                               /unsub|dropped|lapsed|inactive/i.test(s.status)
-                                ? "destructive"
-                                : "secondary"
+                                ? 'destructive'
+                                : 'secondary'
                             }
                           >
                             {s.status}
@@ -436,14 +440,14 @@ function StatusesTab() {
                           {s.latched && <Badge variant="outline">latched</Badge>}
                         </div>
                       </TableCell>
-                      <TableCell className="text-muted-foreground whitespace-nowrap text-sm">
-                        {s.authority ?? "—"}
+                      <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
+                        {s.authority ?? '—'}
                       </TableCell>
-                      <TableCell className="text-muted-foreground whitespace-nowrap text-xs">
-                        {s.status_since ? formatUtc(s.status_since) : "—"}
+                      <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                        {s.status_since ? formatUtc(s.status_since) : '—'}
                       </TableCell>
-                      <TableCell className="text-muted-foreground whitespace-nowrap text-xs">
-                        {s.last_event_at ? relativeFrom(s.last_event_at) : "—"}
+                      <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
+                        {s.last_event_at ? relativeFrom(s.last_event_at) : '—'}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -461,5 +465,5 @@ function StatusesTab() {
         )}
       </CardContent>
     </Card>
-  )
+  );
 }

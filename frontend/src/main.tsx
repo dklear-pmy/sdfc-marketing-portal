@@ -1,30 +1,30 @@
-import { lazy, StrictMode, Suspense } from "react"
-import { createRoot } from "react-dom/client"
-import { createBrowserRouter, RouterProvider, Navigate } from "react-router"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { AuthProvider, RequireAuth } from "@/lib/auth"
-import AppLayout from "@/routes/AppLayout"
-import Login from "@/routes/Login"
-import Harness from "@/routes/Harness"
-import Fans from "@/routes/Fans"
-import FanLedger from "@/routes/FanLedger"
-import Tripwires from "@/routes/Tripwires"
+import { lazy, StrictMode, Suspense } from 'react';
+import { createRoot } from 'react-dom/client';
+import { createBrowserRouter, RouterProvider, Navigate } from 'react-router';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AuthProvider, RequireAuth } from '@/lib/auth';
+import AppLayout from '@/routes/AppLayout';
+import Login from '@/routes/Login';
+import Harness from '@/routes/Harness';
+import Fans from '@/routes/Fans';
+import FanLedger from '@/routes/FanLedger';
+import Tripwires from '@/routes/Tripwires';
 
 // Stadium pulls in MapLibre GL (~250 KB gzip) — split it out of the main bundle.
-const Stadium = lazy(() => import("@/routes/Stadium"))
-import Admin from "@/routes/Admin"
-import "./index.css"
+const Stadium = lazy(() => import('@/routes/Stadium'));
+import Admin from '@/routes/Admin';
+import './index.css';
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: 1, refetchOnWindowFocus: false },
   },
-})
+});
 
 const router = createBrowserRouter([
-  { path: "/login", element: <Login /> },
+  { path: '/login', element: <Login /> },
   {
-    path: "/",
+    path: '/',
     element: (
       <RequireAuth>
         <AppLayout />
@@ -32,30 +32,30 @@ const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <Navigate to="/harness" replace /> },
-      { path: "harness", element: <Harness /> },
-      { path: "fans", element: <Fans /> },
-      { path: "ledger", element: <FanLedger /> },
-      { path: "customers", element: <Navigate to="/fans" replace /> },
+      { path: 'harness', element: <Harness /> },
+      { path: 'fans', element: <Fans /> },
+      { path: 'ledger', element: <FanLedger /> },
+      { path: 'customers', element: <Navigate to="/fans" replace /> },
       {
-        path: "stadium",
+        path: 'stadium',
         element: (
           <Suspense fallback={null}>
             <Stadium />
           </Suspense>
         ),
       },
-      { path: "tripwires", element: <Tripwires /> },
-      { path: "admin", element: <Admin /> },
+      { path: 'tripwires', element: <Tripwires /> },
+      { path: 'admin', element: <Admin /> },
     ],
   },
-])
+]);
 
-createRoot(document.getElementById("root")!).render(
+createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <AuthProvider>
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
       </QueryClientProvider>
     </AuthProvider>
-  </StrictMode>,
-)
+  </StrictMode>
+);

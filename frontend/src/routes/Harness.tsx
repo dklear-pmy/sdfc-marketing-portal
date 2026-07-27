@@ -1,5 +1,5 @@
-import { useMemo, useState, type FormEvent } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMemo, useState, type FormEvent } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createColumnHelper,
   flexRender,
@@ -8,23 +8,23 @@ import {
   getPaginationRowModel,
   useReactTable,
   type ColumnFiltersState,
-} from "@tanstack/react-table"
+} from '@tanstack/react-table';
 import {
   api,
   type ValidationReport,
   type CheckStatus,
   type HarnessRun,
   type HarnessRunSummary,
-} from "@/lib/api"
-import { useAuth } from "@/lib/auth"
-import { formatUtc, humanizeSlug, humanStage, shortIdentity, statusLabel } from "@/lib/format"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+} from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { formatUtc, humanizeSlug, humanStage, shortIdentity, statusLabel } from '@/lib/format';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -32,58 +32,59 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
-import { cn } from "@/lib/utils"
+} from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 
-const checkVariant: Record<CheckStatus, "default" | "destructive" | "secondary" | "outline"> = {
-  pass: "default",
-  fail: "destructive",
-  warn: "secondary",
-  skip: "outline",
-}
+const checkVariant: Record<CheckStatus, 'default' | 'destructive' | 'secondary' | 'outline'> = {
+  pass: 'default',
+  fail: 'destructive',
+  warn: 'secondary',
+  skip: 'outline',
+};
 
 const pairLabel: Record<string, string> = {
-  test_trigger: "Test · Trigger [1/2]",
-  test_journey: "Test · Journey [2/2]",
-  prod_trigger: "Prod · Trigger [1/2]",
-  prod_journey: "Prod · Journey [2/2]",
-}
+  test_trigger: 'Test · Trigger [1/2]',
+  test_journey: 'Test · Journey [2/2]',
+  prod_trigger: 'Prod · Trigger [1/2]',
+  prod_journey: 'Prod · Journey [2/2]',
+};
 
-const runStatusVariant: Record<HarnessRun["status"], "default" | "destructive" | "secondary"> = {
-  RUNNING: "secondary",
-  PASSED: "default",
-  FAILED: "destructive",
-  TIMED_OUT: "destructive",
-}
+const runStatusVariant: Record<HarnessRun['status'], 'default' | 'destructive' | 'secondary'> = {
+  RUNNING: 'secondary',
+  PASSED: 'default',
+  FAILED: 'destructive',
+  TIMED_OUT: 'destructive',
+};
 
-const RUN_STATUSES = ["ALL", "RUNNING", "PASSED", "FAILED", "TIMED_OUT"] as const
+const RUN_STATUSES = ['ALL', 'RUNNING', 'PASSED', 'FAILED', 'TIMED_OUT'] as const;
 
 export default function Harness() {
-  const [slug, setSlug] = useState("")
-  const [formError, setFormError] = useState<string | null>(null)
-  const [activeRunId, setActiveRunId] = useState<string | null>(null)
+  const [slug, setSlug] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
   const validation = useMutation({
-    mutationFn: (s: string) => api.get<ValidationReport>(`/api/harness/validate/${encodeURIComponent(s)}`),
-  })
+    mutationFn: (s: string) =>
+      api.get<ValidationReport>(`/api/harness/validate/${encodeURIComponent(s)}`),
+  });
 
   function onSubmit(e: FormEvent) {
-    e.preventDefault()
+    e.preventDefault();
     if (!slug.trim()) {
-      setFormError("Enter a campaign slug first — the grey text is just an example.")
-      return
+      setFormError('Enter a campaign slug first — the grey text is just an example.');
+      return;
     }
-    setFormError(null)
-    validation.mutate(slug.trim())
+    setFormError(null);
+    validation.mutate(slug.trim());
   }
 
-  const report = validation.data
+  const report = validation.data;
 
   return (
     <div className="grid gap-6">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Campaign Tester</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
+        <p className="mt-1 text-sm text-muted-foreground">
           Prove a campaign works before any fan sees it — check its setup, then send a real
           end-to-end test to a safe test inbox.
         </p>
@@ -93,8 +94,8 @@ export default function Harness() {
         <CardHeader>
           <CardTitle>Validate wiring</CardTitle>
           <CardDescription>
-            Enter the campaign's name code as it appears in Customer.io, e.g.{" "}
-            <code className="bg-muted rounded px-1 py-0.5">Welcome-General-260715</code>. This
+            Enter the campaign's name code as it appears in Customer.io, e.g.{' '}
+            <code className="rounded bg-muted px-1 py-0.5">Welcome-General-260715</code>. This
             confirms the test and live versions are wired identically before anything is sent.
           </CardDescription>
         </CardHeader>
@@ -111,10 +112,10 @@ export default function Harness() {
               />
             </div>
             <Button type="submit" disabled={validation.isPending}>
-              {validation.isPending ? "Validating…" : "Validate"}
+              {validation.isPending ? 'Validating…' : 'Validate'}
             </Button>
           </form>
-          {formError && <p className="text-destructive mt-2 text-sm">{formError}</p>}
+          {formError && <p className="mt-2 text-sm text-destructive">{formError}</p>}
         </CardContent>
       </Card>
 
@@ -132,8 +133,8 @@ export default function Harness() {
               <CardTitle>{humanizeSlug(report.slug)} — campaign pairs</CardTitle>
               <CardDescription>
                 {report.summary.fail === 0
-                  ? "All static checks passed."
-                  : `${report.summary.fail} check(s) failing.`}{" "}
+                  ? 'All static checks passed.'
+                  : `${report.summary.fail} check(s) failing.`}{' '}
                 Generated {formatUtc(report.generated_at)}
               </CardDescription>
             </CardHeader>
@@ -151,15 +152,17 @@ export default function Harness() {
                 <TableBody>
                   {report.campaigns.map((c) => (
                     <TableRow key={c.role}>
-                      <TableCell className="whitespace-nowrap">{pairLabel[c.role] ?? c.role}</TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {pairLabel[c.role] ?? c.role}
+                      </TableCell>
                       <TableCell>{c.id}</TableCell>
                       <TableCell className="max-w-md truncate">{c.name}</TableCell>
                       <TableCell>
-                        <Badge variant={c.state === "running" ? "default" : "secondary"}>
+                        <Badge variant={c.state === 'running' ? 'default' : 'secondary'}>
                           {c.state}
                         </Badge>
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{c.event_name ?? "—"}</TableCell>
+                      <TableCell className="font-mono text-xs">{c.event_name ?? '—'}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -186,8 +189,10 @@ export default function Harness() {
                       <TableCell>
                         <Badge variant={checkVariant[check.status]}>{check.status}</Badge>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap font-medium">{check.name}</TableCell>
-                      <TableCell className="text-muted-foreground text-sm">{check.detail}</TableCell>
+                      <TableCell className="font-medium whitespace-nowrap">{check.name}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {check.detail}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -207,7 +212,7 @@ export default function Harness() {
 
       {activeRunId && <RunDetail runId={activeRunId} onClose={() => setActiveRunId(null)} />}
     </div>
-  )
+  );
 }
 
 function StartRunCard({
@@ -215,21 +220,21 @@ function StartRunCard({
   wiringClean,
   onStarted,
 }: {
-  slug: string
-  wiringClean: boolean
-  onStarted: (runId: string) => void
+  slug: string;
+  wiringClean: boolean;
+  onStarted: (runId: string) => void;
 }) {
-  const { role } = useAuth()
-  const queryClient = useQueryClient()
-  const canRun = role === "operator" || role === "admin"
+  const { role } = useAuth();
+  const queryClient = useQueryClient();
+  const canRun = role === 'operator' || role === 'admin';
 
   const start = useMutation({
     mutationFn: () => api.post<HarnessRun>(`/api/harness/run/${encodeURIComponent(slug)}`),
     onSuccess: (run) => {
-      onStarted(run.run_id)
-      void queryClient.invalidateQueries({ queryKey: ["harness-runs"] })
+      onStarted(run.run_id);
+      void queryClient.invalidateQueries({ queryKey: ['harness-runs'] });
     },
-  })
+  });
 
   return (
     <Card>
@@ -238,20 +243,20 @@ function StartRunCard({
         <CardDescription>
           Sends the campaign's test twin to a brand-new test identity and follows it end to end —
           delivery, opens and clicks — without touching a single real fan. The first two emails
-          verify in about 15 minutes; emails on multi-day timers arrive later in the test inbox
-          and aren't awaited.
+          verify in about 15 minutes; emails on multi-day timers arrive later in the test inbox and
+          aren't awaited.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         {!canRun ? (
-          <p className="text-muted-foreground text-sm">Requires the operator role.</p>
+          <p className="text-sm text-muted-foreground">Requires the operator role.</p>
         ) : (
           <div className="flex items-center gap-3">
             <Button onClick={() => start.mutate()} disabled={start.isPending}>
-              {start.isPending ? "Starting…" : `Start run for ${humanizeSlug(slug)}`}
+              {start.isPending ? 'Starting…' : `Start run for ${humanizeSlug(slug)}`}
             </Button>
             {!wiringClean && (
-              <span className="text-muted-foreground text-sm">
+              <span className="text-sm text-muted-foreground">
                 Heads-up: static checks have failures — the run will likely surface them.
               </span>
             )}
@@ -265,75 +270,75 @@ function StartRunCard({
         )}
       </CardContent>
     </Card>
-  )
+  );
 }
 
-const columnHelper = createColumnHelper<HarnessRunSummary>()
+const columnHelper = createColumnHelper<HarnessRunSummary>();
 
 function RunHistory({
   activeRunId,
   onSelect,
 }: {
-  activeRunId: string | null
-  onSelect: (runId: string) => void
+  activeRunId: string | null;
+  onSelect: (runId: string) => void;
 }) {
-  const [globalFilter, setGlobalFilter] = useState("")
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
+  const [globalFilter, setGlobalFilter] = useState('');
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
 
   const runsQuery = useQuery({
-    queryKey: ["harness-runs"],
-    queryFn: () => api.get<{ runs: HarnessRunSummary[] }>("/api/harness/runs?limit=200"),
+    queryKey: ['harness-runs'],
+    queryFn: () => api.get<{ runs: HarnessRunSummary[] }>('/api/harness/runs?limit=200'),
     refetchInterval: (q) =>
-      q.state.data?.runs.some((r) => r.status === "RUNNING") ? 30_000 : false,
-  })
+      q.state.data?.runs.some((r) => r.status === 'RUNNING') ? 30_000 : false,
+  });
 
   const columns = useMemo(
     () => [
-      columnHelper.accessor("started_at", {
-        header: "Started",
+      columnHelper.accessor('started_at', {
+        header: 'Started',
         cell: (info) => (
-          <span className="whitespace-nowrap text-sm">{formatUtc(info.getValue())}</span>
+          <span className="text-sm whitespace-nowrap">{formatUtc(info.getValue())}</span>
         ),
       }),
-      columnHelper.accessor("status", {
-        header: "Status",
+      columnHelper.accessor('status', {
+        header: 'Status',
         cell: (info) => (
           <Badge variant={runStatusVariant[info.getValue()]}>{statusLabel[info.getValue()]}</Badge>
         ),
-        filterFn: "equals",
+        filterFn: 'equals',
       }),
-      columnHelper.accessor("slug", {
-        header: "Campaign",
+      columnHelper.accessor('slug', {
+        header: 'Campaign',
         cell: (info) => (
           <span className="whitespace-nowrap" title={info.getValue()}>
             {humanizeSlug(info.getValue())}
           </span>
         ),
       }),
-      columnHelper.accessor("identity", {
-        header: "Identity",
+      columnHelper.accessor('identity', {
+        header: 'Identity',
         cell: (info) => (
           <code className="text-xs" title={info.getValue()}>
             {shortIdentity(info.getValue())}
           </code>
         ),
       }),
-      columnHelper.accessor("stage", {
-        header: "Progress",
+      columnHelper.accessor('stage', {
+        header: 'Progress',
         cell: (info) => <span className="whitespace-nowrap">{humanStage(info.getValue())}</span>,
       }),
-      columnHelper.accessor("detail", {
-        header: "Detail",
+      columnHelper.accessor('detail', {
+        header: 'Detail',
         cell: (info) => (
-          <span className="text-muted-foreground block max-w-sm truncate text-sm">
-            {info.getValue() ?? "—"}
+          <span className="block max-w-sm truncate text-sm text-muted-foreground">
+            {info.getValue() ?? '—'}
           </span>
         ),
         enableGlobalFilter: false,
       }),
     ],
-    [],
-  )
+    []
+  );
 
   const table = useReactTable({
     data: runsQuery.data?.runs ?? [],
@@ -345,35 +350,35 @@ function RunHistory({
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     globalFilterFn: (row, _columnId, filterValue) => {
-      const q = String(filterValue).toLowerCase()
-      const r = row.original
+      const q = String(filterValue).toLowerCase();
+      const r = row.original;
       return [r.run_id, r.slug, humanizeSlug(r.slug), r.identity, r.stage, r.status]
-        .join(" ")
+        .join(' ')
         .toLowerCase()
-        .includes(q)
+        .includes(q);
     },
     initialState: { pagination: { pageSize: 15 } },
     getRowId: (r) => r.run_id,
-  })
+  });
 
   const statusFilter =
-    (columnFilters.find((f) => f.id === "status")?.value as string | undefined) ?? "ALL"
+    (columnFilters.find((f) => f.id === 'status')?.value as string | undefined) ?? 'ALL';
 
   function setStatusFilter(value: string) {
-    setColumnFilters(value === "ALL" ? [] : [{ id: "status", value }])
-    table.setPageIndex(0)
+    setColumnFilters(value === 'ALL' ? [] : [{ id: 'status', value }]);
+    table.setPageIndex(0);
   }
 
-  const pageCount = table.getPageCount()
-  const pageIndex = table.getState().pagination.pageIndex
+  const pageCount = table.getPageCount();
+  const pageIndex = table.getState().pagination.pageIndex;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Run history</CardTitle>
         <CardDescription>
-          Every test run, newest first. Click a row for its full timeline — opening a running
-          test resumes its progress tracking.
+          Every test run, newest first. Click a row for its full timeline — opening a running test
+          resumes its progress tracking.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -383,15 +388,15 @@ function RunHistory({
             placeholder="Search campaign, identity, run id…"
             value={globalFilter}
             onChange={(e) => {
-              setGlobalFilter(e.target.value)
-              table.setPageIndex(0)
+              setGlobalFilter(e.target.value);
+              table.setPageIndex(0);
             }}
           />
           <Tabs value={statusFilter} onValueChange={setStatusFilter}>
             <TabsList>
               {RUN_STATUSES.map((s) => (
                 <TabsTrigger key={s} value={s}>
-                  {s === "ALL" ? "All" : statusLabel[s]}
+                  {s === 'ALL' ? 'All' : statusLabel[s]}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -406,7 +411,7 @@ function RunHistory({
         )}
 
         {table.getRowModel().rows.length === 0 && !runsQuery.isPending && (
-          <p className="text-muted-foreground text-sm">No runs match.</p>
+          <p className="text-sm text-muted-foreground">No runs match.</p>
         )}
 
         {table.getRowModel().rows.length > 0 && (
@@ -428,7 +433,7 @@ function RunHistory({
                   <TableRow
                     key={row.id}
                     onClick={() => onSelect(row.original.run_id)}
-                    className={cn("cursor-pointer", row.id === activeRunId && "bg-accent/50")}
+                    className={cn('cursor-pointer', row.id === activeRunId && 'bg-accent/50')}
                   >
                     {row.getVisibleCells().map((cell) => (
                       <TableCell key={cell.id}>
@@ -441,9 +446,9 @@ function RunHistory({
             </Table>
 
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground text-sm">
+              <span className="text-sm text-muted-foreground">
                 {table.getFilteredRowModel().rows.length} run(s)
-                {pageCount > 1 ? ` · page ${pageIndex + 1} of ${pageCount}` : ""}
+                {pageCount > 1 ? ` · page ${pageIndex + 1} of ${pageCount}` : ''}
               </span>
               {pageCount > 1 && (
                 <div className="flex gap-2">
@@ -470,26 +475,26 @@ function RunHistory({
         )}
       </CardContent>
     </Card>
-  )
+  );
 }
 
 function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
-  const { role } = useAuth()
-  const canAdvance = role === "operator" || role === "admin"
+  const { role } = useAuth();
+  const canAdvance = role === 'operator' || role === 'admin';
 
   const run = useQuery({
-    queryKey: ["harness-run", runId, canAdvance],
+    queryKey: ['harness-run', runId, canAdvance],
     queryFn: () =>
       canAdvance
         ? api.post<HarnessRun>(`/api/harness/runs/${runId}/advance`)
         : api.get<HarnessRun>(`/api/harness/runs/${runId}`),
     refetchInterval: (q) => {
-      const status = q.state.data?.status
-      return !status || status === "RUNNING" ? 20_000 : false
+      const status = q.state.data?.status;
+      return !status || status === 'RUNNING' ? 20_000 : false;
     },
-  })
+  });
 
-  const current = run.data
+  const current = run.data;
 
   return (
     <Card>
@@ -497,11 +502,13 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
         <div className="flex items-start justify-between gap-4">
           <div>
             <CardTitle>
-              {current ? `${humanizeSlug(current.slug)} · ${shortIdentity(current.identity)}` : "Run detail"}
+              {current
+                ? `${humanizeSlug(current.slug)} · ${shortIdentity(current.identity)}`
+                : 'Run detail'}
             </CardTitle>
             <CardDescription>
               <code className="text-xs">{runId}</code>
-              {current?.started_by ? ` · started by ${current.started_by}` : ""}
+              {current?.started_by ? ` · started by ${current.started_by}` : ''}
             </CardDescription>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose}>
@@ -519,9 +526,11 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
         {current && (
           <>
             <div className="flex flex-wrap items-center gap-3 text-sm">
-              <Badge variant={runStatusVariant[current.status]}>{statusLabel[current.status]}</Badge>
+              <Badge variant={runStatusVariant[current.status]}>
+                {statusLabel[current.status]}
+              </Badge>
               <span className="text-muted-foreground">{humanStage(current.stage)}</span>
-              {current.status === "RUNNING" && canAdvance && (
+              {current.status === 'RUNNING' && canAdvance && (
                 <span className="text-muted-foreground">advancing every 20s…</span>
               )}
             </div>
@@ -537,9 +546,9 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
               <TableBody>
                 {current.timeline.map((t, i) => (
                   <TableRow key={i}>
-                    <TableCell className="whitespace-nowrap text-sm">{formatUtc(t.ts)}</TableCell>
+                    <TableCell className="text-sm whitespace-nowrap">{formatUtc(t.ts)}</TableCell>
                     <TableCell className="whitespace-nowrap">{humanStage(t.stage)}</TableCell>
-                    <TableCell className="text-muted-foreground text-sm">{t.detail}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{t.detail}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -548,5 +557,5 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
         )}
       </CardContent>
     </Card>
-  )
+  );
 }

@@ -1,5 +1,5 @@
-import { useMemo, useState, type FormEvent } from "react"
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMemo, useState, type FormEvent } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
   type Tripwire,
@@ -7,17 +7,17 @@ import {
   type TripwireHistoryRow,
   type TripwireStatus,
   type TripwiresState,
-} from "@/lib/api"
-import { useAuth } from "@/lib/auth"
-import { formatUtc, relativeFrom, shortIdentity } from "@/lib/format"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+} from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { formatUtc, relativeFrom, shortIdentity } from '@/lib/format';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -25,34 +25,34 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
-import { cn } from "@/lib/utils"
+} from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 
 const checkLabel: Record<string, string> = {
-  profile_exists: "Profile exists",
-  subscription: "Subscription intact",
-  transport: "Transport (24h)",
-  sink_arrival: "Sink arrival",
-  quiet: "Send recency",
-  pmy_test_lint: "PMY-TEST lint",
-}
+  profile_exists: 'Profile exists',
+  subscription: 'Subscription intact',
+  transport: 'Transport (24h)',
+  sink_arrival: 'Sink arrival',
+  quiet: 'Send recency',
+  pmy_test_lint: 'PMY-TEST lint',
+};
 
-const statusVariant: Record<TripwireStatus, "default" | "destructive" | "secondary" | "outline"> = {
-  PASS: "secondary",
-  WARN: "outline",
-  FAIL: "destructive",
-}
+const statusVariant: Record<TripwireStatus, 'default' | 'destructive' | 'secondary' | 'outline'> = {
+  PASS: 'secondary',
+  WARN: 'outline',
+  FAIL: 'destructive',
+};
 
 function overallBadge(overall: string) {
-  if (overall === "FAIL") return <Badge variant="destructive">Failing</Badge>
-  if (overall === "WARN")
+  if (overall === 'FAIL') return <Badge variant="destructive">Failing</Badge>;
+  if (overall === 'WARN')
     return (
       <Badge variant="outline" className="text-amber-600 dark:text-amber-500">
         Warnings
       </Badge>
-    )
-  if (overall === "PASS") return <Badge variant="default">OK</Badge>
-  return <Badge variant="outline">{overall === "UNCHECKED" ? "Not checked yet" : overall}</Badge>
+    );
+  if (overall === 'PASS') return <Badge variant="default">OK</Badge>;
+  return <Badge variant="outline">{overall === 'UNCHECKED' ? 'Not checked yet' : overall}</Badge>;
 }
 
 function CheckRow({ check }: { check: TripwireCheckRow }) {
@@ -64,54 +64,55 @@ function CheckRow({ check }: { check: TripwireCheckRow }) {
       <div className="min-w-0">
         <span className="font-medium">{checkLabel[check.check_name] ?? check.check_name}</span>
         {check.detail && (
-          <span className="text-muted-foreground block truncate" title={check.detail}>
+          <span className="block truncate text-muted-foreground" title={check.detail}>
             {check.detail}
           </span>
         )}
       </div>
     </div>
-  )
+  );
 }
 
 export default function Tripwires() {
-  const { role } = useAuth()
-  const canOperate = role === "operator" || role === "admin"
-  const queryClient = useQueryClient()
+  const { role } = useAuth();
+  const canOperate = role === 'operator' || role === 'admin';
+  const queryClient = useQueryClient();
 
   const state = useQuery<TripwiresState>({
-    queryKey: ["tripwires"],
-    queryFn: () => api.get("/api/tripwires"),
+    queryKey: ['tripwires'],
+    queryFn: () => api.get('/api/tripwires'),
     refetchInterval: 60_000,
-  })
+  });
 
   const runNow = useMutation({
-    mutationFn: () => api.post<{ fail: number; warn: number; checks: number }>("/api/tripwires/run"),
+    mutationFn: () =>
+      api.post<{ fail: number; warn: number; checks: number }>('/api/tripwires/run'),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["tripwires"] })
-      void queryClient.invalidateQueries({ queryKey: ["tripwire-history"] })
+      void queryClient.invalidateQueries({ queryKey: ['tripwires'] });
+      void queryClient.invalidateQueries({ queryKey: ['tripwire-history'] });
     },
-  })
+  });
 
-  const data = state.data
-  const failing = data?.tripwires.filter((t) => t.overall === "FAIL") ?? []
-  const workspaceFailing = data?.workspace.overall === "FAIL"
+  const data = state.data;
+  const failing = data?.tripwires.filter((t) => t.overall === 'FAIL') ?? [];
+  const workspaceFailing = data?.workspace.overall === 'FAIL';
 
   return (
     <div className="grid gap-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Tripwire Accounts</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Fan-like accounts planted inside our real campaign audiences, checked around the
-            clock — every five minutes — to catch problems before fans do: broken profiles,
-            wrongful unsubscribes, emails that stop delivering, and test campaigns leaking into
-            real audiences. Failures email the team immediately, remind hourly until resolved,
-            and confirm when fixed (recipients are managed in Admin).
+          <p className="mt-1 text-sm text-muted-foreground">
+            Fan-like accounts planted inside our real campaign audiences, checked around the clock —
+            every five minutes — to catch problems before fans do: broken profiles, wrongful
+            unsubscribes, emails that stop delivering, and test campaigns leaking into real
+            audiences. Failures email the team immediately, remind hourly until resolved, and
+            confirm when fixed (recipients are managed in Admin).
           </p>
         </div>
         {canOperate && (
           <Button onClick={() => runNow.mutate()} disabled={runNow.isPending}>
-            {runNow.isPending ? "Running checks…" : "Run checks now"}
+            {runNow.isPending ? 'Running checks…' : 'Run checks now'}
           </Button>
         )}
       </div>
@@ -136,12 +137,12 @@ export default function Tripwires() {
             <Alert variant="destructive">
               <AlertTitle>
                 {failing.length > 0
-                  ? `${failing.length} tripwire${failing.length > 1 ? "s" : ""} failing`
-                  : "Workspace lint failing"}
+                  ? `${failing.length} tripwire${failing.length > 1 ? 's' : ''} failing`
+                  : 'Workspace lint failing'}
               </AlertTitle>
               <AlertDescription>
-                {failing.map((t) => t.label).join(", ")}
-                {workspaceFailing && (failing.length > 0 ? " · " : "") + "PMY-TEST lint violation"}
+                {failing.map((t) => t.label).join(', ')}
+                {workspaceFailing && (failing.length > 0 ? ' · ' : '') + 'PMY-TEST lint violation'}
               </AlertDescription>
             </Alert>
           ) : (
@@ -150,7 +151,7 @@ export default function Tripwires() {
               <AlertDescription>
                 {data.last_run_at
                   ? `Last checked ${relativeFrom(data.last_run_at)} (${formatUtc(data.last_run_at)}).`
-                  : "No checks recorded yet — run checks or wait for the daily tick."}
+                  : 'No checks recorded yet — run checks or wait for the daily tick.'}
               </AlertDescription>
             </Alert>
           )}
@@ -159,20 +160,20 @@ export default function Tripwires() {
             {data.tripwires.map((t) => (
               <TripwireCard key={t.email} tripwire={t} />
             ))}
-            <Card className={cn(workspaceFailing && "border-destructive")}>
+            <Card className={cn(workspaceFailing && 'border-destructive')}>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between gap-2">
                   <CardTitle className="text-base">Workspace</CardTitle>
                   {overallBadge(data.workspace.overall)}
                 </div>
                 <CardDescription>
-                  Checks on the Customer.io workspace itself — currently: no live campaign can
-                  ever fire on a test-only trigger.
+                  Checks on the Customer.io workspace itself — currently: no live campaign can ever
+                  fire on a test-only trigger.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-2">
                 {data.workspace.checks.length === 0 && (
-                  <p className="text-muted-foreground text-sm">Not checked yet.</p>
+                  <p className="text-sm text-muted-foreground">Not checked yet.</p>
                 )}
                 {data.workspace.checks.map((c) => (
                   <CheckRow key={c.check_name} check={c} />
@@ -186,13 +187,13 @@ export default function Tripwires() {
         </>
       )}
     </div>
-  )
+  );
 }
 
 function TripwireCard({ tripwire: t }: { tripwire: Tripwire }) {
-  const lastChecked = t.checks[0]?.checked_at
+  const lastChecked = t.checks[0]?.checked_at;
   return (
-    <Card className={cn(t.overall === "FAIL" && "border-destructive")}>
+    <Card className={cn(t.overall === 'FAIL' && 'border-destructive')}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-base">{t.label}</CardTitle>
@@ -201,50 +202,50 @@ function TripwireCard({ tripwire: t }: { tripwire: Tripwire }) {
         <CardDescription className="font-mono text-xs">{t.email}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-2">
-        {t.purpose && <p className="text-muted-foreground text-sm">{t.purpose}</p>}
+        {t.purpose && <p className="text-sm text-muted-foreground">{t.purpose}</p>}
         {t.checks.map((c) => (
           <CheckRow key={c.check_name} check={c} />
         ))}
-        {t.checks.length === 0 && <p className="text-muted-foreground text-sm">Not checked yet.</p>}
+        {t.checks.length === 0 && <p className="text-sm text-muted-foreground">Not checked yet.</p>}
         {lastChecked && (
-          <p className="text-muted-foreground text-xs">
+          <p className="text-xs text-muted-foreground">
             Checked {relativeFrom(lastChecked)} · {formatUtc(lastChecked)}
           </p>
         )}
       </CardContent>
     </Card>
-  )
+  );
 }
 
 function AddTripwireCard() {
-  const queryClient = useQueryClient()
-  const [email, setEmail] = useState("")
-  const [label, setLabel] = useState("")
-  const [purpose, setPurpose] = useState("")
-  const [quietDays, setQuietDays] = useState("")
-  const [provision, setProvision] = useState(true)
+  const queryClient = useQueryClient();
+  const [email, setEmail] = useState('');
+  const [label, setLabel] = useState('');
+  const [purpose, setPurpose] = useState('');
+  const [quietDays, setQuietDays] = useState('');
+  const [provision, setProvision] = useState(true);
 
   const add = useMutation({
     mutationFn: () =>
-      api.post<{ email: string; provisioned: string | null }>("/api/tripwires", {
+      api.post<{ email: string; provisioned: string | null }>('/api/tripwires', {
         email,
         label,
         purpose: purpose || null,
         max_quiet_days: quietDays ? Number(quietDays) : null,
-        provision_slug: provision ? "Welcome-General-260715" : null,
+        provision_slug: provision ? 'Welcome-General-260715' : null,
       }),
     onSuccess: () => {
-      setEmail("")
-      setLabel("")
-      setPurpose("")
-      setQuietDays("")
-      void queryClient.invalidateQueries({ queryKey: ["tripwires"] })
+      setEmail('');
+      setLabel('');
+      setPurpose('');
+      setQuietDays('');
+      void queryClient.invalidateQueries({ queryKey: ['tripwires'] });
     },
-  })
+  });
 
   function onSubmit(e: FormEvent) {
-    e.preventDefault()
-    add.mutate()
+    e.preventDefault();
+    add.mutate();
   }
 
   return (
@@ -308,36 +309,36 @@ function AddTripwireCard() {
             Provision in CIO
           </label>
           <Button type="submit" disabled={add.isPending}>
-            {add.isPending ? "Adding…" : "Add"}
+            {add.isPending ? 'Adding…' : 'Add'}
           </Button>
         </form>
         {add.isError && (
-          <p className="text-destructive mt-2 text-sm">{(add.error as Error).message}</p>
+          <p className="mt-2 text-sm text-destructive">{(add.error as Error).message}</p>
         )}
         {add.isSuccess && add.data.provisioned && (
-          <p className="text-muted-foreground mt-2 text-sm">
+          <p className="mt-2 text-sm text-muted-foreground">
             Added and provisioned ({add.data.provisioned}).
           </p>
         )}
       </CardContent>
     </Card>
-  )
+  );
 }
 
-const HISTORY_STATUSES = ["ALL", "FAIL", "WARN", "PASS"] as const
+const HISTORY_STATUSES = ['ALL', 'FAIL', 'WARN', 'PASS'] as const;
 
 function HistoryCard() {
-  const [statusFilter, setStatusFilter] = useState<string>("ALL")
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const history = useQuery<{ history: TripwireHistoryRow[] }>({
-    queryKey: ["tripwire-history"],
-    queryFn: () => api.get("/api/tripwires/history?limit=200"),
+    queryKey: ['tripwire-history'],
+    queryFn: () => api.get('/api/tripwires/history?limit=200'),
     refetchInterval: 60_000,
-  })
+  });
 
   const rows = useMemo(() => {
-    const all = history.data?.history ?? []
-    return statusFilter === "ALL" ? all : all.filter((r) => r.status === statusFilter)
-  }, [history.data, statusFilter])
+    const all = history.data?.history ?? [];
+    return statusFilter === 'ALL' ? all : all.filter((r) => r.status === statusFilter);
+  }, [history.data, statusFilter]);
 
   return (
     <Card>
@@ -351,7 +352,7 @@ function HistoryCard() {
             <TabsList>
               {HISTORY_STATUSES.map((s) => (
                 <TabsTrigger key={s} value={s}>
-                  {s === "ALL" ? "All" : s}
+                  {s === 'ALL' ? 'All' : s}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -380,18 +381,18 @@ function HistoryCard() {
               <TableBody>
                 {rows.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-muted-foreground h-16 text-center">
-                      No results{statusFilter !== "ALL" ? ` with status ${statusFilter}` : ""}.
+                    <TableCell colSpan={5} className="h-16 text-center text-muted-foreground">
+                      No results{statusFilter !== 'ALL' ? ` with status ${statusFilter}` : ''}.
                     </TableCell>
                   </TableRow>
                 )}
                 {rows.slice(0, 100).map((r, i) => (
                   <TableRow key={`${r.checked_at}-${r.email}-${r.check_name}-${i}`}>
-                    <TableCell className="text-muted-foreground whitespace-nowrap text-xs">
+                    <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
                       {formatUtc(r.checked_at)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
-                      {r.email === "_workspace" ? "Workspace" : shortIdentity(r.email)}
+                      {r.email === '_workspace' ? 'Workspace' : shortIdentity(r.email)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       {checkLabel[r.check_name] ?? r.check_name}
@@ -400,8 +401,8 @@ function HistoryCard() {
                       <Badge variant={statusVariant[r.status]}>{r.status}</Badge>
                     </TableCell>
                     <TableCell className="max-w-96">
-                      <span className="block truncate" title={r.detail ?? ""}>
-                        {r.detail ?? "—"}
+                      <span className="block truncate" title={r.detail ?? ''}>
+                        {r.detail ?? '—'}
                       </span>
                     </TableCell>
                   </TableRow>
@@ -412,5 +413,5 @@ function HistoryCard() {
         )}
       </CardContent>
     </Card>
-  )
+  );
 }
