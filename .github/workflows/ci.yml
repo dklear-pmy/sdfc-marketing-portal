@@ -40,3 +40,6 @@ jobs:
       - run: python -m compileall app
       # Import the app without credentials — catches wiring errors early.
       - run: python -c "from app.main import app; print(app.title)"
+      # Canary FAIL paths: the checks that make a quiet PASS trustworthy, so
+      # their ability to fail is pinned down rather than assumed. No creds.
+      - run: python tests/test_tripwire_checks.py

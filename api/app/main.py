@@ -251,6 +251,56 @@ def tripwires_add(body: TripwireCreate, principal: Principal = require_role("ope
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class TripwireUpdate(BaseModel):
+    label: str | None = None
+    purpose: str | None = None
+    expect_subscribed: bool | None = None
+    # Explicit sentinel: omitting the key leaves the threshold alone, whereas
+    # sending null deliberately DISABLES the quiet check.
+    max_quiet_days: int | None = None
+    clear_quiet: bool = False
+    active: bool | None = None
+
+
+@app.patch("/api/tripwires/{email}")
+def tripwires_update(
+    email: str, body: TripwireUpdate, principal: Principal = require_role("operator")
+) -> dict:
+    if body.label and len(body.label) > 60:
+        raise HTTPException(status_code=400, detail="Label too long")
+    quiet: object = None if body.clear_quiet else body.max_quiet_days
+    if not body.clear_quiet and body.max_quiet_days is None:
+        quiet = tripwires._SENTINEL  # leave the threshold untouched
+    if isinstance(quiet, int) and quiet < 1:
+        raise HTTPException(status_code=400, detail="max_quiet_days must be at least 1")
+    try:
+        return tripwires.update_tripwire(
+            _valid_email(email),
+            label=(body.label or "").strip() or None,
+            purpose=(body.purpose or "").strip() or None,
+            expect_subscribed=body.expect_subscribed,
+            max_quiet_days=quiet,
+            active=body.active,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/tripwires/canary")
+def tripwires_canary(principal: Principal = require_role("operator")) -> dict:
+    """Fire the synthetic canary by hand (the hourly Scheduler job posts to
+    /api/tripwires/canary/tick)."""
+    try:
+        return tripwires.send_canary()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/tripwires/canary/tick", dependencies=[Depends(require_scheduler_oidc)])
+def tripwires_canary_tick() -> dict:
+    return tripwires.send_canary()
+
+
 class RecipientRequest(BaseModel):
     email: str
     label: str | None = None

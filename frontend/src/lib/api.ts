@@ -43,6 +43,11 @@ export const api = {
       method: 'PUT',
       body: body !== undefined ? JSON.stringify(body) : undefined,
     }),
+  patch: <T>(path: string, body?: unknown) =>
+    request<T>(path, {
+      method: 'PATCH',
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
 
@@ -269,6 +274,9 @@ export interface Tripwire {
 export interface TripwiresState {
   tripwires: Tripwire[];
   workspace: { overall: string; checks: TripwireCheckRow[] };
+  /* Synthetic canary — generates its own traffic, so unlike the tripwires it
+     can fail even when nothing else is happening. */
+  canary: { overall: string; checks: TripwireCheckRow[]; email: string };
   last_run_at: string | null;
 }
 

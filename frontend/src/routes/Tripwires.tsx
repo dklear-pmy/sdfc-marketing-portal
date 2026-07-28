@@ -36,6 +36,9 @@ const checkLabel: Record<string, string> = {
   sink_arrival: 'Sink arrival',
   quiet: 'Send recency',
   pmy_test_lint: 'PMY-TEST lint',
+  canary_send: 'Canary fired',
+  canary_delivery: 'Canary delivered',
+  canary_sink: 'Canary reached the inbox',
 };
 
 const statusVariant: Record<TripwireStatus, 'default' | 'destructive' | 'secondary' | 'outline'> = {
@@ -94,9 +97,15 @@ export default function Tripwires() {
     },
   });
 
+  const fireCanary = useMutation({
+    mutationFn: () => api.post<{ sent_at: string }>('/api/tripwires/canary'),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['tripwires'] }),
+  });
+
   const data = state.data;
   const failing = data?.tripwires.filter((t) => t.overall === 'FAIL') ?? [];
   const workspaceFailing = data?.workspace.overall === 'FAIL';
+  const canaryFailing = data?.canary?.overall === 'FAIL';
 
   return (
     <div className="grid gap-6">
@@ -134,16 +143,24 @@ export default function Tripwires() {
 
       {data && (
         <>
-          {failing.length > 0 || workspaceFailing ? (
+          {failing.length > 0 || workspaceFailing || canaryFailing ? (
             <Alert variant="destructive">
               <AlertTitle>
-                {failing.length > 0
-                  ? `${failing.length} tripwire${failing.length > 1 ? 's' : ''} failing`
-                  : 'Workspace lint failing'}
+                {canaryFailing
+                  ? 'Monitoring itself is not healthy'
+                  : failing.length > 0
+                    ? `${failing.length} tripwire${failing.length > 1 ? 's' : ''} failing`
+                    : 'Workspace lint failing'}
               </AlertTitle>
               <AlertDescription>
-                {failing.map((t) => t.label).join(', ')}
-                {workspaceFailing && (failing.length > 0 ? ' · ' : '') + 'PMY-TEST lint violation'}
+                {[
+                  canaryFailing &&
+                    'The synthetic canary is failing — treat every other result here as unverified until it clears.',
+                  failing.length > 0 && failing.map((t) => t.label).join(', '),
+                  workspaceFailing && 'PMY-TEST lint violation',
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </AlertDescription>
             </Alert>
           ) : (
@@ -158,8 +175,54 @@ export default function Tripwires() {
           )}
 
           <div className="grid items-start gap-4 lg:grid-cols-2">
+            {/* First, deliberately: the tripwires below only fail when there is
+                real traffic, so the canary is what makes their quiet passes
+                mean anything. */}
+            {data.canary && (
+              <Card className={cn('lg:col-span-2', canaryFailing && 'border-destructive')}>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <CardTitle className="text-base">Synthetic canary</CardTitle>
+                    <div className="flex items-center gap-2">
+                      {canOperate && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fireCanary.mutate()}
+                          disabled={fireCanary.isPending}
+                        >
+                          {fireCanary.isPending ? 'Sending…' : 'Send now'}
+                        </Button>
+                      )}
+                      {overallBadge(data.canary.overall)}
+                    </div>
+                  </div>
+                  <CardDescription>
+                    An email we send ourselves every hour to{' '}
+                    <span className="font-mono text-xs">{data.canary.email}</span>. The accounts
+                    below can only catch a problem when a real campaign is sending; this one always
+                    has something to check, so it proves the send path, the test inbox and these
+                    checks are all working — and if it fails, nothing else on this page can be
+                    trusted.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-2 sm:grid-cols-3">
+                  {data.canary.checks.length === 0 && (
+                    <p className="text-sm text-muted-foreground">Not checked yet.</p>
+                  )}
+                  {data.canary.checks.map((c) => (
+                    <CheckRow key={c.check_name} check={c} />
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+            {fireCanary.isError && (
+              <Alert variant="destructive" className="lg:col-span-2">
+                <AlertDescription>{(fireCanary.error as Error).message}</AlertDescription>
+              </Alert>
+            )}
             {data.tripwires.map((t) => (
-              <TripwireCard key={t.email} tripwire={t} />
+              <TripwireCard key={t.email} tripwire={t} canEdit={canOperate} />
             ))}
             <Card className={cn(workspaceFailing && 'border-destructive')}>
               <CardHeader className="pb-3">
@@ -191,7 +254,79 @@ export default function Tripwires() {
   );
 }
 
-function TripwireCard({ tripwire: t }: { tripwire: Tripwire }) {
+/* Without a quiet threshold an account cannot report that it has gone silent —
+   its other checks all pass vacuously when there is no traffic — so the value
+   is editable per card rather than fixed at creation. */
+function QuietThreshold({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit: boolean }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [days, setDays] = useState(String(t.max_quiet_days ?? ''));
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.patch(`/api/tripwires/${encodeURIComponent(t.email)}`, {
+        max_quiet_days: days.trim() ? Number(days) : null,
+        clear_quiet: !days.trim(),
+      }),
+    onSuccess: () => {
+      setEditing(false);
+      void queryClient.invalidateQueries({ queryKey: ['tripwires'] });
+    },
+  });
+
+  if (!editing) {
+    return (
+      <div className="flex items-center gap-2 text-xs">
+        <span className={cn(t.max_quiet_days ? 'text-muted-foreground' : 'text-destructive')}>
+          {t.max_quiet_days
+            ? `Warns after ${t.max_quiet_days} quiet day${t.max_quiet_days > 1 ? 's' : ''}`
+            : 'No quiet threshold — cannot detect going silent'}
+        </span>
+        {canEdit && (
+          <button
+            type="button"
+            className="text-muted-foreground underline hover:text-foreground"
+            onClick={() => setEditing(true)}
+          >
+            edit
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-1">
+      <div className="flex items-center gap-2">
+        <Input
+          type="number"
+          min={1}
+          value={days}
+          placeholder="days"
+          className="h-7 w-24"
+          onChange={(e) => setDays(e.target.value)}
+        />
+        <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
+          {save.isPending ? 'Saving…' : 'Save'}
+        </Button>
+        <button
+          type="button"
+          className="text-xs text-muted-foreground underline"
+          onClick={() => {
+            setDays(String(t.max_quiet_days ?? ''));
+            setEditing(false);
+          }}
+        >
+          cancel
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground">Leave blank to disable the quiet check.</p>
+      {save.isError && <p className="text-xs text-destructive">{(save.error as Error).message}</p>}
+    </div>
+  );
+}
+
+function TripwireCard({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit: boolean }) {
   const lastChecked = t.checks[0]?.checked_at;
   return (
     <Card className={cn(t.overall === 'FAIL' && 'border-destructive')}>
@@ -208,6 +343,7 @@ function TripwireCard({ tripwire: t }: { tripwire: Tripwire }) {
           <CheckRow key={c.check_name} check={c} />
         ))}
         {t.checks.length === 0 && <p className="text-sm text-muted-foreground">Not checked yet.</p>}
+        <QuietThreshold tripwire={t} canEdit={canEdit} />
         {lastChecked && (
           <p className="text-xs text-muted-foreground">
             Checked {relativeFrom(lastChecked)} · {formatUtc(lastChecked)}

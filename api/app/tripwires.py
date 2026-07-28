@@ -38,6 +38,29 @@ _DATASET = f"{GCP_PROJECT}.customerio_state"
 DELIVERY_DEADLINE_MIN = 15
 TRANSPORT_WINDOW_H = 24
 
+# ---- synthetic canary ----
+# The passive tripwires above only fail when there IS traffic: with nothing sent,
+# transport and sink_arrival both return PASS ("no sends in the last 24h"), which
+# is an absence of evidence rather than evidence of health. The canary generates
+# traffic on a schedule so those PASSes mean something, and so a broken send path
+# is caught within the hour instead of whenever a real campaign next runs.
+#
+# It goes out as a CIO TRANSACTIONAL send, not through a campaign. Verified
+# 2026-07-28, in this order, because each one ruled out a simpler design:
+#   - re-firing the test welcome webhook produces NO second email (journey
+#     re-entry is blocked), so a webhook canary delivers once then goes silent
+#     forever — and reads as an infrastructure failure when it does;
+#   - the App API cannot delete people (404; that is the Track API), so a
+#     rotating-address canary would strand 24 orphan profiles a day;
+#   - /v1/send/email accepts an inline subject+body, needs no CIO-side config,
+#     is repeatable within seconds, and lands in the ledger marked delivered.
+# It also keeps campaign metrics clean, which a campaign-driven canary would not.
+CANARY_EMAIL = "canary@qa.sdfc.dev"
+CANARY_FROM = "San Diego FC <info@sandiegofc.com>"  # the only verified CIO sender
+CANARY_SUBJECT = "SDFC monitoring canary"
+# Fired hourly; allow a missed run plus clock slop before calling it stale.
+CANARY_MAX_AGE_MIN = 75
+
 
 def _now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
@@ -61,6 +84,51 @@ def list_tripwires(active_only: bool = False) -> list[dict]:
         d["created_at"] = d["created_at"].isoformat() if d.get("created_at") else None
         out.append(d)
     return out
+
+
+_SENTINEL = object()
+
+
+def update_tripwire(
+    email: str,
+    *,
+    label: str | None = None,
+    purpose: str | None = None,
+    expect_subscribed: bool | None = None,
+    max_quiet_days: int | None | object = _SENTINEL,
+    active: bool | None = None,
+) -> dict:
+    """Edit a registered tripwire. Only supplied fields change.
+
+    max_quiet_days uses a sentinel rather than None as "leave alone", because
+    None is a MEANINGFUL value here — it disables the quiet check entirely, and
+    a tripwire with no quiet threshold cannot report that it has gone silent.
+    """
+    email = email.strip().lower()
+    if not any(t["email"] == email for t in list_tripwires()):
+        raise ValueError(f"{email} is not registered")
+
+    sets, params = [], [bigquery.ScalarQueryParameter("email", "STRING", email)]
+    for name, value, sql_type in (
+        ("label", label, "STRING"),
+        ("purpose", purpose, "STRING"),
+        ("expect_subscribed", expect_subscribed, "BOOL"),
+        ("active", active, "BOOL"),
+    ):
+        if value is not None:
+            sets.append(f"{name} = @{name}")
+            params.append(bigquery.ScalarQueryParameter(name, sql_type, value))
+    if max_quiet_days is not _SENTINEL:
+        sets.append("max_quiet_days = @quiet")
+        params.append(bigquery.ScalarQueryParameter("quiet", "INT64", max_quiet_days))
+    if not sets:
+        raise ValueError("Nothing to update")
+
+    client().query(
+        f"UPDATE `{_DATASET}.tripwires` SET {', '.join(sets)} WHERE email = @email",
+        job_config=bigquery.QueryJobConfig(query_parameters=params),
+    ).result()
+    return next(t for t in list_tripwires() if t["email"] == email)
 
 
 def add_tripwire(
@@ -228,6 +296,124 @@ def _check_workspace_lint(cio: CioClient) -> dict:
     return {"check_name": "pmy_test_lint", "status": "PASS", "detail": f"{len(campaigns)} campaigns checked — no live campaign listens on pmy_test_* events"}
 
 
+def send_canary() -> dict:
+    """Fire one synthetic send. Called hourly by Cloud Scheduler, or by hand."""
+    cio = CioClient()
+    stamp = _now().strftime("%Y-%m-%d %H:%M UTC")
+    resp = cio.session.post(
+        f"{cio.base}/send/email",
+        json={
+            "to": CANARY_EMAIL,
+            "identifiers": {"email": CANARY_EMAIL},
+            "from": CANARY_FROM,
+            "subject": f"{CANARY_SUBJECT} {stamp}",
+            "body": (
+                "<p>Synthetic monitoring canary from the SDFC marketing portal. "
+                "Not a fan-facing email — it proves the Customer.io send path and "
+                "the test inbox are working, and that these checks are running.</p>"
+            ),
+        },
+        timeout=25,
+    )
+    if resp.status_code >= 300:
+        raise RuntimeError(f"canary send failed: HTTP {resp.status_code} {resp.text[:200]}")
+    return {"sent_at": _now().isoformat(), "delivery_id": resp.json().get("delivery_id")}
+
+
+def _check_canary(cio: CioClient) -> list[dict]:
+    """Liveness AND correctness in one place: a canary that never fired is as
+    much a failure as one that fired and never arrived."""
+    messages = [
+        m
+        for m in cio.messages_for_recipient(CANARY_EMAIL, limit=50)
+        if (m.get("metrics") or {}).get("sent")
+    ]
+    if not messages:
+        return [{
+            "check_name": "canary_send",
+            "status": "FAIL",
+            "detail": f"No canary send has ever reached {CANARY_EMAIL}",
+        }]
+
+    latest = max(messages, key=lambda m: m["metrics"]["sent"])
+    sent = latest["metrics"]["sent"]
+    age_min = (_now().timestamp() - sent) / 60
+    rows: list[dict] = []
+
+    if age_min > CANARY_MAX_AGE_MIN:
+        # Nothing is firing the canary — so every quiet PASS elsewhere in this
+        # run is unverified, which is exactly what the canary exists to reveal.
+        rows.append({
+            "check_name": "canary_send",
+            "status": "FAIL",
+            "detail": (
+                f"Last canary {age_min / 60:.1f}h ago (expected hourly) — the send job "
+                "is not firing, so quiet PASSes elsewhere prove nothing"
+            ),
+        })
+    else:
+        rows.append({
+            "check_name": "canary_send",
+            "status": "PASS",
+            "detail": f"Last canary {int(age_min)}m ago",
+        })
+
+    mt = latest["metrics"]
+    if mt.get("delivered"):
+        lag = (mt["delivered"] - sent) / 60
+        rows.append({
+            "check_name": "canary_delivery",
+            "status": "PASS",
+            "detail": f"Delivered {lag:.1f} min after send",
+        })
+    elif mt.get("bounced"):
+        rows.append({
+            "check_name": "canary_delivery",
+            "status": "FAIL",
+            "detail": f"Canary BOUNCED (sent {_iso(sent)})",
+        })
+    elif age_min > DELIVERY_DEADLINE_MIN:
+        rows.append({
+            "check_name": "canary_delivery",
+            "status": "FAIL",
+            "detail": f"Sent {int(age_min)}m ago, still not delivered or bounced",
+        })
+    else:
+        # Inside the grace window a pending send is normal, not a finding.
+        rows.append({
+            "check_name": "canary_delivery",
+            "status": "PASS",
+            "detail": f"In flight ({int(age_min)}m, deadline {DELIVERY_DEADLINE_MIN}m)",
+        })
+
+    if mt.get("delivered"):
+        # Guarded on its own: an unreachable sink must not also discard the send
+        # and delivery findings above, which are the more important two. (Local
+        # dev always lands here — user ADC cannot mint an IAP token for Mailpit.)
+        try:
+            subjects = {m.get("Subject") for m in mailpit.search_to(CANARY_EMAIL)}
+        except Exception as e:  # noqa: BLE001
+            rows.append({
+                "check_name": "canary_sink",
+                "status": "WARN",
+                "detail": f"sink unreachable: {str(e)[:150]}",
+            })
+        else:
+            if latest.get("subject") in subjects:
+                rows.append({
+                    "check_name": "canary_sink",
+                    "status": "PASS",
+                    "detail": "Latest canary present in the test inbox",
+                })
+            else:
+                rows.append({
+                    "check_name": "canary_sink",
+                    "status": "FAIL",
+                    "detail": f"CIO delivered {latest.get('subject')!r} but it is not in the sink",
+                })
+    return rows
+
+
 def _guard(fn, *args, check_name: str) -> dict:
     try:
         return fn(*args)
@@ -272,6 +458,18 @@ def run_checks(source: str) -> dict:
     ws = _guard(_check_workspace_lint, cio, check_name="pmy_test_lint")
     ws["email"] = "_workspace"
     results.append(ws)
+
+    try:
+        canary_rows = _check_canary(cio)
+    except Exception as e:  # noqa: BLE001 — same contract as _guard, but multi-row
+        canary_rows = [{
+            "check_name": "canary_send",
+            "status": "WARN",
+            "detail": f"check could not run: {str(e)[:180]}",
+        }]
+    for r in canary_rows:
+        r["email"] = "_canary"
+    results.extend(canary_rows)
 
     _record(results, source)
     failing = sum(1 for r in results if r["status"] == "FAIL")
@@ -485,9 +683,15 @@ def state() -> dict:
         out.append({**tw, "overall": overall(checks) if tw["active"] else "INACTIVE", "checks": checks})
 
     ws_checks = by_email.get("_workspace", [])
+    canary_checks = sorted(by_email.get("_canary", []), key=lambda c: c["check_name"])
     return {
         "tripwires": out,
         "workspace": {"overall": overall(ws_checks), "checks": ws_checks},
+        "canary": {
+            "overall": overall(canary_checks),
+            "checks": canary_checks,
+            "email": CANARY_EMAIL,
+        },
         "last_run_at": last_run,
     }
 
