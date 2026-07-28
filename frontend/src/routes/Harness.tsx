@@ -18,7 +18,14 @@ import {
   type HarnessRunSummary,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { formatUtc, humanizeSlug, humanStage, shortIdentity, statusLabel } from '@/lib/format';
+import {
+  formatUtc,
+  humanizeSlug,
+  humanStage,
+  relativeFrom,
+  shortIdentity,
+  statusLabel,
+} from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -514,9 +521,13 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
                 ? `${humanizeSlug(current.slug)} · ${shortIdentity(current.identity)}`
                 : 'Run detail'}
             </CardTitle>
+            {/* When it ran is the useful context here. The run id lives in the
+                URL (?run=…) for sharing, and who started it is noise — these
+                are scheduled and operator runs against the same test pair. */}
             <CardDescription>
-              <code className="text-xs">{runId}</code>
-              {current?.started_by ? ` · started by ${current.started_by}` : ''}
+              {current
+                ? `${formatUtc(current.started_at)} · ${relativeFrom(current.started_at)}`
+                : ''}
             </CardDescription>
           </div>
           <Button variant="ghost" size="sm" onClick={onClose}>
