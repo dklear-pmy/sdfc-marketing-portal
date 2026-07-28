@@ -254,6 +254,15 @@ export default function Stadium() {
     }
   })();
 
+  /* The hovered section's own fill, picked from the same ten buckets the map
+     uses so the card's badge matches the polygon under the cursor. */
+  const hoverSwatch = (() => {
+    const v = hover ? values[hover.section] : null;
+    if (v == null) return { light: NO_DATA_LIGHT, dark: NO_DATA_DARK };
+    const i = Math.min(9, Math.max(0, Math.floor(v * 10)));
+    return { light: BUCKETS_LIGHT[i], dark: BUCKETS_DARK[i] };
+  })();
+
   const selectEvent = (name: string) => {
     setSelected(name);
     setSearch('');
@@ -474,28 +483,6 @@ export default function Stadium() {
         </div>
 
         <CardContent className="grid gap-4 p-6">
-          <div className="flex flex-wrap items-center gap-4">
-            <Tabs value={metric} onValueChange={(v) => setMetric(v as Metric)}>
-              <TabsList>
-                <TabsTrigger value="pct_sold">{METRIC_LABEL.pct_sold}</TabsTrigger>
-                <TabsTrigger value="occupied">{METRIC_LABEL.occupied}</TabsTrigger>
-                <TabsTrigger value="sold">{METRIC_LABEL.sold}</TabsTrigger>
-                <TabsTrigger value="comps">{METRIC_LABEL.comps}</TabsTrigger>
-                <TabsTrigger value="scans">{METRIC_LABEL.scans}</TabsTrigger>
-              </TabsList>
-            </Tabs>
-            {metric !== 'pct_sold' && (
-              <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={normalize}
-                  onChange={(e) => setNormalize(e.target.checked)}
-                  className="size-4 accent-sdfc-orange"
-                />
-                {metric === 'scans' ? 'scan rate (% of tickets out)' : '% of section capacity'}
-              </label>
-            )}
-          </div>
           <div className="relative">
             {heat.isPending && <Skeleton className="aspect-[4/3] w-full rounded-lg" />}
             {heat.isError && (
@@ -513,9 +500,47 @@ export default function Stadium() {
                   onHover={setHover}
                 />
 
+                {/* Metric picker, centred over the map in SDFC navy so it reads
+                    as chrome rather than as another orange datum competing with
+                    the fills underneath. The strip spans the map so the pill
+                    centres on it; only the controls themselves take the cursor,
+                    leaving the rest of the top edge draggable. */}
+                <div className="pointer-events-none absolute inset-x-3 top-3 z-30 flex flex-col items-center gap-2">
+                  <Tabs
+                    value={metric}
+                    onValueChange={(v) => setMetric(v as Metric)}
+                    className="pointer-events-auto max-w-full"
+                  >
+                    <TabsList className="max-w-full rounded-lg bg-sdfc-panel shadow-lg group-data-horizontal/tabs:h-8 md:group-data-horizontal/tabs:h-9">
+                      {(Object.keys(METRIC_LABEL) as Metric[]).map((m) => (
+                        <TabsTrigger
+                          key={m}
+                          value={m}
+                          className="rounded-md px-2.5 text-sm font-semibold text-white/70 hover:text-white md:px-3 md:text-[15px] dark:text-white/70 dark:hover:text-white data-active:bg-white data-active:text-sdfc-azul dark:data-active:border-transparent dark:data-active:bg-white dark:data-active:text-sdfc-azul"
+                        >
+                          {METRIC_LABEL[m]}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                  {metric !== 'pct_sold' && (
+                    <label className="pointer-events-auto flex items-center gap-2 rounded-full bg-sdfc-panel/95 px-3 py-1 text-xs font-medium text-white/90 shadow-lg backdrop-blur-sm">
+                      <input
+                        type="checkbox"
+                        checked={normalize}
+                        onChange={(e) => setNormalize(e.target.checked)}
+                        className="size-4 accent-sdfc-orange"
+                      />
+                      {metric === 'scans'
+                        ? 'scan rate (% of tickets out)'
+                        : '% of section capacity'}
+                    </label>
+                  )}
+                </div>
+
                 {/* Floating readout: which event, which metric, and the scale
                     to read the fills against — all without leaving the map. */}
-                <div className="pointer-events-none absolute top-3 right-3 z-20 w-[330px] rounded-lg border bg-card/95 p-3 shadow-lg backdrop-blur-sm">
+                <div className="pointer-events-none absolute top-3 left-3 z-20 w-[330px] rounded-lg border bg-card/95 p-3 shadow-lg backdrop-blur-sm">
                   <div className="font-heading text-lg leading-tight font-bold">
                     {eventName ?? '…'}
                   </div>
@@ -579,28 +604,62 @@ export default function Stadium() {
                 </div>
                 {hover && (
                   <div
-                    className="pointer-events-none absolute z-10 rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md"
+                    className="pointer-events-none absolute z-10 w-[300px] rounded-xl border bg-popover p-4 text-popover-foreground shadow-xl"
                     style={{
                       // flip to the other side of the cursor near the box edges
-                      left: hover.x + (hover.x > hover.boxWidth - 190 ? -12 : 12),
-                      top: hover.y + (hover.y > hover.boxHeight - 170 ? -12 : 12),
-                      transform: `translate(${hover.x > hover.boxWidth - 190 ? '-100%' : '0'}, ${
-                        hover.y > hover.boxHeight - 170 ? '-100%' : '0'
+                      left: hover.x + (hover.x > hover.boxWidth - 320 ? -14 : 14),
+                      top: hover.y + (hover.y > hover.boxHeight - 230 ? -14 : 14),
+                      transform: `translate(${hover.x > hover.boxWidth - 320 ? '-100%' : '0'}, ${
+                        hover.y > hover.boxHeight - 230 ? '-100%' : '0'
                       })`,
                     }}
                   >
-                    <div className="text-sm font-semibold">{hover.section}</div>
-                    <div className="text-muted-foreground capitalize">{hover.category}</div>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          {/* Dot carries the section's own fill, tying the card
+                              back to what you are pointing at on the map. */}
+                          <span
+                            className="size-3 shrink-0 rounded-full dark:hidden"
+                            style={{ background: hoverSwatch.light }}
+                            aria-hidden
+                          />
+                          <span
+                            className="hidden size-3 shrink-0 rounded-full dark:block"
+                            style={{ background: hoverSwatch.dark }}
+                            aria-hidden
+                          />
+                          <span className="truncate font-heading text-2xl leading-none font-bold">
+                            {hover.section}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 text-xs text-muted-foreground capitalize">
+                          {hover.category || '—'}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className="font-heading text-2xl leading-none font-bold">
+                          {hover.heat ? (labelFor(hover.heat) ?? '—') : '—'}
+                        </div>
+                        <div className="mt-1.5 text-xs text-muted-foreground">
+                          {METRIC_LABEL[metric]}
+                        </div>
+                      </div>
+                    </div>
+
                     {hover.heat ? (
-                      <div className="mt-1 grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5">
+                      <div className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 border-t pt-3 text-base">
+                        {/* Sold and comps are bare counts that visibly sum to
+                            tickets out, so neither needs qualifying and "sold"
+                            is never read as including comps. */}
                         <span className="text-muted-foreground">Sold</span>
-                        <span className="text-right font-medium">
-                          {num(hover.heat.sold)} / {num(hover.heat.total_seats)}
-                        </span>
-                        <span className="text-muted-foreground">% sold</span>
-                        <span className="text-right font-medium">{pct(hover.heat.pct_sold)}</span>
+                        <span className="text-right font-medium">{num(hover.heat.sold)}</span>
                         <span className="text-muted-foreground">Comps</span>
                         <span className="text-right font-medium">{num(comps(hover.heat))}</span>
+                        <span className="text-muted-foreground">Tickets out</span>
+                        <span className="text-right font-medium">
+                          {num(hover.heat.occupied)} / {num(hover.heat.total_seats)}
+                        </span>
                         {hover.heat.scanned != null && (
                           <>
                             <span className="text-muted-foreground">Scans</span>
@@ -614,7 +673,9 @@ export default function Stadium() {
                         )}
                       </div>
                     ) : (
-                      <div className="mt-1 text-muted-foreground">No inventory for this event</div>
+                      <div className="mt-3 border-t pt-3 text-base text-muted-foreground">
+                        No inventory for this event
+                      </div>
                     )}
                   </div>
                 )}
