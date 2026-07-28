@@ -1,5 +1,6 @@
-import { useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
+import { oneOf, useUrlFilters } from '@/lib/urlState';
 import { useQuery } from '@tanstack/react-query';
 import {
   api,
@@ -138,8 +139,14 @@ function eventDetail(e: LedgerEventRow): string {
   }
 }
 
+const TABS = ['events', 'statuses'] as const;
+
 export default function FanLedger() {
-  const [tab, setTab] = useState<'events' | 'statuses'>('events');
+  const [{ tab: rawTab }, setUrl] = useUrlFilters({ tab: 'events', offset: 0 });
+  const tab = oneOf(rawTab, TABS, 'events');
+  // Paging is shared between the tabs, so switching returns to page 1 rather
+  // than landing on an offset the other tab may not have.
+  const setTab = (v: string) => setUrl({ tab: v, offset: 0 });
   return (
     <div className="grid gap-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -165,13 +172,20 @@ export default function FanLedger() {
 
 function EventsTab() {
   const navigate = useNavigate();
-  const [qInput, setQInput] = useState('');
-  const [q, setQ] = useState('');
-  const [window, setWindow] = useState<(typeof WINDOWS)[number]>('7d');
-  const [activity, setActivity] = useState('');
-  const [source, setSource] = useState('');
-  const [includeEcho, setIncludeEcho] = useState(false);
-  const [offset, setOffset] = useState(0);
+  const [url, setUrl] = useUrlFilters({
+    q: '',
+    window: '7d',
+    activity: '',
+    source: '',
+    echo: false,
+    offset: 0,
+  });
+  const { q, activity, source, echo: includeEcho, offset } = url;
+  const window = oneOf(url.window, WINDOWS, '7d');
+
+  // The box holds a draft until submit; only the submitted term reaches the URL.
+  const [qInput, setQInput] = useState(q);
+  useEffect(() => setQInput(q), [q]);
 
   const query = useQuery<LedgerEventsPage>({
     queryKey: ['ledger-events', q, window, activity, source, includeEcho, offset],
@@ -187,17 +201,9 @@ function EventsTab() {
     staleTime: 30_000,
   });
 
-  function reset<T>(setter: (v: T) => void) {
-    return (v: T) => {
-      setOffset(0);
-      setter(v);
-    };
-  }
-
   function onSearch(e: FormEvent) {
     e.preventDefault();
-    setOffset(0);
-    setQ(qInput.trim());
+    setUrl({ q: qInput.trim(), offset: 0 });
   }
 
   const data = query.data;
@@ -217,7 +223,7 @@ function EventsTab() {
               Search
             </Button>
           </form>
-          <Tabs value={window} onValueChange={(v) => reset(setWindow)(v as typeof window)}>
+          <Tabs value={window} onValueChange={(v) => setUrl({ window: v, offset: 0 })}>
             <TabsList>
               {WINDOWS.map((w) => (
                 <TabsTrigger key={w} value={w}>
@@ -228,13 +234,13 @@ function EventsTab() {
           </Tabs>
           <FacetSelect
             value={activity}
-            onChange={reset(setActivity)}
+            onChange={(v) => setUrl({ activity: v, offset: 0 })}
             options={data?.activities ?? []}
             allLabel="All activities"
           />
           <FacetSelect
             value={source}
-            onChange={reset(setSource)}
+            onChange={(v) => setUrl({ source: v, offset: 0 })}
             options={data?.sources ?? []}
             allLabel="All sources"
           />
@@ -242,7 +248,7 @@ function EventsTab() {
             <input
               type="checkbox"
               checked={includeEcho}
-              onChange={(e) => reset(setIncludeEcho)(e.target.checked)}
+              onChange={(e) => setUrl({ echo: e.target.checked, offset: 0 })}
             />
             Include system echoes
           </label>
@@ -318,7 +324,7 @@ function EventsTab() {
               offset={data.offset}
               count={data.events.length}
               busy={query.isFetching}
-              onOffset={setOffset}
+              onOffset={(n) => setUrl({ offset: n })}
             />
           </>
         )}
@@ -329,12 +335,19 @@ function EventsTab() {
 
 function StatusesTab() {
   const navigate = useNavigate();
-  const [qInput, setQInput] = useState('');
-  const [q, setQ] = useState('');
-  const [domain, setDomain] = useState('');
-  const [status, setStatus] = useState('');
-  const [latchedOnly, setLatchedOnly] = useState(false);
-  const [offset, setOffset] = useState(0);
+  // `q` is shared with the events tab on purpose — looking up a fan and then
+  // flipping between what happened and where they stand keeps the search.
+  const [url, setUrl] = useUrlFilters({
+    q: '',
+    domain: '',
+    status: '',
+    latched: false,
+    offset: 0,
+  });
+  const { q, domain, status, latched: latchedOnly, offset } = url;
+
+  const [qInput, setQInput] = useState(q);
+  useEffect(() => setQInput(q), [q]);
 
   const query = useQuery<LedgerStatusesPage>({
     queryKey: ['ledger-statuses', q, domain, status, latchedOnly, offset],
@@ -350,17 +363,9 @@ function StatusesTab() {
     staleTime: 30_000,
   });
 
-  function reset<T>(setter: (v: T) => void) {
-    return (v: T) => {
-      setOffset(0);
-      setter(v);
-    };
-  }
-
   function onSearch(e: FormEvent) {
     e.preventDefault();
-    setOffset(0);
-    setQ(qInput.trim());
+    setUrl({ q: qInput.trim(), offset: 0 });
   }
 
   const data = query.data;
@@ -382,13 +387,13 @@ function StatusesTab() {
           </form>
           <FacetSelect
             value={domain}
-            onChange={reset(setDomain)}
+            onChange={(v) => setUrl({ domain: v, offset: 0 })}
             options={data?.domains ?? []}
             allLabel="All domains"
           />
           <FacetSelect
             value={status}
-            onChange={reset(setStatus)}
+            onChange={(v) => setUrl({ status: v, offset: 0 })}
             options={data?.status_values ?? []}
             allLabel="All statuses"
           />
@@ -396,7 +401,7 @@ function StatusesTab() {
             <input
               type="checkbox"
               checked={latchedOnly}
-              onChange={(e) => reset(setLatchedOnly)(e.target.checked)}
+              onChange={(e) => setUrl({ latched: e.target.checked, offset: 0 })}
             />
             Latched only
           </label>
@@ -485,7 +490,7 @@ function StatusesTab() {
               offset={data.offset}
               count={data.statuses.length}
               busy={query.isFetching}
-              onOffset={setOffset}
+              onOffset={(n) => setUrl({ offset: n })}
             />
           </>
         )}

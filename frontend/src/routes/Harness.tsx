@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
+import { useUrlFilters } from '@/lib/urlState';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createColumnHelper,
@@ -59,9 +60,14 @@ const runStatusVariant: Record<HarnessRun['status'], 'default' | 'destructive' |
 const RUN_STATUSES = ['ALL', 'RUNNING', 'PASSED', 'FAILED', 'TIMED_OUT'] as const;
 
 export default function Harness() {
-  const [slug, setSlug] = useState('');
+  /* The validated slug and the open run are the shareable bits — "look at this
+     failing run" is the whole point of a link here. */
+  const [url, setUrl] = useUrlFilters({ slug: '', run: '' });
+  const slug = url.slug;
+  const activeRunId = url.run || null;
+  const setSlug = (v: string) => setUrl({ slug: v });
+  const setActiveRunId = (v: string | null) => setUrl({ run: v ?? '' });
   const [formError, setFormError] = useState<string | null>(null);
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
   const validation = useMutation({
     mutationFn: (s: string) =>
@@ -282,7 +288,9 @@ function RunHistory({
   activeRunId: string | null;
   onSelect: (runId: string) => void;
 }) {
-  const [globalFilter, setGlobalFilter] = useState('');
+  const [{ runq }, setUrl] = useUrlFilters({ runq: '' });
+  const globalFilter = runq;
+  const setGlobalFilter = (v: string) => setUrl({ runq: v });
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
 
   const runsQuery = useQuery({

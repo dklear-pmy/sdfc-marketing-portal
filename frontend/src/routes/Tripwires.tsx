@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
+import { oneOf, useUrlFilters } from '@/lib/urlState';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
@@ -328,7 +329,9 @@ function AddTripwireCard() {
 const HISTORY_STATUSES = ['ALL', 'FAIL', 'WARN', 'PASS'] as const;
 
 function HistoryCard() {
-  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [{ hist }, setUrl] = useUrlFilters({ hist: 'ALL' });
+  const statusFilter = oneOf(hist, HISTORY_STATUSES, 'ALL');
+  const setStatusFilter = (v: string) => setUrl({ hist: v });
   const history = useQuery<{ history: TripwireHistoryRow[] }>({
     queryKey: ['tripwire-history'],
     queryFn: () => api.get('/api/tripwires/history?limit=200'),

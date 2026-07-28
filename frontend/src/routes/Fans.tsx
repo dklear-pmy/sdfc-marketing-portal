@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
-import { useSearchParams } from 'react-router';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { oneOf, useUrlFilters } from '@/lib/urlState';
 import {
   createColumnHelper,
   flexRender,
@@ -43,18 +43,13 @@ import {
 import { cn } from '@/lib/utils';
 
 export default function Fans() {
-  const [email, setEmail] = useState('');
-  const [submitted, setSubmitted] = useState<string | null>(null);
-  const [searchParams] = useSearchParams();
-
-  // Deep link from the Fan Ledger (and anywhere else): /fans?email=…
-  useEffect(() => {
-    const em = searchParams.get('email');
-    if (em) {
-      setEmail(em);
-      setSubmitted(em.trim().toLowerCase());
-    }
-  }, [searchParams]);
+  /* ?email=… is the deep link — from the Fan Ledger, from a teammate, or from
+     picking a row in the browse list below. The URL is the single source of
+     truth for which fan is open; the box holds an unsubmitted draft. */
+  const [url, setUrl] = useUrlFilters({ email: '' });
+  const submitted = url.email.trim().toLowerCase() || null;
+  const [email, setEmail] = useState(url.email);
+  useEffect(() => setEmail(url.email), [url.email]);
 
   const lookup = useQuery<CustomerLookup>({
     queryKey: ['customer-lookup', submitted],
@@ -66,7 +61,7 @@ export default function Fans() {
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     const v = email.trim().toLowerCase();
-    if (v) setSubmitted(v);
+    if (v) setUrl({ email: v });
   }
 
   return (
@@ -120,8 +115,7 @@ export default function Fans() {
 
       <FanList
         onSelect={(em) => {
-          setEmail(em);
-          setSubmitted(em);
+          setUrl({ email: em });
           document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
         }}
       />
@@ -387,7 +381,19 @@ function AttributesCard({ comparison }: { comparison: AttrComparison[] }) {
   const hasAttention = comparison.some((c) =>
     ['differs', 'pending', 'cio_only'].includes(c.status)
   );
-  const [tab, setTab] = useState<string>(hasAttention ? 'attention' : 'all');
+  /* Empty means "pick for me" — a profile with nothing to review opens on All.
+     An explicit ?atab= from a shared link always wins over that default. */
+  const [{ atab }, setUrl] = useUrlFilters({ atab: '' });
+  const tab = atab
+    ? oneOf(
+        atab,
+        ATTR_TABS.map((t) => t.key),
+        'all'
+      )
+    : hasAttention
+      ? 'attention'
+      : 'all';
+  const setTab = (v: string) => setUrl({ atab: v });
   const [search, setSearch] = useState('');
 
   const rows = useMemo(() => {
@@ -638,8 +644,12 @@ function messageKind(m: CioMessage): string {
   return m.type;
 }
 
+const ACTIVITY_TABS = ['timeline', 'messages'] as const;
+
 function ActivityCard({ cioId }: { cioId: string }) {
-  const [tab, setTab] = useState<'timeline' | 'messages'>('timeline');
+  const [{ ptab }, setUrl] = useUrlFilters({ ptab: 'timeline' });
+  const tab = oneOf(ptab, ACTIVITY_TABS, 'timeline');
+  const setTab = (v: string) => setUrl({ ptab: v });
 
   const activities = useInfiniteQuery<ActivitiesPage>({
     queryKey: ['customer-activities', cioId],
@@ -790,9 +800,9 @@ function ActivityCard({ cioId }: { cioId: string }) {
 const FAN_PAGE = 20;
 
 function FanList({ onSelect }: { onSelect: (email: string) => void }) {
-  const [qInput, setQInput] = useState('');
-  const [q, setQ] = useState('');
-  const [offset, setOffset] = useState(0);
+  const [{ q, offset }, setUrl] = useUrlFilters({ q: '', offset: 0 });
+  const [qInput, setQInput] = useState(q);
+  useEffect(() => setQInput(q), [q]);
 
   const list = useQuery<FanListPage>({
     queryKey: ['fan-list', q, offset],
@@ -806,8 +816,7 @@ function FanList({ onSelect }: { onSelect: (email: string) => void }) {
 
   function onSearch(e: FormEvent) {
     e.preventDefault();
-    setOffset(0);
-    setQ(qInput.trim());
+    setUrl({ q: qInput.trim(), offset: 0 });
   }
 
   const money = (v: number | null) =>
@@ -914,7 +923,7 @@ function FanList({ onSelect }: { onSelect: (email: string) => void }) {
                   variant="outline"
                   size="sm"
                   disabled={offset === 0 || list.isFetching}
-                  onClick={() => setOffset(Math.max(0, offset - FAN_PAGE))}
+                  onClick={() => setUrl({ offset: Math.max(0, offset - FAN_PAGE) })}
                 >
                   Previous
                 </Button>
@@ -922,7 +931,7 @@ function FanList({ onSelect }: { onSelect: (email: string) => void }) {
                   variant="outline"
                   size="sm"
                   disabled={offset + FAN_PAGE >= data.total || list.isFetching}
-                  onClick={() => setOffset(offset + FAN_PAGE)}
+                  onClick={() => setUrl({ offset: offset + FAN_PAGE })}
                 >
                   Next
                 </Button>

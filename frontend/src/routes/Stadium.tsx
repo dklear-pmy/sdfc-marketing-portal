@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { oneOf, useUrlFilters } from '@/lib/urlState';
 import {
   api,
   type StadiumEventRow,
@@ -117,16 +118,36 @@ function StatTile({
   );
 }
 
+const METRICS = ['pct_sold', 'occupied', 'sold', 'comps', 'scans'] as const;
+const WHENS = ['future', 'past', 'all'] as const;
+
 export default function Stadium() {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [metric, setMetric] = useState<Metric>('pct_sold');
-  const [normalize, setNormalize] = useState(true);
+  /* Everything that decides what you are looking at lives in the URL, so a
+     particular event/metric/window is a link you can paste to someone. The
+     transient bits below (hover, picker open, the picker's own type-ahead)
+     deliberately do not. */
+  const [url, setUrl] = useUrlFilters({
+    event: '',
+    metric: 'pct_sold',
+    normalize: true,
+    when: 'future',
+    from: '',
+    to: '',
+  });
+  const metric = oneOf(url.metric, METRICS, 'pct_sold');
+  const when = oneOf(url.when, WHENS, 'future');
+  const { normalize, from: dateFrom, to: dateTo } = url;
+  const selected = url.event || null;
+
+  const setMetric = (v: Metric) => setUrl({ metric: v });
+  const setNormalize = (v: boolean) => setUrl({ normalize: v });
+  const setWhen = (v: EventWhen) => setUrl({ when: v });
+  const setDateFrom = (v: string) => setUrl({ from: v });
+  const setDateTo = (v: string) => setUrl({ to: v });
+
   const [hover, setHover] = useState<HoverInfo | null>(null);
   const [search, setSearch] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [when, setWhen] = useState<EventWhen>('future');
   const searchRef = useRef<HTMLInputElement>(null);
 
   const events = useQuery<StadiumEventsResponse>({
@@ -264,7 +285,7 @@ export default function Stadium() {
   })();
 
   const selectEvent = (name: string) => {
-    setSelected(name);
+    setUrl({ event: name });
     setSearch('');
     setPickerOpen(false);
     searchRef.current?.blur();
