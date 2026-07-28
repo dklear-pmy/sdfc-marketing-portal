@@ -34,6 +34,13 @@
   --color-sdfc-surface: #0b2341;
   --color-sdfc-elevated: #0f2d4f;
   --color-sdfc-overlay: #1a3a5c;
+  /* Table header band — ported from talent-platform tailwind.config.ts
+     (sdfc.tableHeader). A tinted band is what stops a table reading as white
+     text rows on a white card; the header is the only row that gets a fill. */
+  --color-sdfc-table-header: #dbeafe;
+  --color-sdfc-table-header-dark: #1e3a5c;
+  --color-sdfc-table-header-text: #1e40af;
+  --color-sdfc-table-header-text-dark: #93c5fd;
 }
 
 @theme inline {

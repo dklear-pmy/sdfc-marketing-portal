@@ -29,7 +29,7 @@ const PAGE = 20;
 const WINDOWS = ['24h', '7d', '30d', 'all'] as const;
 
 const selectCls =
-  'border-input bg-card h-9 max-w-[400px] rounded-md border px-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50';
+  'border-input bg-background h-9 max-w-[400px] rounded-md border px-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50';
 
 function FacetSelect({
   value,
