@@ -2,6 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- Internal tool: keep every crawler out, on every host this ships to
+         (marketing.sdfc.dev, *.web.app, preview channels). Backed by
+         robots.txt and an X-Robots-Tag header in firebase.json. -->
+    <meta name="robots" content="noindex, nofollow" />
     <!-- Club crest, as served by MLS for sandiegofc.com:
          images.mlssoccer.com/image/upload/assets/logos/SD.svg (copied in, not
          hot-linked). SVG first; the 32px PNG covers anything that won't take
