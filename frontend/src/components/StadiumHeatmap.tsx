@@ -206,56 +206,40 @@ function collectRings(c: CoordTree, out: number[][][]): void {
 }
 
 interface SectionGeom {
-  /** Points on the section's top and bottom edges, each horizontally centred on
-      the widest span just inside that edge — taking a span rather than the
-      extreme vertex keeps the label off sloped corners. The code chip hangs
-      below `top` when the chips fit inside, sits above it when they don't, and
-      a section too small for either gets a callout hung off `bottom`. */
+  /** Points on the section's top and bottom edges, at the section's
+      horizontal centre — the code chip sits across the centre of the top
+      edge, and a number callout hangs off `bottom`. */
   top: [number, number];
   bottom: [number, number];
-  /** Pole of inaccessibility — the interior point furthest from any edge, via
-      polylabel. Unlike a centroid this is always inside the shape: 8 of the 100
-      sections are multi-part (PIERS is three disjoint pieces), and a centroid of
-      disjoint parts lands in the gap between them. */
-  pole: [number, number];
-  /** Radius of the largest circle that fits inside the section, in degrees —
-      i.e. half the section's thickness at its roomiest point. */
-  poleRDeg: number;
+  /** The number's anchor: the area centroid when it sits inside the shape
+      with reasonable clearance — visual centring; polylabel's pole wanders
+      to the roomiest corner of asymmetric shapes like the 334 ramp's flared
+      foot — otherwise the pole of inaccessibility, which is always inside
+      (8 of the 100 sections are multi-part, and a centroid of disjoint parts
+      lands in the gap between them). */
+  center: [number, number];
+  /** Distance from `center` to the nearest boundary, in degrees — half the
+      section's local thickness at the label point. */
+  centerRDeg: number;
   /** Bounding-box extent in degrees. */
   wDeg: number;
   hDeg: number;
 }
 
-/* Midpoint of the widest span a little inside the given edge, lifted onto the
-   edge itself *at that x* — on a slanted section like 323 the edge at the
-   label's x and the polygon's extreme vertex differ by most of its height. */
+/* The section's horizontal centre, lifted onto the given edge at that x — so
+   the chip sits across the centre of the top edge whatever the edge's shape.
+   The previous widest-span-near-the-edge scan drifted off-centre on slanted
+   tops (T134, 135) and, on a diagonal sliver like the 334 ramp, crossed the
+   body far below the cap and planted the chip on the ramp's side. */
 function edgeAnchor(
   rings: number[][][],
+  xMin: number,
+  xMax: number,
   yTop: number,
   yBot: number,
   side: 'top' | 'bottom'
-): [number, number] | null {
-  const inset = Math.max(8, (yTop - yBot) * 0.14);
-  const scan = side === 'top' ? yTop - inset : yBot + inset;
-  const xs: number[] = [];
-  for (const r of rings) {
-    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
-      const [xi, yi] = r[i];
-      const [xj, yj] = r[j];
-      if (yi > scan !== yj > scan) xs.push(xi + ((scan - yi) / (yj - yi)) * (xj - xi));
-    }
-  }
-  xs.sort((a, b) => a - b);
-  let widest = 0;
-  let mid = 0;
-  for (let i = 0; i + 1 < xs.length; i += 2) {
-    const w = xs[i + 1] - xs[i];
-    if (w > widest) {
-      widest = w;
-      mid = (xs[i] + xs[i + 1]) / 2;
-    }
-  }
-  if (widest <= 0) return null;
+): [number, number] {
+  const mid = (xMin + xMax) / 2;
   const ys: number[] = [];
   for (const r of rings) {
     for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
@@ -264,9 +248,69 @@ function edgeAnchor(
       if (xi > mid !== xj > mid) ys.push(yi + ((mid - xi) / (xj - xi)) * (yj - yi));
     }
   }
+  // A multi-part section can have no boundary at its centre x; fall back to
+  // the bounding box so the chip still lands sensibly.
   const fallback = side === 'top' ? yTop : yBot;
   const edge = ys.length ? (side === 'top' ? Math.max(...ys) : Math.min(...ys)) : fallback;
   return toLngLat([mid, edge]) as [number, number];
+}
+
+/* Area centroid over all rings, |area|-weighted (seat sections have no holes
+   worth speaking of, so unsigned weights are safe against winding). */
+function centroidOf(rings: number[][][]): [number, number] {
+  let A = 0;
+  let X = 0;
+  let Y = 0;
+  for (const r of rings) {
+    let a = 0;
+    let cx = 0;
+    let cy = 0;
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+      const [xi, yi] = r[i];
+      const [xj, yj] = r[j];
+      const f = xj * yi - xi * yj;
+      a += f;
+      cx += (xi + xj) * f;
+      cy += (yi + yj) * f;
+    }
+    if (!a) continue;
+    const w = Math.abs(a / 2);
+    A += w;
+    X += (cx / (3 * a)) * w;
+    Y += (cy / (3 * a)) * w;
+  }
+  return A ? [X / A, Y / A] : [rings[0][0][0], rings[0][0][1]];
+}
+
+/* Even-odd ray cast across every ring. */
+function insideRings(p: [number, number], rings: number[][][]): boolean {
+  let inside = false;
+  for (const r of rings) {
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+      const [xi, yi] = r[i];
+      const [xj, yj] = r[j];
+      if (yi > p[1] !== yj > p[1] && p[0] < xi + ((p[1] - yi) / (yj - yi)) * (xj - xi)) {
+        inside = !inside;
+      }
+    }
+  }
+  return inside;
+}
+
+/* Distance from a point to the nearest boundary segment. */
+function distToBoundary(p: [number, number], rings: number[][][]): number {
+  let best = Infinity;
+  for (const r of rings) {
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+      const [ax, ay] = r[j];
+      const dx = r[i][0] - ax;
+      const dy = r[i][1] - ay;
+      const l2 = dx * dx + dy * dy;
+      const t = l2 ? Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / l2)) : 0;
+      best = Math.min(best, Math.hypot(ax + t * dx - p[0], ay + t * dy - p[1]));
+    }
+  }
+  return best;
 }
 
 const SECTION_GEOM: Record<string, SectionGeom> = (() => {
@@ -288,9 +332,8 @@ const SECTION_GEOM: Record<string, SectionGeom> = (() => {
       }
     }
     if (!Number.isFinite(yTop)) continue;
-    const top = edgeAnchor(rings, yTop, yBot, 'top');
-    const bottom = edgeAnchor(rings, yTop, yBot, 'bottom');
-    if (!top || !bottom) continue;
+    const top = edgeAnchor(rings, xMin, xMax, yTop, yBot, 'top');
+    const bottom = edgeAnchor(rings, xMin, xMax, yTop, yBot, 'bottom');
     /* polylabel takes one polygon, so run it per ring and keep the roomiest —
        for a multi-part section that picks the largest piece rather than
        averaging the parts into the empty space between them. */
@@ -302,11 +345,19 @@ const SECTION_GEOM: Record<string, SectionGeom> = (() => {
       if (!best || p.distance > (best as number[] & { distance: number }).distance) best = p;
     }
     if (!best) continue;
+    const poleR = (best as number[] & { distance: number }).distance;
+    /* Prefer the centroid for visual centring, but only when it is inside the
+       shape and not squeezed against an edge — under 60% of the pole's
+       clearance means the centroid sits in a thin part (crescents, sharp
+       wedges) and the roomier pole is the better home for the number. */
+    const centroid = centroidOf(rings);
+    const centroidR = insideRings(centroid, rings) ? distToBoundary(centroid, rings) : 0;
+    const useCentroid = centroidR >= poleR * 0.6;
     out[f.properties.section] = {
       top,
       bottom,
-      pole: toLngLat(best) as [number, number],
-      poleRDeg: (best as number[] & { distance: number }).distance * SCALE,
+      center: toLngLat(useCentroid ? centroid : best) as [number, number],
+      centerRDeg: (useCentroid ? centroidR : poleR) * SCALE,
       wDeg: (xMax - xMin) * SCALE,
       hDeg: (yTop - yBot) * SCALE,
     };
@@ -398,8 +449,8 @@ interface Props {
   heat: StadiumSectionHeat[];
   /** Normalized 0..1 value per section name; null/absent = no data (grey). */
   values: Record<string, number | null>;
-  /** Second label line for a section, spelling out the active metric
-      (e.g. "39% SOLD"). Return null to show the section code alone. */
+  /** Metric text carried in the section's chip after its code
+      (e.g. "39%"). Return null to show the section code alone. */
   labelFor?: (r: StadiumSectionHeat) => string | null;
   onHover?: (info: HoverInfo | null) => void;
 }
@@ -412,6 +463,15 @@ const LABEL_MAX_PX = 24;
 const LABEL_ZOOM_SPAN = 4;
 /** The metric reads as secondary at a slightly smaller size. */
 const METRIC_SCALE = 0.88;
+/** The unit glyph ('%') shrinks further within the number span so the digits,
+    not the unit, sit optically centred in the chip. */
+const UNIT_SCALE = 0.72;
+
+/* '93%' → ['93', '%']; '1,234' → ['1,234', '']. The unit renders in its own
+   format span at UNIT_SCALE. */
+function splitUnit(text: string): [string, string] {
+  return text.endsWith('%') ? [text.slice(0, -1), '%'] : [text, ''];
+}
 
 /* Label size steps at whole zoom levels rather than interpolating.
 
@@ -438,6 +498,8 @@ const LABEL_FONT = ['Inter Variable', 'Inter', 'Helvetica Neue', 'Arial'];
 
 const CHIP_LIGHT = 'chip-light';
 const CHIP_DARK = 'chip-dark';
+/** The code chips' own image: light fill in both themes, tighter content box. */
+const CHIP_CODE = 'chip-code';
 
 /* The chip behind a label: a rounded rect drawn once and registered as a
    stretchable image, so `icon-text-fit` grows it around whatever text it
@@ -448,6 +510,12 @@ const CHIP_IMAGE_OPTIONS = {
   stretchX: [[14, 18]] as [number, number][],
   stretchY: [[14, 18]] as [number, number][],
   content: [8, 6, 24, 26] as [number, number, number, number],
+};
+/* The code chips run tighter: same rounded rect, roughly half the air around
+   the text (2.5px / 1.5px CSS margins vs 4px / 3px). */
+const CODE_CHIP_IMAGE_OPTIONS = {
+  ...CHIP_IMAGE_OPTIONS,
+  content: [5, 3, 27, 29] as [number, number, number, number],
 };
 
 function chipImage(fill: string, stroke: string): ImageData {
@@ -607,13 +675,10 @@ export default function StadiumHeatmap({ heat, values, labelFor, onHover }: Prop
       /* Section labels as symbol layers, so MapLibre owns collision, priority
          and zoom sizing rather than us measuring DOM nodes every frame.
 
-         Where the code chip sits is ours to decide, not the renderer's:
-         collision can only see other labels, so an isolated small section
-         would happily take the inside position. The `pos` property drives a
-         data-driven text-anchor — "inside" hangs the chip below the section's
-         top edge, "above" sits it over the edge — and the effect below
-         recomputes it from the section's on-screen size. `symbol-sort-key`
-         carries the seat count negated, so the biggest sections place first.
+         Whether a number sits at its centre or drops to a callout is ours to
+         decide in the sync effect below — collision can only see other
+         labels, not the section shapes. `symbol-sort-key` carries the seat
+         count negated, so the biggest sections place first.
 
          Deferred until the webfont resolves: MapLibre rasterises local glyphs
          on first use and caches them, so adding these before Inter has loaded
@@ -640,6 +705,11 @@ export default function StadiumHeatmap({ heat, values, labelFor, onHover }: Prop
 
         map.addImage(CHIP_LIGHT, chipImage(CHIP_FILL_LIGHT, CHIP_STROKE_LIGHT), CHIP_IMAGE_OPTIONS);
         map.addImage(CHIP_DARK, chipImage(CHIP_FILL_DARK, CHIP_STROKE_DARK), CHIP_IMAGE_OPTIONS);
+        map.addImage(
+          CHIP_CODE,
+          chipImage(CHIP_FILL_LIGHT, CHIP_STROKE_LIGHT),
+          CODE_CHIP_IMAGE_OPTIONS
+        );
         const chip = d ? CHIP_DARK : CHIP_LIGHT;
         const ink = d ? LABEL_TEXT_DARK : LABEL_TEXT_LIGHT;
 
@@ -659,13 +729,57 @@ export default function StadiumHeatmap({ heat, values, labelFor, onHover }: Prop
           },
         });
 
+        /* Codes and numbers are separate layers with separate jobs:
+
+           - `code-label`: the section name, ALWAYS above the section's top
+             edge, on a fixed white chip with near-black ink in both themes —
+             it reads as a tag on the stadium furniture, not as a datum.
+           - `metric-label` (topmost, places first): the number, centred on
+             the section's visual centre, or hung below the section
+             on a leader-line callout where the shape cannot hold even the
+             mini chip. Numbers place first, so in a crowd it is a code that
+             yields, never a number.
+
+           The unit ('%') renders at a further reduced font-scale so the
+           digits, not the unit, sit optically centred — the engine cannot
+           exclude a glyph from line centring. */
+        map.addSource('code-labels', { type: 'geojson', data: emptyFC });
+        map.addLayer({
+          id: 'code-label',
+          type: 'symbol',
+          source: 'code-labels',
+          layout: {
+            'text-field': ['get', 'code'],
+            'text-font': LABEL_FONT,
+            // A quarter smaller than the metrics' base scale: the name is
+            // wayfinding, not data, so it cedes visual rank to the numbers.
+            'text-size': textSize(0.75),
+            'text-anchor': 'bottom',
+            'text-offset': [0, -0.15],
+            'text-padding': 2,
+            'symbol-sort-key': ['get', 'sortKey'],
+            'icon-image': CHIP_CODE,
+            'icon-text-fit': 'both',
+            // The chip, not the text, is the shape that visually collides, and it
+            // has its own padding knob — text-padding does not apply to it.
+            'icon-padding': CHIP_PADDING,
+          },
+          paint: { 'text-color': LABEL_TEXT_LIGHT },
+        });
+
         map.addSource('metric-labels', { type: 'geojson', data: emptyFC });
         map.addLayer({
           id: 'metric-label',
           type: 'symbol',
           source: 'metric-labels',
           layout: {
-            'text-field': ['get', 'label'],
+            'text-field': [
+              'format',
+              ['get', 'digits'],
+              {},
+              ['get', 'unit'],
+              { 'font-scale': UNIT_SCALE },
+            ],
             'text-font': LABEL_FONT,
             'text-size': textSize(METRIC_SCALE),
             'text-anchor': 'center',
@@ -673,46 +787,6 @@ export default function StadiumHeatmap({ heat, values, labelFor, onHover }: Prop
             'symbol-sort-key': ['get', 'sortKey'],
             'icon-image': chip,
             'icon-text-fit': 'both',
-            // The chip, not the text, is the shape that visually collides, and it
-            // has its own padding knob — text-padding does not apply to it.
-            'icon-padding': CHIP_PADDING,
-          },
-          paint: { 'text-color': ink },
-        });
-
-        map.addSource('code-labels', { type: 'geojson', data: emptyFC });
-        map.addLayer({
-          id: 'code-label',
-          type: 'symbol',
-          source: 'code-labels',
-          layout: {
-            'text-field': ['get', 'label'],
-            'text-font': LABEL_FONT,
-            'text-size': textSize(1),
-            'text-anchor': [
-              'case',
-              ['==', ['get', 'pos'], 'inside'],
-              'top',
-              // A callout already sits at its own computed point below the
-              // section, so it needs no further nudge.
-              ['==', ['get', 'pos'], 'callout'],
-              'center',
-              'bottom',
-            ],
-            'text-offset': [
-              'case',
-              ['==', ['get', 'pos'], 'inside'],
-              ['literal', [0, 0.15]],
-              ['==', ['get', 'pos'], 'callout'],
-              ['literal', [0, 0]],
-              ['literal', [0, -0.15]],
-            ],
-            'text-padding': 2,
-            'symbol-sort-key': ['get', 'sortKey'],
-            'icon-image': chip,
-            'icon-text-fit': 'both',
-            // The chip, not the text, is the shape that visually collides, and it
-            // has its own padding knob — text-padding does not apply to it.
             'icon-padding': CHIP_PADDING,
           },
           paint: { 'text-color': ink },
@@ -763,18 +837,15 @@ export default function StadiumHeatmap({ heat, values, labelFor, onHover }: Prop
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* Feed the two label layers, and decide per section whether its code chip
-     goes inside the geometry or above it.
+  /* Feed the label layers: every section's code chip rides above its top
+     edge, and its number — where there is one — sits at the section's
+     visual centre, dropping to a leader-line callout below the section
+     when the shape cannot hold even the mini chip.
 
-     The code only moves inside once the section can hold BOTH chips stacked;
-     until then it floats above, so a section never shows a code crammed inside
-     with no room for its number. The metric is judged separately and appears
-     whenever it fits the section on its own, which is what lets a strip like
-     C228 read as its code above and its number inside.
-
-     Section size depends on zoom, so this reruns as you zoom — but it only
-     touches the sources when a section actually changes state, which happens a
-     handful of times across the whole zoom range rather than every frame. */
+     Section size depends on zoom (and on the container, hence the resize
+     listener), so this reruns as the view changes — but it only touches the
+     sources when a section actually changes state, which happens a handful of
+     times across the whole zoom range rather than every frame. */
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !loaded) return;
@@ -783,46 +854,32 @@ export default function StadiumHeatmap({ heat, values, labelFor, onHover }: Prop
     const sync = () => {
       const base = baseZoomRef.current ?? map.getZoom();
       const font = labelFontPx(map.getZoom(), base);
-      // Mirrors the chip's em-based padding, so its box scales with the font.
-      const chipH = (scale = 1) => font * scale * 1.3 + 2;
-      const chipW = (chars: number, scale = 1) =>
-        chars * font * scale * 0.62 + font * scale * 0.7 + 2;
-      const codeH = chipH();
-      const metricH = chipH(METRIC_SCALE);
-      const stackedH = codeH * 2 + metricH;
+      // The mini number chip's height, mirroring its em-based padding so the
+      // box scales with the font.
+      const miniH = font * METRIC_SCALE * 1.3 + 2;
       // The extent is tiny and unrotated, so one linear scale covers the map.
       const origin = map.project([0, 0]);
       const pxPerLat = origin.y - map.project([0, 1]).y;
-      /* Does a w x h chip fit inside a section? Two necessary conditions,
-         neither sufficient on its own — each catches what the other misses.
-
-         The bounding box lies about multi-part sections: PIERS spans
-         237x350px across three disjoint pieces but is only 44px thick, so a
-         box test would happily drop labels in the empty space between them.
-         The inscribed radius is far too strict for elongated shapes: section
-         323 is a roomy 67x119px trapezoid whose largest inscribed circle is
-         only 29px across the radius, which would reject a chip pair that
-         plainly fits. Requiring both keeps each honest. */
-      const fitsInside = (w: number, h: number, secW: number, secH: number, rPx: number) =>
-        w <= secW * 0.92 && h <= secH && 2 * rPx >= Math.min(w, h);
 
       const codes: GeoJSON.Feature[] = [];
       const metrics: GeoJSON.Feature[] = [];
       const leaders: GeoJSON.Feature[] = [];
       /* A callout hangs a fixed pixel distance off the section, so its point
-         moves in geographic terms as you zoom. Quantising the zoom keeps that
-         to ~40 rebuilds across the whole range instead of one per frame; a
-         0.1-level step is a ~7% offset error, which is not visible. */
-      const signature: string[] = [`z${(map.getZoom() * 10).toFixed(0)}`];
+         moves in geographic terms as the scale changes. Quantising the scale
+         keeps that to a handful of rebuilds across the zoom range instead of
+         one per frame; a step of 2^0.1 (~7% offset error) is not visible.
+         Keyed on pxPerLat rather than zoom so a container resize — which
+         changes the scale at constant zoom — also lands a rebuild. */
+      const signature: string[] = [`s${Math.round(Math.log2(pxPerLat) * 10)}`];
       for (const r of heat) {
         if (r.cx == null || r.cy == null) continue;
         // Negated so the biggest sections carry the lowest key and place first.
         const sortKey = -(r.total_seats ?? 0);
         const geom = SECTION_GEOM[r.section];
-        // Pole of inaccessibility, so the number always lands inside the shape.
-        const anchor = geom ? geom.pole : (toLngLat([r.cx, r.cy]) as [number, number]);
-        const rPx = (geom?.poleRDeg ?? 0) * pxPerLat;
-        const secW = (geom?.wDeg ?? 0) * pxPerLat;
+        // Centroid when it sits inside with clearance, else the pole — see
+        // SECTION_GEOM. Either way the number lands inside the shape.
+        const anchor = geom ? geom.center : (toLngLat([r.cx, r.cy]) as [number, number]);
+        const rPx = (geom?.centerRDeg ?? 0) * pxPerLat;
         const secH = (geom?.hDeg ?? 0) * pxPerLat;
 
         const metricText = labelFor
@@ -830,68 +887,44 @@ export default function StadiumHeatmap({ heat, values, labelFor, onHover }: Prop
           : r.pct_sold == null
             ? null
             : `${Math.round(r.pct_sold * 100)}%`;
-        const codeW = chipW(r.data_code.length);
-        const metricW = metricText ? chipW(metricText.length, METRIC_SCALE) : 0;
 
-        /* One rule for every section, whether or not it has a number to show:
-           the code drops inside only where both chips stacked would fit. A
-           no-inventory section has no metric, but exempting it from the test
-           put its code inside a strip far too short for it while its
-           neighbours sat above — so the test is uniform and only the width
-           looks at what will actually render. */
-        const roomForBoth = fitsInside(Math.max(codeW, metricW), stackedH, secW, secH, rPx);
-        const metricFits = fitsInside(metricW, metricH, secW, secH * 0.92, rPx);
+        codes.push({
+          type: 'Feature',
+          properties: { code: r.data_code, sortKey },
+          geometry: { type: 'Point', coordinates: geom?.top ?? anchor },
+        });
+        if (!metricText) {
+          signature.push('x');
+          continue;
+        }
 
-        /* Three states. A loge strip like LB125 is 32x8px at the default view —
-           it cannot hold a single chip — so "code above, number inside" hides
-           its number until you have zoomed absurdly far in. Those get a callout
-           instead: one chip carrying both values, hung below the section on a
-           leader line.
-
-           The trigger is deliberately "cannot hold one chip", not "the metric
-           doesn't fit". The looser test caught 33 sections at the default view,
-           including 47x44px club blocks that read perfectly well as code-above;
-           33 floating callouts is worse clutter than the problem it solves. */
-        /* Height only, plus a thickness guard. Width is deliberately not
-           considered: a section narrower than its code chip reads fine with the
-           chip overhanging above it, and including width here turned 39 sections
-           into callouts. */
-        const tooSmallForAnyLabel = secH < codeH || 2 * rPx < codeH;
-        const pos = roomForBoth
-          ? 'inside'
-          : metricText && tooSmallForAnyLabel
-            ? 'callout'
-            : 'above';
-        signature.push(pos);
-
-        if (pos === 'callout' && geom) {
+        /* Centre or callout, judged on height and thickness only — numbers are
+           short, so width almost never binds, and a width criterion pushed
+           narrow-but-roomy strips into needless callouts. The inscribed
+           radius keeps multi-part and sliver shapes honest: PIERS spans
+           237x350px across three disjoint pieces but is only 44px thick, and
+           a box test alone would drop its number in the gap between them. */
+        const [digits, unit] = splitUnit(metricText);
+        const fitsPole = secH >= miniH && 2 * rPx >= miniH;
+        signature.push(fitsPole ? 'p' : 'c');
+        if (fitsPole) {
+          metrics.push({
+            type: 'Feature',
+            properties: { digits, unit, sortKey },
+            geometry: { type: 'Point', coordinates: anchor },
+          });
+        } else if (geom) {
           const [ax, ay] = geom.bottom;
           const point: [number, number] = [ax, ay - CALLOUT_PX / pxPerLat];
-          codes.push({
+          metrics.push({
             type: 'Feature',
-            properties: { label: `${r.data_code}  ${metricText}`, sortKey, pos },
+            properties: { digits, unit, sortKey },
             geometry: { type: 'Point', coordinates: point },
           });
           leaders.push({
             type: 'Feature',
             properties: {},
             geometry: { type: 'LineString', coordinates: [geom.bottom, point] },
-          });
-          continue;
-        }
-
-        codes.push({
-          type: 'Feature',
-          properties: { label: r.data_code, sortKey, pos },
-          geometry: { type: 'Point', coordinates: geom?.top ?? anchor },
-        });
-
-        if (metricText && metricFits) {
-          signature.push('m');
-          metrics.push({
-            type: 'Feature',
-            properties: { label: metricText, sortKey },
-            geometry: { type: 'Point', coordinates: anchor },
           });
         }
       }
@@ -901,10 +934,7 @@ export default function StadiumHeatmap({ heat, values, labelFor, onHover }: Prop
       lastSignature = next;
       const src = (id: string) => map.getSource(id) as maplibregl.GeoJSONSource | undefined;
       src('code-labels')?.setData({ type: 'FeatureCollection', features: codes });
-      src('metric-labels')?.setData({
-        type: 'FeatureCollection',
-        features: metrics,
-      });
+      src('metric-labels')?.setData({ type: 'FeatureCollection', features: metrics });
       src('label-leaders')?.setData({
         type: 'FeatureCollection',
         features: leaders,
@@ -913,8 +943,12 @@ export default function StadiumHeatmap({ heat, values, labelFor, onHover }: Prop
 
     sync();
     map.on('zoom', sync);
+    // pxPerLat also changes when the container does (sidebar toggle, window
+    // resize) with no zoom event, and stale fit tests linger until the next.
+    map.on('resize', sync);
     return () => {
       map.off('zoom', sync);
+      map.off('resize', sync);
     };
   }, [heat, labelFor, loaded]);
 
@@ -942,10 +976,9 @@ export default function StadiumHeatmap({ heat, values, labelFor, onHover }: Prop
     map.setPaintProperty('pitch-grass', 'fill-color', dark ? GRASS_DARK : GRASS_LIGHT);
     map.setPaintProperty('pitch-lines', 'line-color', dark ? PITCH_LINE_DARK : PITCH_LINE_LIGHT);
     map.setPaintProperty('pitch-spots', 'circle-color', dark ? PITCH_LINE_DARK : PITCH_LINE_LIGHT);
-    for (const id of ['code-label', 'metric-label']) {
-      map.setPaintProperty(id, 'text-color', dark ? LABEL_TEXT_DARK : LABEL_TEXT_LIGHT);
-      map.setLayoutProperty(id, 'icon-image', dark ? CHIP_DARK : CHIP_LIGHT);
-    }
+    // The code chips are deliberately theme-invariant (white chip, dark ink).
+    map.setPaintProperty('metric-label', 'text-color', dark ? LABEL_TEXT_DARK : LABEL_TEXT_LIGHT);
+    map.setLayoutProperty('metric-label', 'icon-image', dark ? CHIP_DARK : CHIP_LIGHT);
     map.setPaintProperty('label-leader', 'line-color', dark ? LEADER_DARK : LEADER_LIGHT);
   }, [dark, loaded]);
 
