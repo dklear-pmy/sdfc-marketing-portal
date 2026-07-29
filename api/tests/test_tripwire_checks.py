@@ -93,8 +93,86 @@ def main() -> int:
 
     for f in failures:
         print(f"FAIL  {f}")
+
+    failures += test_resub_guard()
+
     print("FAILED" if failures else "all canary check paths behave correctly")
     return 1 if failures else 0
+
+
+RAW_WITH_UNSUB = (
+    "List-Unsubscribe: <mailto:ABC@unsubscribe2.customer.io>,\r\n"
+    " <https://e.customeriomail.com/unsubscribe/dgSxzwwBAOHnGeDnGQGfn_18v3zaSY7ducHh1_U=>\r\n"
+    "List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n"
+    "Subject: hi\r\n\r\nbody\r\n"
+)
+
+
+def test_resub_guard() -> list:
+    """make_resub_guard: the action that turns a tripwire into the July
+    resub-loop's inverse listener. All collaborators faked — no sink, no CIO."""
+    failures = []
+
+    url = T.mailpit.unsubscribe_url(RAW_WITH_UNSUB)
+    if url != "https://e.customeriomail.com/unsubscribe/dgSxzwwBAOHnGeDnGQGfn_18v3zaSY7ducHh1_U=":
+        failures.append(f"unsubscribe_url extraction: {url}")
+    if T.mailpit.unsubscribe_url("Subject: hi\r\n\r\nno links here") is not None:
+        failures.append("unsubscribe_url must be None when absent")
+
+    class FakeCioGuard:
+        def __init__(self, unsub):
+            self._unsub = unsub
+
+        def customer_by_email(self, email):
+            return {"cio_id": "abc"}
+
+        def customer_attributes(self, cio_id):
+            return {"unsubscribed": self._unsub}
+
+    posts = []
+    updates = []
+    T.list_tripwires = lambda active_only=False: [{"email": "guard@qa.sdfc.dev"}]
+    T.mailpit.search_to = lambda email: [{"ID": "m1", "Created": "2026-07-29"}]
+    T.mailpit.raw_message = lambda mid: RAW_WITH_UNSUB
+    T.requests.post = lambda url, **kw: posts.append((url, kw.get("data"))) or type("R", (), {"status_code": 200})()
+    T.CioClient = lambda: FakeCioGuard(True)
+    T.update_tripwire = lambda email, **kw: updates.append((email, kw))
+    T.time.sleep = lambda s: None
+
+    out = T.make_resub_guard("guard@qa.sdfc.dev")
+    if not (out["unsubscribed"] and out["expect_subscribed"] is False):
+        failures.append(f"happy path result: {out}")
+    if posts[0][1] != {"List-Unsubscribe": "One-Click"}:
+        failures.append(f"one-click POST body wrong: {posts[0]}")
+    if updates != [("guard@qa.sdfc.dev", {"expect_subscribed": False})]:
+        failures.append(f"expectation flip wrong: {updates}")
+
+    for bad_email, label in (("other@qa.sdfc.dev", "unknown tripwire"),):
+        try:
+            T.make_resub_guard(bad_email)
+            failures.append(f"{label}: should have raised")
+        except ValueError:
+            pass
+
+    T.mailpit.search_to = lambda email: []
+    try:
+        T.make_resub_guard("guard@qa.sdfc.dev")
+        failures.append("no sink messages: should have raised")
+    except ValueError as e:
+        if "provision" not in str(e):
+            failures.append(f"no-message error unhelpful: {e}")
+
+    T.mailpit.search_to = lambda email: [{"ID": "m1", "Created": "2026-07-29"}]
+    T.CioClient = lambda: FakeCioGuard(False)
+    try:
+        T.make_resub_guard("guard@qa.sdfc.dev")
+        failures.append("unconfirmed flip: should have raised")
+    except ValueError:
+        pass
+
+    for f in failures:
+        print(f"FAIL  {f}")
+    return failures
 
 
 if __name__ == "__main__":

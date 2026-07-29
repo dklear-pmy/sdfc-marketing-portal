@@ -367,6 +367,18 @@ def tripwires_update(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/api/tripwires/{email}/unsubscribe")
+def tripwires_make_resub_guard(
+    email: str, principal: Principal = require_role("operator")
+) -> dict:
+    """Unsubscribe a tripwire through its own email's one-click link and flip
+    its expectation — from then on the 5-minute checks alert on re-subscription."""
+    try:
+        return tripwires.make_resub_guard(_valid_email(email))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/api/tripwires/canary")
 def tripwires_canary(principal: Principal = require_role("operator")) -> dict:
     """Fire the synthetic canary by hand (the hourly Scheduler job posts to

@@ -327,13 +327,21 @@ function QuietThreshold({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit:
 }
 
 function TripwireCard({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit: boolean }) {
+  const queryClient = useQueryClient();
   const lastChecked = t.checks[0]?.checked_at;
+  const makeGuard = useMutation({
+    mutationFn: () => api.post(`/api/tripwires/${encodeURIComponent(t.email)}/unsubscribe`),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['tripwires'] }),
+  });
   return (
     <Card className={cn(t.overall === 'FAIL' && 'border-destructive')}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-base">{t.label}</CardTitle>
-          {overallBadge(t.overall)}
+          <div className="flex items-center gap-1.5">
+            {!t.expect_subscribed && <Badge variant="outline">resub guard</Badge>}
+            {overallBadge(t.overall)}
+          </div>
         </div>
         <CardDescription className="font-mono text-xs">{t.email}</CardDescription>
       </CardHeader>
@@ -344,6 +352,29 @@ function TripwireCard({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit: b
         ))}
         {t.checks.length === 0 && <p className="text-sm text-muted-foreground">Not checked yet.</p>}
         <QuietThreshold tripwire={t} canEdit={canEdit} />
+        {canEdit && t.expect_subscribed && (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={makeGuard.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Unsubscribe ${t.email} via its own email link and alert if anything ever re-subscribes it?`
+                  )
+                ) {
+                  makeGuard.mutate();
+                }
+              }}
+            >
+              {makeGuard.isPending ? 'Unsubscribing…' : 'Make resubscribe guard'}
+            </Button>
+            {makeGuard.isError && (
+              <span className="text-sm text-destructive">{(makeGuard.error as Error).message}</span>
+            )}
+          </div>
+        )}
         {lastChecked && (
           <p className="text-xs text-muted-foreground">
             Checked {relativeFrom(lastChecked)} · {formatUtc(lastChecked)}

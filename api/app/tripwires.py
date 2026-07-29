@@ -23,6 +23,7 @@ same proven path the harness runner uses.
 
 import datetime as dt
 import json
+import time
 
 import requests
 from google.cloud import bigquery
@@ -150,7 +151,7 @@ def add_tripwire(
     provisioned = None
     if provision_slug:
         spec = slug_registry().get(provision_slug)
-        if not spec or "test_webhook_secret" not in spec:
+        if not spec or not (spec.get("test_webhook_url") or spec.get("test_webhook_secret")):
             raise ValueError(f"slug '{provision_slug}' has no test webhook to provision through")
         payload = _provision_payload(email, label)
         resp = requests.post(_webhook_url(spec), json=payload, timeout=20)
@@ -200,6 +201,50 @@ def _provision_payload(email: str, label: str) -> dict:
         "has_season_plan": False,
         "postal_code": "92101",
     }
+
+
+def make_resub_guard(email: str) -> dict:
+    """Turn a provisioned tripwire into a resubscribe guard: fire the one-click
+    unsubscribe from its newest sink message (the genuine fan-facing path — no
+    Track API credentials involved), confirm Customer.io recorded the flip,
+    then expect unsubscribed from here on. The subscription check on the
+    5-minute tick alerts the moment anything re-subscribes the account — the
+    inverse failure mode of the July unsub-loop, which was mass RE-subscription
+    of people who had opted out.
+    """
+    email = email.strip().lower()
+    if not any(t["email"] == email for t in list_tripwires()):
+        raise ValueError(f"{email} is not a registered tripwire")
+
+    url = None
+    for m in sorted(mailpit.search_to(email), key=lambda m: m.get("Created", ""), reverse=True):
+        url = mailpit.unsubscribe_url(mailpit.raw_message(m["ID"]))
+        if url:
+            break
+    if not url:
+        raise ValueError(
+            "No List-Unsubscribe link in this tripwire's sink messages — provision it and let a welcome email arrive first"
+        )
+
+    resp = requests.post(url, data={"List-Unsubscribe": "One-Click"}, timeout=20)
+    if resp.status_code >= 400:
+        raise ValueError(f"One-click unsubscribe returned HTTP {resp.status_code}")
+
+    cio = CioClient()
+    confirmed = False
+    for _ in range(6):
+        person = cio.customer_by_email(email)
+        if person and bool(cio.customer_attributes(person["cio_id"]).get("unsubscribed")):
+            confirmed = True
+            break
+        time.sleep(5)
+    if not confirmed:
+        raise ValueError(
+            "Unsubscribe fired but Customer.io hasn't recorded unsubscribed=true yet — retry in a minute"
+        )
+
+    update_tripwire(email, expect_subscribed=False)
+    return {"email": email, "unsubscribed": True, "expect_subscribed": False}
 
 
 # ---- checks ----

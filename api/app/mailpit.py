@@ -21,6 +21,7 @@ _BASE = _LOCAL_URL or "https://mail.sdfc.dev"
 
 _OPEN_RE = re.compile(r"https://e\.customeriomail\.com/e/o/[^\s\"'<>)]+")
 _CLICK_RE = re.compile(r"https://e\.customeriomail\.com/e/c/[^\s\"'<>)]+")
+_UNSUB_RE = re.compile(r"https://e\.customeriomail\.com/unsubscribe/[^\s\"'<>)]+")
 
 
 def _headers() -> dict:
@@ -57,6 +58,15 @@ def tracking_urls(raw_mime: str) -> tuple[list[str], list[str]]:
     opens = sorted(set(_OPEN_RE.findall(decoded)))
     clicks = sorted(set(_CLICK_RE.findall(decoded)))
     return opens, clicks
+
+
+def unsubscribe_url(raw_mime: str) -> str | None:
+    """The https one-click unsubscribe target from List-Unsubscribe. Decoded
+    the same way as the tracking URLs; the header instance precedes any
+    body copy, so the first match is the clean one."""
+    decoded = quopri.decodestring(raw_mime.encode()).decode("utf-8", errors="replace")
+    m = _UNSUB_RE.search(decoded)
+    return m.group(0) if m else None
 
 
 def engage(raw_mime: str, *, open_pixel: bool, click_first: bool) -> dict:
