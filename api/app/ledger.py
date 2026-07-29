@@ -2,11 +2,12 @@
 filterable surface (distinct from the per-fan profile card).
 
 Two layers, mirroring the ledger design:
-  events   — customerdata_silver.customer_events (append-only stream,
-             day-partitioned on ts + clustered customer/activity, so the
-             default 7-day window keeps scans to a handful of partitions)
+  events   — customerdata_silver.vw_customer_events_live (the hourly-built
+             customer_events stream plus the two real-time arms: CIO webhook
+             staging and the TB 5-minute poll — same view the per-fan card
+             reads; ts filters still prune the base table's day partitions)
   statuses — customerdata_gold.customer_status_ledger (one row per
-             email × status_domain)
+             email × status_domain, daily build)
 
 Facet options (activities/sources/domains) are computed inside the same
 window so dropdowns always reflect reality.
@@ -20,7 +21,7 @@ from .bqstate import client
 from .config import GCP_PROJECT
 from .customers import _safe_dict
 
-_EVENTS = f"{GCP_PROJECT}.customerdata_silver.customer_events"
+_EVENTS = f"{GCP_PROJECT}.customerdata_silver.vw_customer_events_live"
 _LEDGER = f"{GCP_PROJECT}.customerdata_gold.customer_status_ledger"
 
 WINDOWS = {"24h": 1, "7d": 7, "30d": 30, "all": None}
