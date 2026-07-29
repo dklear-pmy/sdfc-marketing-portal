@@ -67,7 +67,13 @@ class CioClient:
         return self._get(f"/customers/{cio_id}/messages", **params)
 
     def messages_for_recipient(self, email: str, limit: int = 50) -> list[dict]:
-        """Delivery ledger entries for a recipient. The API's recipient param
-        does not filter reliably — filter client-side."""
-        msgs = self._get("/messages", limit=limit).get("messages", [])
-        return [m for m in msgs if (m.get("recipient") or "").lower() == email.lower()]
+        """Delivery ledger entries for a recipient, via the person's own
+        message page. This used to filter the workspace-wide /messages list
+        client-side (the API's recipient param doesn't filter reliably), but
+        that window is the newest N messages across ALL recipients — one real
+        campaign blast evicts every entry for a single address and reads as
+        "no messages ever" (the 2026-07-29 'Early Access' false alarm)."""
+        person = self.customer_by_email(email)
+        if not person:
+            return []
+        return self.customer_messages_page(person["cio_id"], limit=limit).get("messages", [])
