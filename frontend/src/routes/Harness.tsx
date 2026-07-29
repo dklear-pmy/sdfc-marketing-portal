@@ -42,6 +42,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
+import SlugRegistry from '@/components/SlugRegistry';
 
 const checkVariant: Record<CheckStatus, 'default' | 'destructive' | 'secondary' | 'outline'> = {
   pass: 'default',
@@ -103,11 +104,20 @@ export default function Harness() {
         </p>
       </div>
 
+      <SlugRegistry
+        onValidate={(s) => {
+          setSlug(s);
+          setFormError(null);
+          validation.mutate(s);
+        }}
+      />
+
       <Card>
         <CardHeader>
           <CardTitle>Validate wiring</CardTitle>
           <CardDescription>
-            Enter the campaign's name code as it appears in Customer.io, e.g.{' '}
+            Pick a registered campaign above, or enter any campaign's name code as it appears in
+            Customer.io, e.g.{' '}
             <code className="rounded bg-muted px-1 py-0.5">Welcome-General-260715</code>. This
             confirms the test and live versions are wired identically before anything is sent.
           </CardDescription>

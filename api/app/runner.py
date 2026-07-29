@@ -82,6 +82,10 @@ def _hold_for_transport(run_id: str, run: dict, stage: str, hard_min: int) -> No
 
 
 def _webhook_url(spec: dict) -> str:
+    """The twin's trigger URL — stored plainly in the registry (internal-only
+    portal); Secret Manager id is the legacy fallback for unmigrated entries."""
+    if spec.get("test_webhook_url"):
+        return spec["test_webhook_url"].strip()
     secret_id = spec["test_webhook_secret"]
     sm = secretmanager.SecretManagerServiceClient()
     name = f"projects/{GCP_PROJECT}/secrets/{secret_id}/versions/latest"
@@ -114,8 +118,8 @@ def _payload(spec: dict, identity: str, run_id: str) -> dict:
 
 def start_run(slug: str, actor: str | None) -> dict:
     spec = slug_registry().get(slug)
-    if not spec or "test_webhook_secret" not in spec:
-        raise ValueError(f"slug '{slug}' has no runner config (test_webhook_secret) in the registry")
+    if not spec or not (spec.get("test_webhook_url") or spec.get("test_webhook_secret")):
+        raise ValueError(f"slug '{slug}' has no test webhook URL in the registry")
 
     run_id = bqstate.create_run(slug, "open_click_all", actor)
     run = bqstate.get_run(run_id)

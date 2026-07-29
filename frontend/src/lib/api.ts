@@ -79,6 +79,46 @@ export interface ValidationReport {
   summary: { pass: number; fail: number; warn: number; skip: number };
 }
 
+export interface SlugEntry {
+  slug: string;
+  trigger_key: string | null;
+  event_name: string | null;
+  test_event_name: string | null;
+  payload_fields: string[];
+  person_attributes: string[];
+  webhook_secrets: string[];
+  test_webhook_secret: string | null;
+  test_webhook_url: string | null;
+  notes: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+  runnable?: boolean;
+}
+
+export type PrecheckLevel = 'fail' | 'warn' | 'info';
+
+export interface PrecheckFinding {
+  level: PrecheckLevel;
+  message: string;
+}
+
+export interface SlugPrecheck {
+  slug: string;
+  generated_at: string;
+  registered: boolean;
+  campaigns: CampaignSummary[];
+  findings: PrecheckFinding[];
+  secrets: Record<string, boolean | null>;
+  suggested: {
+    event_name?: string;
+    test_event_name?: string;
+    payload_fields?: string[];
+    person_attributes?: string[];
+  };
+  runnable: boolean;
+  runnable_reason: string | null;
+}
+
 export interface RunTimelineEntry {
   ts: string;
   stage: string;

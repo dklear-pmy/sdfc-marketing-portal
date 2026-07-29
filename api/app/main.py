@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import admin, bqstate, customers, emailer, ledger, runner, stadium, tripwires
+from . import admin, bqstate, customers, emailer, ledger, runner, slugs, stadium, tripwires
 from .auth import Principal, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
 from .validator import validate_slug
@@ -23,6 +23,81 @@ app.add_middleware(
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+def _valid_slug(slug: str) -> str:
+    slug = slug.strip()
+    if not slugs.SLUG_RE.match(slug):
+        raise HTTPException(status_code=400, detail="Invalid slug format")
+    return slug
+
+
+class SlugUpsert(BaseModel):
+    trigger_key: str | None = None
+    event_name: str | None = None
+    test_event_name: str | None = None
+    payload_fields: list[str] = []
+    person_attributes: list[str] = []
+    webhook_secrets: list[str] = []
+    test_webhook_secret: str | None = None
+    test_webhook_url: str | None = None
+    notes: str | None = None
+
+
+@app.get("/api/slugs")
+def slugs_list(q: str | None = None, principal: Principal = require_role("viewer")) -> dict:
+    if q and len(q) > 120:
+        raise HTTPException(status_code=400, detail="Search too long")
+    return {"slugs": slugs.list_slugs(q=q)}
+
+
+@app.get("/api/slugs/{slug}/precheck")
+def slugs_precheck(
+    slug: str,
+    event_name: str | None = None,
+    test_event_name: str | None = None,
+    test_webhook_url: str | None = None,
+    principal: Principal = require_role("viewer"),
+) -> dict:
+    try:
+        return slugs.precheck(
+            _valid_slug(slug),
+            overrides={
+                "event_name": event_name,
+                "test_event_name": test_event_name,
+                "test_webhook_url": test_webhook_url,
+            },
+        )
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Customer.io API error: {e}")
+
+
+@app.get("/api/slugs/{slug}")
+def slugs_get(slug: str, principal: Principal = require_role("viewer")) -> dict:
+    entry = slugs.get_slug(_valid_slug(slug))
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Slug not registered")
+    return entry
+
+
+@app.put("/api/slugs/{slug}")
+def slugs_upsert(
+    slug: str, body: SlugUpsert, principal: Principal = require_role("operator")
+) -> dict:
+    fields = body.model_dump()
+    if body.notes and len(body.notes) > 2000:
+        raise HTTPException(status_code=400, detail="Notes too long")
+    errors = slugs.validate_entry(fields)
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+    return slugs.upsert_slug(_valid_slug(slug), fields, actor=principal.email)
+
+
+@app.delete("/api/slugs/{slug}")
+def slugs_delete(slug: str, principal: Principal = require_role("operator")) -> dict:
+    if not slugs.delete_slug(_valid_slug(slug)):
+        raise HTTPException(status_code=404, detail="Slug not registered")
+    return {"deleted": slug}
 
 
 @app.get("/api/harness/validate/{slug}")

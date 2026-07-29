@@ -7,7 +7,8 @@ Checks (from repodocs/CIO_TEST_HARNESS_UI_PLAN.md in sdfc-udp):
   4. identify-by-email  — both trigger halves key the person on the email field
   5. payload-mapping    — Send Event fields match the slug's payload contract
   6. liquid-refs        — template refs resolvable from payload/person attributes
-  7. webhook-secret     — Secret Manager holds the trigger's webhook URL
+  7. webhook-secret     — a test trigger webhook URL is registered (plain
+                          registry URL; legacy Secret Manager id still honored)
 
 Known static blind spots (covered by the Phase-2 dynamic runner): the Send
 Event's emitted *event name* and journey timers/branches are not exposed by the
@@ -279,22 +280,27 @@ def validate_slug(slug: str) -> dict:
     )
 
     sec_status, sec_notes = "pass", []
-    secrets = spec.get("webhook_secrets") or []
-    if not secrets:
-        sec_status = "skip"
-        sec_notes.append("no webhook secrets declared in registry for this slug")
-    for sid in secrets:
-        exists = secret_exists(sid)
+    if spec.get("test_webhook_url"):
+        sec_notes.append("twin trigger URL stored in the registry")
+    elif spec.get("test_webhook_secret"):
+        exists = secret_exists(spec["test_webhook_secret"])
         if exists is False:
             sec_status = "fail"
-            sec_notes.append(f"secret '{sid}' not found in Secret Manager")
+            sec_notes.append(f"legacy secret '{spec['test_webhook_secret']}' not found in Secret Manager")
         elif exists is None:
-            if sec_status == "pass":
-                sec_status = "warn"
-            sec_notes.append(f"secret '{sid}': no permission to verify")
+            sec_status = "warn"
+            sec_notes.append(f"legacy secret '{spec['test_webhook_secret']}': no permission to verify")
+        else:
+            sec_notes.append(f"legacy secret '{spec['test_webhook_secret']}' verified")
+    elif spec:
+        sec_status = "warn"
+        sec_notes.append("no test webhook URL in the registry — the runner cannot fire this slug")
+    else:
+        sec_status = "skip"
+        sec_notes.append("slug not in registry")
     _check(
-        checks, "webhook-secret", "Webhook URL secret present", sec_status,
-        "; ".join(sec_notes) or f"Verified: {', '.join(secrets)}",
+        checks, "webhook-secret", "Test trigger webhook URL", sec_status,
+        "; ".join(sec_notes),
     )
 
     campaign_summaries = [

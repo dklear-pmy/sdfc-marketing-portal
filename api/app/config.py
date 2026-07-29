@@ -3,9 +3,6 @@
 import json
 import os
 from functools import lru_cache
-from pathlib import Path
-
-import yaml
 
 GCP_PROJECT = "sdfc-udp-dev"
 
@@ -25,13 +22,16 @@ AUTH_DISABLED = os.environ.get("DISABLE_AUTH") == "1" and os.environ.get("ENV") 
 PORTAL_SA_EMAIL = "marketing-portal-sa@sdfc-udp-dev.iam.gserviceaccount.com"
 TICK_AUDIENCE = os.environ.get("TICK_AUDIENCE", "sdfc-marketing-portal-tick")
 
-_SLUG_REGISTRY_PATH = Path(__file__).parent.parent / "config" / "slugs.yaml"
-
-
-@lru_cache(maxsize=1)
 def slug_registry() -> dict:
-    with open(_SLUG_REGISTRY_PATH) as f:
-        return yaml.safe_load(f)["slugs"]
+    """{slug: spec} from customerio_state.slug_registry (portal-managed).
+
+    Same dict shape as the retired api/config/slugs.yaml. Deliberately
+    uncached: registry edits in the portal must take effect on the next
+    validator/runner call, and the table is a handful of rows.
+    """
+    from . import slugs
+
+    return slugs.registry_dict()
 
 
 @lru_cache(maxsize=1)
@@ -56,6 +56,9 @@ def secret_exists(secret_id: str) -> bool | None:
         client.access_secret_version(name=name)
         return True
     except gexc.NotFound:
+        return False
+    except gexc.InvalidArgument:
+        # Malformed id (e.g. a pasted URL) — not a secret, not a server error.
         return False
     except gexc.PermissionDenied:
         return None

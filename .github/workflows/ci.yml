@@ -43,3 +43,5 @@ jobs:
       # Canary FAIL paths: the checks that make a quiet PASS trustworthy, so
       # their ability to fail is pinned down rather than assumed. No creds.
       - run: python tests/test_tripwire_checks.py
+      # Slug precheck findings incl. the dual-entry (twin on prod event) class.
+      - run: python tests/test_slug_registry.py

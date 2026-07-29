@@ -76,6 +76,14 @@ Per-phase additions (grant only when the phase ships):
   anyway); `roles/bigquery.jobUser` (run jobs only — carries no data access);
   IAP-secured Web App User on the Mailpit backend; accessor on further
   `cio-trigger-url-*` secrets as slugs are onboarded.
+  *(2026-07-29 update: superseded — new slugs store the twin's webhook URL
+  plainly in `customerio_state.slug_registry` (Dean's call: internal-only
+  portal; Secret Manager stays reserved for the team's long-running API
+  credentials). No per-slug secrets or grants anymore; the legacy
+  `test_webhook_secret` path remains honored for unmigrated rows. The registry
+  table replaced `api/config/slugs.yaml` and is managed from the Campaign
+  Tester page; `cio-trigger-url-tb-signup-dev` is deletable once the URL-first
+  runner is deployed.)*
 - **Phase 3 (customer dashboard, executed 2026-07-26):** READER via dataset ACL
   on `customerio_gold` **only** — the lookup does point queries on the email
   clustering key of `fan_attributes` + `fan_attributes_cio_sync` (~15 MB/scan).
