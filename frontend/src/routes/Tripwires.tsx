@@ -38,9 +38,9 @@ const checkLabel: Record<string, string> = {
   suppression: 'Suppression respected',
   guard_conversion: 'Guard conversion',
   pmy_test_lint: 'PMY-TEST lint',
-  canary_send: 'Canary fired',
-  canary_delivery: 'Canary delivered',
-  canary_sink: 'Canary reached the inbox',
+  canary_send: 'Tripwire fired',
+  canary_delivery: 'Tripwire delivered',
+  canary_sink: 'Tripwire reached the inbox',
 };
 
 const statusVariant: Record<TripwireStatus, 'default' | 'destructive' | 'secondary' | 'outline'> = {
@@ -159,7 +159,7 @@ export default function Tripwires() {
               <AlertDescription>
                 {[
                   canaryFailing &&
-                    'The synthetic canary is failing — treat every other result here as unverified until it clears.',
+                    'The synthetic tripwire is failing — treat every other result here as unverified until it clears.',
                   failing.length > 0 && failing.map((t) => t.label).join(', '),
                   workspaceFailing && 'PMY-TEST lint violation',
                 ]
@@ -186,7 +186,7 @@ export default function Tripwires() {
               <Card className={cn('lg:col-span-2', canaryFailing && 'border-destructive')}>
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between gap-2">
-                    <CardTitle className="text-base">Synthetic canary</CardTitle>
+                    <CardTitle className="text-base">Synthetic tripwire</CardTitle>
                     <div className="flex items-center gap-2">
                       {canOperate && (
                         <Button
@@ -344,8 +344,9 @@ function GuardsCard({ guards, canEdit }: { guards: Tripwire[]; canEdit: boolean 
     (w, g) => ((rank[g.overall] ?? 3) < (rank[w] ?? 3) ? g.overall : w),
     'PASS'
   );
+  const ordered = [...guards].sort((a) => (a.kind === 'guard_sub' ? -1 : 1));
   return (
-    <Card className={cn(worst === 'FAIL' && 'border-destructive')}>
+    <Card className={cn('lg:col-span-2', worst === 'FAIL' && 'border-destructive')}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-base">Subscription guards</CardTitle>
@@ -357,11 +358,11 @@ function GuardsCard({ guards, canEdit }: { guards: Tripwire[]; canEdit: boolean 
           loop, and mail sent to opted-out fans.
         </CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-4">
+      <CardContent className="grid items-start gap-4 sm:grid-cols-2">
         {guards.length === 0 && (
-          <p className="text-sm text-muted-foreground">No guards registered.</p>
+          <p className="text-sm text-muted-foreground sm:col-span-2">No guards registered.</p>
         )}
-        {guards.map((g) => {
+        {ordered.map((g) => {
           const sub = g.kind === 'guard_sub';
           const flagBroken = g.checks.some(
             (c) => c.check_name === 'subscription' && c.status === 'FAIL'
@@ -405,7 +406,9 @@ function GuardsCard({ guards, canEdit }: { guards: Tripwire[]; canEdit: boolean 
           );
         })}
         {repair.isError && (
-          <p className="text-sm text-destructive">{(repair.error as Error).message}</p>
+          <p className="text-sm text-destructive sm:col-span-2">
+            {(repair.error as Error).message}
+          </p>
         )}
       </CardContent>
     </Card>
@@ -743,7 +746,11 @@ function HistoryCard() {
                       {formatUtc(r.checked_at)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
-                      {r.email === '_workspace' ? 'Workspace' : shortIdentity(r.email)}
+                      {r.email === '_workspace'
+                        ? 'Workspace'
+                        : r.email === '_canary'
+                          ? 'Synthetic tripwire'
+                          : shortIdentity(r.email)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       {checkLabel[r.check_name] ?? r.check_name}

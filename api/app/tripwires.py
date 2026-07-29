@@ -75,7 +75,7 @@ TRANSPORT_WINDOW_H = 24
 # It also keeps campaign metrics clean, which a campaign-driven canary would not.
 CANARY_EMAIL = "canary@qa.sdfc.dev"
 CANARY_FROM = "San Diego FC <info@sandiegofc.com>"  # the only verified CIO sender
-CANARY_SUBJECT = "SDFC monitoring canary"
+CANARY_SUBJECT = "SDFC synthetic tripwire"
 # Fired hourly; allow a missed run plus clock slop before calling it stale.
 CANARY_MAX_AGE_MIN = 75
 
@@ -462,7 +462,7 @@ def send_canary() -> dict:
             "from": CANARY_FROM,
             "subject": f"{CANARY_SUBJECT} {stamp}",
             "body": (
-                "<p>Synthetic monitoring canary from the SDFC marketing portal. "
+                "<p>Synthetic tripwire email from the SDFC marketing portal. "
                 "Not a fan-facing email — it proves the Customer.io send path and "
                 "the test inbox are working, and that these checks are running.</p>"
             ),
@@ -486,7 +486,7 @@ def _check_canary(cio: CioClient) -> list[dict]:
         return [{
             "check_name": "canary_send",
             "status": "FAIL",
-            "detail": f"No canary send has ever reached {CANARY_EMAIL}",
+            "detail": f"No tripwire send has ever reached {CANARY_EMAIL}",
         }]
 
     latest = max(messages, key=lambda m: m["metrics"]["sent"])
@@ -501,7 +501,7 @@ def _check_canary(cio: CioClient) -> list[dict]:
             "check_name": "canary_send",
             "status": "FAIL",
             "detail": (
-                f"Last canary {age_min / 60:.1f}h ago (expected hourly) — the send job "
+                f"Last tripwire send {age_min / 60:.1f}h ago (expected hourly) — the send job "
                 "is not firing, so quiet PASSes elsewhere prove nothing"
             ),
         })
@@ -509,7 +509,7 @@ def _check_canary(cio: CioClient) -> list[dict]:
         rows.append({
             "check_name": "canary_send",
             "status": "PASS",
-            "detail": f"Last canary {int(age_min)}m ago",
+            "detail": f"Last tripwire send {int(age_min)}m ago",
         })
 
     mt = latest["metrics"]
@@ -524,7 +524,7 @@ def _check_canary(cio: CioClient) -> list[dict]:
         rows.append({
             "check_name": "canary_delivery",
             "status": "FAIL",
-            "detail": f"Canary BOUNCED (sent {_iso(sent)})",
+            "detail": f"Tripwire send BOUNCED (sent {_iso(sent)})",
         })
     elif age_min > DELIVERY_DEADLINE_MIN:
         rows.append({
@@ -557,7 +557,7 @@ def _check_canary(cio: CioClient) -> list[dict]:
                 rows.append({
                     "check_name": "canary_sink",
                     "status": "PASS",
-                    "detail": "Latest canary present in the test inbox",
+                    "detail": "Latest tripwire send present in the test inbox",
                 })
             else:
                 rows.append({
