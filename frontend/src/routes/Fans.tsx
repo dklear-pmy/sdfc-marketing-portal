@@ -66,6 +66,13 @@ export default function Fans() {
 
   return (
     <div className="grid gap-6">
+      {submitted && (
+        <div>
+          <Button variant="outline" size="sm" onClick={() => setUrl({ email: '' })}>
+            ← Return to Fan Activity
+          </Button>
+        </div>
+      )}
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Fans</h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -104,7 +111,7 @@ export default function Fans() {
       )}
 
       {lookup.isFetching && (
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid gap-4 2xl:grid-cols-3">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-44" />
           ))}
@@ -113,12 +120,53 @@ export default function Fans() {
 
       {lookup.data && !lookup.isFetching && <LookupResult data={lookup.data} />}
 
-      <FanList
-        onSelect={(em) => {
-          setUrl({ email: em });
-          document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
-        }}
-      />
+      {/* Browse list only on the landing view — inside a fan drilldown it's
+          noise; “Return to Fan Activity” is the way back. */}
+      {!submitted && (
+        <FanList
+          onSelect={(em) => {
+            setUrl({ email: em });
+            document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function Pager({
+  page,
+  pageCount,
+  onPage,
+  note,
+  trailing,
+}: {
+  page: number;
+  pageCount: number;
+  onPage: (p: number) => void;
+  note: string;
+  trailing?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className="text-sm text-muted-foreground">{note}</span>
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" onClick={() => onPage(page - 1)} disabled={page <= 0}>
+          Previous
+        </Button>
+        <span className="text-sm text-muted-foreground">
+          {page + 1} / {Math.max(1, pageCount)}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onPage(page + 1)}
+          disabled={page + 1 >= pageCount}
+        >
+          Next
+        </Button>
+        {trailing}
+      </div>
     </div>
   );
 }
@@ -139,14 +187,17 @@ function LookupResult({ data }: { data: CustomerLookup }) {
 
   return (
     <>
-      <div className="grid items-start gap-4 lg:grid-cols-3">
+      {/* One column until the window is genuinely wide — truncated facts are
+          worse than scrolling. */}
+      <div className="grid items-start gap-4 2xl:grid-cols-3">
         <IdentityCard data={data} />
         <SyncCard data={data} />
         <SnapshotCard row={warehouse.row} />
       </div>
-      <LedgerCard email={data.email} />
-      {sync.comparison.length > 0 && <AttributesCard comparison={sync.comparison} />}
       {cio.found && cio.cio_id && <ActivityCard cioId={cio.cio_id} />}
+      {sync.comparison.length > 0 && <AttributesCard comparison={sync.comparison} />}
+      <LedgerCard email={data.email} />
+      {(cio.segments?.length ?? 0) > 0 && <SegmentsCard segments={cio.segments!} />}
     </>
   );
 }
@@ -168,7 +219,6 @@ function IdentityCard({ data }: { data: CustomerLookup }) {
     [attrs.first_name, attrs.last_name].filter(Boolean).join(' ') ||
     (row.full_name as string) ||
     'Unknown name';
-  const segments = cio.segments ?? [];
 
   return (
     <Card>
@@ -203,17 +253,74 @@ function IdentityCard({ data }: { data: CustomerLookup }) {
             <span className="font-mono text-xs">{row.sf_account_id}</span>
           </Fact>
         )}
-        {segments.length > 0 && (
-          <div className="mt-1">
-            <div className="mb-1.5 text-sm text-muted-foreground">Segments ({segments.length})</div>
-            <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
-              {segments.map((s) => (
-                <Badge key={s} variant="outline" className="font-normal">
-                  {s.trim()}
-                </Badge>
-              ))}
-            </div>
-          </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SegmentsCard({ segments }: { segments: { id: number | null; name: string }[] }) {
+  /* ?sgq=… so a filtered segment view is shareable like every other filter;
+     the page position is transient. */
+  const [{ sgq }, setUrl] = useUrlFilters({ sgq: '' });
+  const [page, setPage] = useState(0);
+  const sorted = [...segments]
+    .map((s) => ({ ...s, name: s.name.trim() }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const q = sgq.trim().toLowerCase();
+  const rows = q
+    ? sorted.filter((s) => s.name.toLowerCase().includes(q) || String(s.id ?? '').includes(q))
+    : sorted;
+  const pageCount = Math.ceil(rows.length / 10);
+  const visible = rows.slice(page * 10, page * 10 + 10);
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Segments ({segments.length})</CardTitle>
+        <CardDescription>
+          Every Customer.io segment this fan is currently in. The ID is Customer.io's own segment
+          number — the handle to use in campaign triggers and the CIO UI, and what tells apart
+          identically-named segments.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <Input
+          className="max-w-xs"
+          placeholder="Search segments by name or ID…"
+          value={sgq}
+          onChange={(e) => {
+            setUrl({ sgq: e.target.value });
+            setPage(0);
+          }}
+        />
+        {rows.length === 0 && (
+          <p className="text-sm text-muted-foreground">No segments match “{sgq}”.</p>
+        )}
+        {rows.length > 0 && (
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-24">ID</TableHead>
+                  <TableHead>Segment</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visible.map((s) => (
+                  <TableRow key={`${s.id}-${s.name}`}>
+                    <TableCell className="font-mono text-xs">{s.id ?? '—'}</TableCell>
+                    <TableCell className="text-sm break-words">{s.name}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <Pager
+              page={page}
+              pageCount={pageCount}
+              onPage={setPage}
+              note={`${rows.length} segment(s)`}
+            />
+          </>
         )}
       </CardContent>
     </Card>
@@ -470,7 +577,7 @@ function AttributesCard({ comparison }: { comparison: AttrComparison[] }) {
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize: 15 } },
+    initialState: { pagination: { pageSize: 10 } },
   });
 
   const counts = useMemo(() => {
@@ -647,15 +754,21 @@ function messageKind(m: CioMessage): string {
 const ACTIVITY_TABS = ['timeline', 'messages'] as const;
 
 function ActivityCard({ cioId }: { cioId: string }) {
-  const [{ ptab }, setUrl] = useUrlFilters({ ptab: 'timeline' });
+  const [{ ptab, aq }, setUrl] = useUrlFilters({ ptab: 'timeline', aq: '' });
   const tab = oneOf(ptab, ACTIVITY_TABS, 'timeline');
-  const setTab = (v: string) => setUrl({ ptab: v });
+  const [page, setPage] = useState(0);
+  const setTab = (v: string) => {
+    setUrl({ ptab: v });
+    setPage(0);
+  };
 
+  /* CIO pages by cursor (forward-only), so fetch big chunks and page the
+     display locally by 10 — that also gives the filter something to bite on. */
   const activities = useInfiniteQuery<ActivitiesPage>({
     queryKey: ['customer-activities', cioId],
     queryFn: ({ pageParam }) =>
       api.get(
-        `/api/customers/${cioId}/activities?limit=20${pageParam ? `&start=${encodeURIComponent(String(pageParam))}` : ''}`
+        `/api/customers/${cioId}/activities?limit=50${pageParam ? `&start=${encodeURIComponent(String(pageParam))}` : ''}`
       ),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.next ?? undefined,
@@ -666,16 +779,38 @@ function ActivityCard({ cioId }: { cioId: string }) {
     queryKey: ['customer-messages', cioId],
     queryFn: ({ pageParam }) =>
       api.get(
-        `/api/customers/${cioId}/messages?limit=20${pageParam ? `&start=${encodeURIComponent(String(pageParam))}` : ''}`
+        `/api/customers/${cioId}/messages?limit=50${pageParam ? `&start=${encodeURIComponent(String(pageParam))}` : ''}`
       ),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.next ?? undefined,
     enabled: tab === 'messages',
   });
 
-  const activityRows = activities.data?.pages.flatMap((p) => p.activities) ?? [];
-  const messageRows = messages.data?.pages.flatMap((p) => p.messages) ?? [];
+  const q = aq.trim().toLowerCase();
+  const allActivities = activities.data?.pages.flatMap((p) => p.activities) ?? [];
+  const allMessages = messages.data?.pages.flatMap((p) => p.messages) ?? [];
+  const activityRows = q
+    ? allActivities.filter((a) =>
+        [activityLabel[a.type] ?? a.type, activityDetail(a), a.name ?? '']
+          .join(' ')
+          .toLowerCase()
+          .includes(q)
+      )
+    : allActivities;
+  const messageRows = q
+    ? allMessages.filter((m) =>
+        [m.subject ?? '', messageKind(m), messageStatus(m).label, m.failure_message ?? '']
+          .join(' ')
+          .toLowerCase()
+          .includes(q)
+      )
+    : allMessages;
   const active = tab === 'timeline' ? activities : messages;
+  const filtered = tab === 'timeline' ? activityRows.length : messageRows.length;
+  const loaded = tab === 'timeline' ? allActivities.length : allMessages.length;
+  const pageCount = Math.ceil(filtered / 10);
+  const pagedActivities = activityRows.slice(page * 10, page * 10 + 10);
+  const pagedMessages = messageRows.slice(page * 10, page * 10 + 10);
 
   return (
     <Card>
@@ -686,12 +821,23 @@ function ActivityCard({ cioId }: { cioId: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as 'timeline' | 'messages')}>
-          <TabsList>
-            <TabsTrigger value="timeline">Timeline</TabsTrigger>
-            <TabsTrigger value="messages">Messages</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex flex-wrap items-center gap-3">
+          <Tabs value={tab} onValueChange={(v) => setTab(v as 'timeline' | 'messages')}>
+            <TabsList>
+              <TabsTrigger value="timeline">Timeline</TabsTrigger>
+              <TabsTrigger value="messages">Messages</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <Input
+            className="max-w-56"
+            placeholder={tab === 'timeline' ? 'Filter activity…' : 'Filter messages…'}
+            value={aq}
+            onChange={(e) => {
+              setUrl({ aq: e.target.value });
+              setPage(0);
+            }}
+          />
+        </div>
 
         {active.isError && (
           <Alert variant="destructive">
@@ -703,9 +849,11 @@ function ActivityCard({ cioId }: { cioId: string }) {
         {tab === 'timeline' && !activities.isPending && (
           <div className="grid">
             {activityRows.length === 0 && (
-              <p className="py-4 text-sm text-muted-foreground">No activity recorded.</p>
+              <p className="py-4 text-sm text-muted-foreground">
+                {q ? `Nothing loaded matches “${aq}”.` : 'No activity recorded.'}
+              </p>
             )}
-            {activityRows.map((a) => (
+            {pagedActivities.map((a) => (
               <div
                 key={a.id}
                 className="flex items-center gap-3 border-b py-2.5 text-sm last:border-b-0"
@@ -745,11 +893,11 @@ function ActivityCard({ cioId }: { cioId: string }) {
                 {messageRows.length === 0 && (
                   <TableRow>
                     <TableCell colSpan={4} className="h-16 text-center text-muted-foreground">
-                      No messages sent to this person.
+                      {q ? `Nothing loaded matches “${aq}”.` : 'No messages sent to this person.'}
                     </TableCell>
                   </TableRow>
                 )}
-                {messageRows.map((m) => {
+                {pagedMessages.map((m) => {
                   const st = messageStatus(m);
                   return (
                     <TableRow key={m.id}>
@@ -778,17 +926,29 @@ function ActivityCard({ cioId }: { cioId: string }) {
           </div>
         )}
 
-        {active.hasNextPage && (
-          <div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void active.fetchNextPage()}
-              disabled={active.isFetchingNextPage}
-            >
-              {active.isFetchingNextPage ? 'Loading…' : 'Load more'}
-            </Button>
-          </div>
+        {!active.isPending && (filtered > 0 || active.hasNextPage) && (
+          <Pager
+            page={page}
+            pageCount={pageCount}
+            onPage={setPage}
+            note={
+              q
+                ? `${filtered} of ${loaded} loaded match`
+                : `${loaded} loaded${active.hasNextPage ? ' · more in Customer.io' : ''}`
+            }
+            trailing={
+              active.hasNextPage ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void active.fetchNextPage()}
+                  disabled={active.isFetchingNextPage}
+                >
+                  {active.isFetchingNextPage ? 'Loading…' : 'Load more'}
+                </Button>
+              ) : undefined
+            }
+          />
         )}
       </CardContent>
     </Card>
@@ -971,18 +1131,25 @@ function ledgerEventDetail(e: LedgerEvent): string {
 }
 
 function LedgerCard({ email }: { email: string }) {
-  const ledger = useInfiniteQuery<FanLedgerPage>({
-    queryKey: ['fan-ledger', email],
-    queryFn: ({ pageParam }) =>
+  /* ?lq=… holds the SUBMITTED ledger search so a filtered view is shareable;
+     the input below is a draft until Search/Enter. */
+  const [{ lq }, setUrl] = useUrlFilters({ lq: '' });
+  const [draft, setDraft] = useState(lq);
+  useEffect(() => setDraft(lq), [lq]);
+
+  const [offset, setOffset] = useState(0);
+  const ledger = useQuery<FanLedgerPage>({
+    queryKey: ['fan-ledger', email, lq, offset],
+    queryFn: () =>
       api.get(
-        `/api/customers/ledger?email=${encodeURIComponent(email)}&limit=25&offset=${pageParam}`
+        `/api/customers/ledger?email=${encodeURIComponent(email)}&limit=10&offset=${offset}` +
+          (lq ? `&q=${encodeURIComponent(lq)}` : '')
       ),
-    initialPageParam: 0,
-    getNextPageParam: (last) => (last.has_more ? last.offset + last.limit : undefined),
+    placeholderData: (prev) => prev,
   });
 
-  const statuses = ledger.data?.pages[0]?.statuses ?? [];
-  const events = ledger.data?.pages.flatMap((p) => p.events) ?? [];
+  const statuses = ledger.data?.statuses ?? [];
+  const events = ledger.data?.events ?? [];
 
   return (
     <Card>
@@ -994,6 +1161,38 @@ function LedgerCard({ email }: { email: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setUrl({ lq: draft.trim() });
+            setOffset(0);
+          }}
+        >
+          <Input
+            className="max-w-xs"
+            placeholder="Search activities, sources, details…"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <Button type="submit" variant="outline" size="sm">
+            Search
+          </Button>
+          {lq && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setUrl({ lq: '' });
+                setOffset(0);
+              }}
+            >
+              Clear
+            </Button>
+          )}
+        </form>
+
         {ledger.isError && (
           <Alert variant="destructive">
             <AlertDescription>{(ledger.error as Error).message}</AlertDescription>
@@ -1020,7 +1219,9 @@ function LedgerCard({ email }: { email: string }) {
         {!ledger.isPending && (
           <div className="grid">
             {events.length === 0 && (
-              <p className="py-3 text-sm text-muted-foreground">No ledger events for this fan.</p>
+              <p className="py-3 text-sm text-muted-foreground">
+                {lq ? `No ledger events match “${lq}”.` : 'No ledger events for this fan.'}
+              </p>
             )}
             {events.map((e) => (
               <div
@@ -1056,15 +1257,24 @@ function LedgerCard({ email }: { email: string }) {
           </div>
         )}
 
-        {ledger.hasNextPage && (
-          <div>
+        {!ledger.isPending && (events.length > 0 || offset > 0) && (
+          <div className="flex items-center justify-end gap-2">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void ledger.fetchNextPage()}
-              disabled={ledger.isFetchingNextPage}
+              onClick={() => setOffset(Math.max(0, offset - 10))}
+              disabled={offset === 0 || ledger.isFetching}
             >
-              {ledger.isFetchingNextPage ? 'Loading…' : 'Load more'}
+              Previous
+            </Button>
+            <span className="text-sm text-muted-foreground">Page {offset / 10 + 1}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setOffset(offset + 10)}
+              disabled={!ledger.data?.has_more || ledger.isFetching}
+            >
+              Next
             </Button>
           </div>
         )}

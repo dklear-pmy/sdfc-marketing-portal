@@ -226,10 +226,16 @@ def customers_ledger(
     email: str,
     limit: int = 25,
     offset: int = 0,
+    q: str | None = None,
     principal: Principal = require_role("viewer"),
 ) -> dict:
+    if q and len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search too long")
     return customers.fan_ledger(
-        _valid_email(email), limit=max(1, min(limit, 100)), offset=max(0, min(offset, 100_000))
+        _valid_email(email),
+        limit=max(1, min(limit, 100)),
+        offset=max(0, min(offset, 100_000)),
+        q=q,
     )
 
 

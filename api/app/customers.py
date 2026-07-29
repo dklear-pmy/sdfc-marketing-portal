@@ -175,7 +175,9 @@ def _cio_side(email: str) -> dict:
         "cio_id": cio_id,
         "id": found.get("id") or None,
         "unsubscribed": customer.get("unsubscribed"),
-        "segments": [s["name"] for s in segments],
+        # id is CIO's own numeric segment id — the stable handle people use in
+        # the CIO UI and API, and the disambiguator for duplicate names.
+        "segments": [{"id": s.get("id"), "name": s.get("name") or ""} for s in segments],
         "customer": customer,
         "last_attribute_write": (
             dt.datetime.fromtimestamp(last_write, dt.timezone.utc).isoformat()
@@ -292,12 +294,24 @@ _LEDGER = f"{GCP_PROJECT}.customerdata_gold.customer_status_ledger"
 _EVENTS = f"{GCP_PROJECT}.customerdata_silver.customer_events"
 
 
-def fan_ledger(email: str, limit: int = 25, offset: int = 0) -> dict:
+def fan_ledger(email: str, limit: int = 25, offset: int = 0, q: str | None = None) -> dict:
     """Warehouse activity ledger for one fan: status-domain rows from
     customer_status_ledger plus a page of customer_events (materialized
-    hourly; the CIO card on the same page covers real-time CIO activity)."""
+    hourly; the CIO card on the same page covers real-time CIO activity).
+    `q` filters events on activity name, source system and event details;
+    the status chips always show the full current state."""
     email = email.strip().lower()
     eparam = [bigquery.ScalarQueryParameter("email", "STRING", email)]
+
+    event_where = "customer = @email"
+    event_params = [*eparam]
+    if q:
+        event_where += (
+            " AND (STRPOS(LOWER(activity), LOWER(@q)) > 0"
+            " OR STRPOS(LOWER(IFNULL(source_system, '')), LOWER(@q)) > 0"
+            " OR STRPOS(LOWER(TO_JSON_STRING(feature_json)), LOWER(@q)) > 0)"
+        )
+        event_params.append(bigquery.ScalarQueryParameter("q", "STRING", q))
 
     statuses = [
         _safe_dict(dict(r))
@@ -316,13 +330,13 @@ def fan_ledger(email: str, limit: int = 25, offset: int = 0) -> dict:
             SELECT event_id, ts, activity, source_system, is_system_echo,
                    revenue_impact, TO_JSON_STRING(feature_json) AS feature_json
             FROM `{_EVENTS}`
-            WHERE customer = @email
+            WHERE {event_where}
             ORDER BY ts DESC
             LIMIT @limit OFFSET @offset
             """,
             job_config=bigquery.QueryJobConfig(
                 query_parameters=[
-                    *eparam,
+                    *event_params,
                     bigquery.ScalarQueryParameter("limit", "INT64", limit),
                     bigquery.ScalarQueryParameter("offset", "INT64", offset),
                 ]

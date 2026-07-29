@@ -154,7 +154,7 @@ export interface CustomerLookup {
     cio_id?: string;
     id?: string | null;
     unsubscribed?: boolean;
-    segments?: string[];
+    segments?: { id: number | null; name: string }[];
     last_attribute_write?: string | null;
     attributes?: Record<string, unknown> | null;
   };
