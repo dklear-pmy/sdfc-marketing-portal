@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   GoogleAuthProvider,
   onIdTokenChanged,
@@ -28,11 +28,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
 
+  /* First sign-in creates the account before any role is stamped, so a user
+     invited moments later still holds a role-less cached token (Kevin,
+     2026-07-29). One forced refresh per user picks a just-granted role up
+     without waiting out the token's hour. */
+  const refreshed = useRef(new Set<string>());
+
   useEffect(() => {
     return onIdTokenChanged(auth, async (u) => {
       setUser(u);
       if (u) {
-        const token = await u.getIdTokenResult();
+        let token = await u.getIdTokenResult();
+        if (!token.claims.portal_role && !refreshed.current.has(u.uid)) {
+          refreshed.current.add(u.uid);
+          token = await u.getIdTokenResult(true);
+        }
         setRole((token.claims.portal_role as Role | undefined) ?? null);
       } else {
         setRole(null);
@@ -65,7 +75,7 @@ export function useAuth(): AuthState {
 }
 
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { user, role, loading } = useAuth();
+  const { user, role, loading, signOut } = useAuth();
   const location = useLocation();
 
   if (loading) return null;
@@ -75,9 +85,16 @@ export function RequireAuth({ children }: { children: ReactNode }) {
       <div className="flex min-h-svh items-center justify-center p-8 text-center">
         <div>
           <h1 className="text-lg font-semibold">Not authorized</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Your account exists but has no access role. Ask an admin for an invite.
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
+            Your account exists but has no access role yet. If access was just granted, sign out and
+            back in to pick it up — otherwise ask an admin for an invite.
           </p>
+          <button
+            className="mt-4 rounded-lg border px-3 py-1.5 text-sm hover:bg-accent"
+            onClick={() => void signOut()}
+          >
+            Sign out
+          </button>
         </div>
       </div>
     );
