@@ -95,6 +95,7 @@ def main() -> int:
         print(f"FAIL  {f}")
 
     failures += test_resub_guard()
+    failures += test_opposite_guards()
 
     print("FAILED" if failures else "all canary check paths behave correctly")
     return 1 if failures else 0
@@ -130,13 +131,24 @@ def test_resub_guard() -> list:
             return {"unsubscribed": self._unsub}
 
     posts = []
-    updates = []
-    T.list_tripwires = lambda active_only=False: [{"email": "guard@qa.sdfc.dev"}]
+    queries = []
+
+    class FakeJob:
+        def result(self):
+            return []
+
+    class FakeBq:
+        def query(self, q, job_config=None):
+            queries.append(q)
+            return FakeJob()
+
+    fake_bq = FakeBq()
+    T.list_tripwires = lambda active_only=False, include_deleted=False: [{"email": "guard@qa.sdfc.dev"}]
     T.mailpit.search_to = lambda email: [{"ID": "m1", "Created": "2026-07-29"}]
     T.mailpit.raw_message = lambda mid: RAW_WITH_UNSUB
     T.requests.post = lambda url, **kw: posts.append((url, kw.get("data"))) or type("R", (), {"status_code": 200})()
     T.CioClient = lambda: FakeCioGuard(True)
-    T.update_tripwire = lambda email, **kw: updates.append((email, kw))
+    T.client = lambda: fake_bq
     T.time.sleep = lambda s: None
 
     out = T.make_resub_guard("guard@qa.sdfc.dev")
@@ -144,8 +156,9 @@ def test_resub_guard() -> list:
         failures.append(f"happy path result: {out}")
     if posts[0][1] != {"List-Unsubscribe": "One-Click"}:
         failures.append(f"one-click POST body wrong: {posts[0]}")
-    if updates != [("guard@qa.sdfc.dev", {"expect_subscribed": False})]:
-        failures.append(f"expectation flip wrong: {updates}")
+    flip = [q for q in queries if "expect_subscribed = FALSE" in q]
+    if not (flip and "unsubscribed_at = CURRENT_TIMESTAMP()" in flip[0] and "guard_pending = FALSE" in flip[0]):
+        failures.append(f"expectation flip must also stamp unsubscribed_at + clear guard_pending: {queries}")
 
     for bad_email, label in (("other@qa.sdfc.dev", "unknown tripwire"),):
         try:
@@ -169,6 +182,40 @@ def test_resub_guard() -> list:
         failures.append("unconfirmed flip: should have raised")
     except ValueError:
         pass
+
+    for f in failures:
+        print(f"FAIL  {f}")
+    return failures
+
+
+def test_opposite_guards() -> list:
+    """The unsubscribed guard's two checks: suppression (an opted-out account
+    must stop receiving) and guard_conversion (a fresh guard waiting on its
+    first email before it can one-click unsubscribe)."""
+    failures = []
+    T._now = lambda: NOW
+
+    optout_at = (NOW - dt.timedelta(days=2)).isoformat()
+    pre = {"subject": "pre", "metrics": {"sent": TS - 3 * 86400}}
+    post = {"subject": "post", "metrics": {"sent": TS - 1 * 86400}}
+    inflight = {"subject": "inflight", "metrics": {"sent": TS - 2 * 86400 + 120}}
+    if T._check_suppression([pre], optout_at)["status"] != "PASS":
+        failures.append("suppression: pre-optout sends must PASS")
+    if T._check_suppression([pre, post], optout_at)["status"] != "FAIL":
+        failures.append("suppression: a send after opt-out must FAIL")
+    if T._check_suppression([inflight], optout_at)["status"] != "PASS":
+        failures.append("suppression: sends inside the in-flight grace must PASS")
+    if T._check_suppression([], optout_at)["status"] != "PASS":
+        failures.append("suppression: no messages must PASS")
+
+    fresh = T._pending_row((NOW - dt.timedelta(minutes=30)).isoformat(), "no link yet")
+    if fresh["status"] != "PASS":
+        failures.append("guard_conversion: pending 30m after provisioning is normal")
+    stale = T._pending_row((NOW - dt.timedelta(hours=5)).isoformat(), "no link yet")
+    if stale["status"] != "WARN":
+        failures.append("guard_conversion: pending for hours must WARN")
+    if T._pending_row(None, "no link yet")["status"] != "WARN":
+        failures.append("guard_conversion: unknown provisioning age must WARN")
 
     for f in failures:
         print(f"FAIL  {f}")

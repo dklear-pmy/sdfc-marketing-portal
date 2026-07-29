@@ -379,6 +379,24 @@ def tripwires_make_resub_guard(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.delete("/api/tripwires/{email}")
+def tripwires_delete(email: str, principal: Principal = require_role("operator")) -> dict:
+    """Soft delete — checks stop and the card is hidden; CIO profile and check
+    history stay, and the tripwire can be restored."""
+    try:
+        return tripwires.delete_tripwire(_valid_email(email))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/tripwires/{email}/restore")
+def tripwires_restore(email: str, principal: Principal = require_role("operator")) -> dict:
+    try:
+        return tripwires.restore_tripwire(_valid_email(email))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/api/tripwires/canary")
 def tripwires_canary(principal: Principal = require_role("operator")) -> dict:
     """Fire the synthetic canary by hand (the hourly Scheduler job posts to

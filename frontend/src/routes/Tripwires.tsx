@@ -35,6 +35,8 @@ const checkLabel: Record<string, string> = {
   transport: 'Transport (24h)',
   sink_arrival: 'Sink arrival',
   quiet: 'Send recency',
+  suppression: 'Suppression respected',
+  guard_conversion: 'Guard conversion',
   pmy_test_lint: 'PMY-TEST lint',
   canary_send: 'Canary fired',
   canary_delivery: 'Canary delivered',
@@ -106,6 +108,8 @@ export default function Tripwires() {
   const failing = data?.tripwires.filter((t) => t.overall === 'FAIL') ?? [];
   const workspaceFailing = data?.workspace.overall === 'FAIL';
   const canaryFailing = data?.canary?.overall === 'FAIL';
+  const guards = data?.tripwires.filter((t) => t.kind?.startsWith('guard')) ?? [];
+  const campaigns = data?.tripwires.filter((t) => !t.kind || t.kind === 'campaign') ?? [];
 
   return (
     <div className="grid gap-6">
@@ -113,11 +117,11 @@ export default function Tripwires() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Tripwire Accounts</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Fan-like accounts planted inside our real campaign audiences, checked around the clock —
-            every five minutes — to catch problems before fans do: broken profiles, wrongful
-            unsubscribes, emails that stop delivering, and test campaigns leaking into real
-            audiences. Failures email the team immediately, remind hourly until resolved, and
-            confirm when fixed (recipients are managed in Admin).
+            Two layers of always-on monitoring, checked every five minutes: a fixed pair of
+            subscription guards that watch the opt-in/opt-out flags in both directions, and tripwire
+            accounts planted per campaign that prove mail keeps flowing end to end. Failures email
+            the team immediately, remind hourly until resolved, and confirm when fixed (recipients
+            are managed in Admin).
           </p>
         </div>
         {canOperate && (
@@ -221,9 +225,7 @@ export default function Tripwires() {
                 <AlertDescription>{(fireCanary.error as Error).message}</AlertDescription>
               </Alert>
             )}
-            {data.tripwires.map((t) => (
-              <TripwireCard key={t.email} tripwire={t} canEdit={canOperate} />
-            ))}
+            <GuardsCard guards={guards} canEdit={canOperate} />
             <Card className={cn(workspaceFailing && 'border-destructive')}>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between gap-2">
@@ -244,9 +246,15 @@ export default function Tripwires() {
                 ))}
               </CardContent>
             </Card>
+            {campaigns.map((t) => (
+              <TripwireCard key={t.email} tripwire={t} canEdit={canOperate} />
+            ))}
           </div>
 
           {canOperate && <AddTripwireCard />}
+          {(data.deleted?.length ?? 0) > 0 && (
+            <DeletedTripwiresCard deleted={data.deleted} canEdit={canOperate} />
+          )}
           <HistoryCard />
         </>
       )}
@@ -283,13 +291,9 @@ function QuietThreshold({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit:
             : 'No quiet threshold — cannot detect going silent'}
         </span>
         {canEdit && (
-          <button
-            type="button"
-            className="text-muted-foreground underline hover:text-foreground"
-            onClick={() => setEditing(true)}
-          >
-            edit
-          </button>
+          <Button variant="outline" size="xs" onClick={() => setEditing(true)}>
+            Edit
+          </Button>
         )}
       </div>
     );
@@ -309,16 +313,16 @@ function QuietThreshold({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit:
         <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>
           {save.isPending ? 'Saving…' : 'Save'}
         </Button>
-        <button
-          type="button"
-          className="text-xs text-muted-foreground underline"
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => {
             setDays(String(t.max_quiet_days ?? ''));
             setEditing(false);
           }}
         >
-          cancel
-        </button>
+          Cancel
+        </Button>
       </div>
       <p className="text-xs text-muted-foreground">Leave blank to disable the quiet check.</p>
       {save.isError && <p className="text-xs text-destructive">{(save.error as Error).message}</p>}
@@ -326,64 +330,226 @@ function QuietThreshold({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit:
   );
 }
 
-function TripwireCard({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit: boolean }) {
+/* The two fixed subscription-flag dummies, rendered as one system card — they
+   are fixtures like the canary, not per-campaign config. */
+function GuardsCard({ guards, canEdit }: { guards: Tripwire[]; canEdit: boolean }) {
   const queryClient = useQueryClient();
-  const lastChecked = t.checks[0]?.checked_at;
-  const makeGuard = useMutation({
-    mutationFn: () => api.post(`/api/tripwires/${encodeURIComponent(t.email)}/unsubscribe`),
+  const repair = useMutation({
+    mutationFn: (email: string) =>
+      api.post(`/api/tripwires/${encodeURIComponent(email)}/unsubscribe`),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['tripwires'] }),
   });
+  const rank: Record<string, number> = { FAIL: 0, WARN: 1, PASS: 2 };
+  const worst = guards.reduce<string>(
+    (w, g) => ((rank[g.overall] ?? 3) < (rank[w] ?? 3) ? g.overall : w),
+    'PASS'
+  );
   return (
-    <Card className={cn(t.overall === 'FAIL' && 'border-destructive')}>
+    <Card className={cn(worst === 'FAIL' && 'border-destructive')}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-base">{t.label}</CardTitle>
-          <div className="flex items-center gap-1.5">
-            {!t.expect_subscribed && <Badge variant="outline">resub guard</Badge>}
-            {overallBadge(t.overall)}
-          </div>
+          <CardTitle className="text-base">Subscription guards</CardTitle>
+          {guards.length > 0 && overallBadge(worst)}
         </div>
-        <CardDescription className="font-mono text-xs">{t.email}</CardDescription>
+        <CardDescription>
+          Two dummy accounts that watch only the subscription flags — one must stay subscribed, one
+          must stay unsubscribed. Together they catch mass-suppression, the July-style resubscribe
+          loop, and mail sent to opted-out fans.
+        </CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-2">
-        {t.purpose && <p className="text-sm text-muted-foreground">{t.purpose}</p>}
-        {t.checks.map((c) => (
-          <CheckRow key={c.check_name} check={c} />
-        ))}
-        {t.checks.length === 0 && <p className="text-sm text-muted-foreground">Not checked yet.</p>}
-        <QuietThreshold tripwire={t} canEdit={canEdit} />
-        {canEdit && t.expect_subscribed && (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={makeGuard.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Unsubscribe ${t.email} via its own email link and alert if anything ever re-subscribes it?`
-                  )
-                ) {
-                  makeGuard.mutate();
-                }
-              }}
-            >
-              {makeGuard.isPending ? 'Unsubscribing…' : 'Make resubscribe guard'}
-            </Button>
-            {makeGuard.isError && (
-              <span className="text-sm text-destructive">{(makeGuard.error as Error).message}</span>
-            )}
-          </div>
+      <CardContent className="grid gap-4">
+        {guards.length === 0 && (
+          <p className="text-sm text-muted-foreground">No guards registered.</p>
         )}
-        {lastChecked && (
-          <p className="text-xs text-muted-foreground">
-            Checked {relativeFrom(lastChecked)} · {formatUtc(lastChecked)}
-          </p>
+        {guards.map((g) => {
+          const sub = g.kind === 'guard_sub';
+          const flagBroken = g.checks.some(
+            (c) => c.check_name === 'subscription' && c.status === 'FAIL'
+          );
+          return (
+            <div key={g.email} className="grid gap-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">
+                  {sub ? 'Must stay subscribed' : 'Must stay unsubscribed'}
+                </span>
+                <span className="font-mono text-xs text-muted-foreground">{g.email}</span>
+                {g.guard_pending && <Badge variant="outline">opt-out pending</Badge>}
+              </div>
+              {g.checks.map((c) => (
+                <CheckRow key={c.check_name} check={c} />
+              ))}
+              {g.checks.length === 0 && (
+                <p className="text-sm text-muted-foreground">Not checked yet.</p>
+              )}
+              {canEdit && !sub && flagBroken && (
+                <div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={repair.isPending}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `Re-unsubscribe ${g.email} via its own email link? Do this after fixing whatever re-subscribed it.`
+                        )
+                      ) {
+                        repair.mutate(g.email);
+                      }
+                    }}
+                  >
+                    {repair.isPending ? 'Unsubscribing…' : 'Re-unsubscribe now'}
+                  </Button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {repair.isError && (
+          <p className="text-sm text-destructive">{(repair.error as Error).message}</p>
         )}
       </CardContent>
     </Card>
   );
 }
+
+function TripwireCard({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit: boolean }) {
+  const queryClient = useQueryClient();
+  const [showChecks, setShowChecks] = useState(false);
+  const lastChecked = t.checks[0]?.checked_at;
+  const remove = useMutation({
+    mutationFn: () => api.del(`/api/tripwires/${encodeURIComponent(t.email)}`),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['tripwires'] }),
+  });
+  /* Healthy cards collapse to one line — every check still runs server-side,
+     the detail is just a click away. Problems always render in full. */
+  const collapsed = t.overall === 'PASS' && !showChecks;
+  return (
+    <Card className={cn(t.overall === 'FAIL' && 'border-destructive')}>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-base">{t.label}</CardTitle>
+          {overallBadge(t.overall)}
+        </div>
+        <CardDescription className="font-mono text-xs">
+          {t.email}
+          {t.provision_slug && <> · {t.provision_slug}</>}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-2">
+        {t.purpose && <p className="text-sm text-muted-foreground">{t.purpose}</p>}
+        {collapsed ? (
+          <div className="flex items-center gap-2 text-sm">
+            <Badge variant="secondary" className="shrink-0">
+              PASS
+            </Badge>
+            <span>All {t.checks.length} checks passing</span>
+            <Button variant="outline" size="xs" onClick={() => setShowChecks(true)}>
+              Details
+            </Button>
+          </div>
+        ) : (
+          <>
+            {t.checks.map((c) => (
+              <CheckRow key={c.check_name} check={c} />
+            ))}
+            {t.checks.length === 0 && (
+              <p className="text-sm text-muted-foreground">Not checked yet.</p>
+            )}
+            {t.overall === 'PASS' && (
+              <Button
+                variant="outline"
+                size="xs"
+                className="justify-self-start"
+                onClick={() => setShowChecks(false)}
+              >
+                Hide details
+              </Button>
+            )}
+          </>
+        )}
+        <QuietThreshold tripwire={t} canEdit={canEdit} />
+        {remove.isError && (
+          <p className="text-sm text-destructive">{(remove.error as Error).message}</p>
+        )}
+        <div className="flex items-end justify-between gap-2">
+          <p className="text-xs text-muted-foreground">
+            {lastChecked ? (
+              <>
+                Checked {relativeFrom(lastChecked)} · {formatUtc(lastChecked)}
+              </>
+            ) : null}
+          </p>
+          {canEdit && (
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={remove.isPending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Soft-delete ${t.email}? Checks stop and the card is hidden. Its Customer.io profile and check history stay, and you can restore it later.`
+                  )
+                ) {
+                  remove.mutate();
+                }
+              }}
+            >
+              {remove.isPending ? 'Deleting…' : 'Delete'}
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DeletedTripwiresCard({ deleted, canEdit }: { deleted: Tripwire[]; canEdit: boolean }) {
+  const queryClient = useQueryClient();
+  const restore = useMutation({
+    mutationFn: (email: string) => api.post(`/api/tripwires/${encodeURIComponent(email)}/restore`),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['tripwires'] }),
+  });
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Deleted tripwires</CardTitle>
+        <CardDescription>
+          Soft-deleted — checks are stopped and nothing alerts, but the Customer.io profiles and
+          check history remain. Restoring re-arms the account immediately.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-2">
+        {deleted.map((t) => (
+          <div key={t.email} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+            <span className="font-medium">{t.label}</span>
+            <span className="font-mono text-xs text-muted-foreground">{t.email}</span>
+            {t.deleted_at && (
+              <span className="text-xs text-muted-foreground">
+                deleted {relativeFrom(t.deleted_at)}
+              </span>
+            )}
+            {canEdit && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={restore.isPending}
+                onClick={() => restore.mutate(t.email)}
+              >
+                Restore
+              </Button>
+            )}
+          </div>
+        ))}
+        {restore.isError && (
+          <p className="text-sm text-destructive">{(restore.error as Error).message}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+const slugSelectCls =
+  'border-input bg-background h-9 rounded-md border px-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring/50';
 
 function AddTripwireCard() {
   const queryClient = useQueryClient();
@@ -391,7 +557,14 @@ function AddTripwireCard() {
   const [label, setLabel] = useState('');
   const [purpose, setPurpose] = useState('');
   const [quietDays, setQuietDays] = useState('');
-  const [provision, setProvision] = useState(true);
+  const [slug, setSlug] = useState('Welcome-General-260715');
+
+  const slugsQ = useQuery<{ slugs: { slug: string }[] }>({
+    queryKey: ['slugs'],
+    queryFn: () => api.get('/api/slugs'),
+    staleTime: 60_000,
+  });
+  const slugOptions = slugsQ.data?.slugs.map((s) => s.slug) ?? ['Welcome-General-260715'];
 
   const add = useMutation({
     mutationFn: () =>
@@ -400,7 +573,7 @@ function AddTripwireCard() {
         label,
         purpose: purpose || null,
         max_quiet_days: quietDays ? Number(quietDays) : null,
-        provision_slug: provision ? 'Welcome-General-260715' : null,
+        provision_slug: slug || null,
       }),
     onSuccess: () => {
       setEmail('');
@@ -419,10 +592,10 @@ function AddTripwireCard() {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Add tripwire</CardTitle>
+        <CardTitle className="text-base">Add campaign tripwire</CardTitle>
         <CardDescription>
-          New tripwires need a @qa.sdfc.dev address so their mail lands in our test inbox.
-          Provisioning signs them up like a real fan through the test welcome flow.
+          Pick the campaign to watch and give the account a @qa.sdfc.dev address — it signs up like
+          a real fan through that campaign's test flow, and its mail lands in our test inbox.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -457,6 +630,22 @@ function AddTripwireCard() {
               onChange={(e) => setPurpose(e.target.value)}
             />
           </div>
+          <div className="grid min-w-56 gap-1.5">
+            <Label htmlFor="tw-slug">Campaign</Label>
+            <select
+              id="tw-slug"
+              className={slugSelectCls}
+              value={slug}
+              onChange={(e) => setSlug(e.target.value)}
+            >
+              {slugOptions.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+              <option value="">None — register only</option>
+            </select>
+          </div>
           <div className="grid w-32 gap-1.5">
             <Label htmlFor="tw-quiet">Quiet days</Label>
             <Input
@@ -468,14 +657,6 @@ function AddTripwireCard() {
               onChange={(e) => setQuietDays(e.target.value)}
             />
           </div>
-          <label className="flex h-9 items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={provision}
-              onChange={(e) => setProvision(e.target.checked)}
-            />
-            Provision in CIO
-          </label>
           <Button type="submit" disabled={add.isPending}>
             {add.isPending ? 'Adding…' : 'Add'}
           </Button>

@@ -1,24 +1,41 @@
 """Tripwire accounts: persistent @qa.sdfc.dev profiles that live in Customer.io,
-receive real sends into the Mailpit sink, and are asserted on a daily
+receive real sends into the Mailpit sink, and are asserted on a 5-minute
 Cloud Scheduler tick (plus on-demand runs from the portal).
 
-Checks per tripwire (each isolated — a thrown check records WARN, never
-aborts the run):
-  profile_exists  — the CIO profile is still there
-  subscription    — unsubscribed flag matches expectation (unsub-loop detector)
-  transport       — anything CIO sent in the last 24h was delivered within
-                    15 min (the scenario-005 sent-but-undelivered class)
-  sink_arrival    — every delivery CIO claims in the last 24h is present in
+Two kinds (the `kind` column), deliberately simple:
+
+  guard_sub / guard_unsub — TWO fixed dummy accounts watching only the
+    subscription flags, one per direction. The subscribed guard catches
+    mass-suppression; the unsubscribed guard catches the July-class
+    resubscribe loop AND any mail sent after its opt-out (suppression).
+    They are workspace fixtures, not per-campaign config.
+
+  campaign — accounts planted in a specific journey's audience (provisioned
+    through the slug's test webhook). They prove the campaign keeps working:
+    mail keeps arriving, sends get delivered, deliveries reach the sink.
+
+Checks by kind (each isolated — a thrown check records WARN, never aborts):
+  profile_exists  — all kinds: the CIO profile is still there
+  subscription    — all kinds: unsubscribed flag matches the kind's polarity
+  suppression     — guard_unsub: any send AFTER the opt-out moment means
+                    suppression is not being respected
+  guard_conversion— guard_unsub, transitional: provisioned but hasn't received
+                    the email needed for its one-click unsubscribe yet; the
+                    tick converts it
+  transport       — campaign: anything sent in the last 24h was delivered
+                    within 15 min (the scenario-005 sent-but-undelivered class)
+  sink_arrival    — campaign: every delivery CIO claims in the last 24h is in
                     the Mailpit sink (catches sink/MX drift from the other end)
-  quiet           — optional: warn when nothing was sent for max_quiet_days
-                    (audience-drift signal for broad-list listeners)
+  quiet           — campaign, optional: warn after max_quiet_days of silence
 
 Workspace-level check (recorded under email='_workspace'):
   pmy_test_lint   — no non-PMY-TEST campaign triggers on a pmy_test_* event
 
 Registry + results live in `customerio_state.tripwires` / `tripwire_checks`
 (portal-sa is dataset WRITER). Provisioning fires a slug's TEST webhook, the
-same proven path the harness runner uses.
+same proven path the harness runner uses. Deleting is always soft — a
+deleted_at tombstone hides the row and stops checks, restore brings it back;
+check history and the CIO profile are never destroyed.
 """
 
 import datetime as dt
@@ -74,15 +91,19 @@ def _iso(ts: float | None) -> str | None:
 # ---- registry ----
 
 
-def list_tripwires(active_only: bool = False) -> list[dict]:
-    where = "WHERE active" if active_only else ""
+def list_tripwires(active_only: bool = False, include_deleted: bool = False) -> list[dict]:
+    conds = [] if include_deleted else ["deleted_at IS NULL"]
+    if active_only:
+        conds.append("active")
+    where = f"WHERE {' AND '.join(conds)}" if conds else ""
     rows = client().query(
         f"SELECT * FROM `{_DATASET}.tripwires` {where} ORDER BY created_at"
     ).result()
     out = []
     for r in rows:
         d = dict(r)
-        d["created_at"] = d["created_at"].isoformat() if d.get("created_at") else None
+        for f in ("created_at", "unsubscribed_at", "deleted_at"):
+            d[f] = d[f].isoformat() if d.get(f) else None
         out.append(d)
     return out
 
@@ -145,7 +166,10 @@ def add_tripwire(
     email = email.strip().lower()
     if not email.endswith("@qa.sdfc.dev"):
         raise ValueError("Tripwire emails must be @qa.sdfc.dev (the sink only accepts that domain)")
-    if any(t["email"] == email for t in list_tripwires()):
+    existing = {t["email"]: t for t in list_tripwires(include_deleted=True)}
+    if email in existing:
+        if existing[email].get("deleted_at"):
+            raise ValueError(f"{email} was soft-deleted — restore it instead of re-adding")
         raise ValueError(f"{email} is already registered")
 
     provisioned = None
@@ -162,8 +186,10 @@ def add_tripwire(
     client().query(
         f"""
         INSERT INTO `{_DATASET}.tripwires`
-          (email, label, purpose, expect_subscribed, max_quiet_days, active, created_at, created_by)
-        VALUES (@email, @label, @purpose, @expect_sub, @quiet, TRUE, CURRENT_TIMESTAMP(), @actor)
+          (email, label, purpose, expect_subscribed, max_quiet_days, active, created_at,
+           created_by, provision_slug, guard_pending, kind)
+        VALUES (@email, @label, @purpose, @expect_sub, @quiet, TRUE, CURRENT_TIMESTAMP(),
+                @actor, @slug, FALSE, 'campaign')
         """,
         job_config=bigquery.QueryJobConfig(
             query_parameters=[
@@ -173,6 +199,7 @@ def add_tripwire(
                 bigquery.ScalarQueryParameter("expect_sub", "BOOL", expect_subscribed),
                 bigquery.ScalarQueryParameter("quiet", "INT64", max_quiet_days),
                 bigquery.ScalarQueryParameter("actor", "STRING", actor),
+                bigquery.ScalarQueryParameter("slug", "STRING", provision_slug),
             ]
         ),
     ).result()
@@ -243,8 +270,48 @@ def make_resub_guard(email: str) -> dict:
             "Unsubscribe fired but Customer.io hasn't recorded unsubscribed=true yet — retry in a minute"
         )
 
-    update_tripwire(email, expect_subscribed=False)
+    # unsubscribed_at anchors the suppression check: sends after this moment
+    # mean CIO (or something upstream) is mailing an opted-out person.
+    client().query(
+        f"UPDATE `{_DATASET}.tripwires` SET expect_subscribed = FALSE, guard_pending = FALSE, "
+        "unsubscribed_at = CURRENT_TIMESTAMP() WHERE email = @email",
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("email", "STRING", email)]
+        ),
+    ).result()
     return {"email": email, "unsubscribed": True, "expect_subscribed": False}
+
+
+def delete_tripwire(email: str) -> dict:
+    """Soft delete: tombstone + deactivate. Checks stop, the row leaves the
+    default listing, and the CIO profile plus check history stay untouched."""
+    email = email.strip().lower()
+    if not any(t["email"] == email for t in list_tripwires()):
+        raise ValueError(f"{email} is not a registered tripwire (or is already deleted)")
+    client().query(
+        f"UPDATE `{_DATASET}.tripwires` SET deleted_at = CURRENT_TIMESTAMP(), active = FALSE "
+        "WHERE email = @email",
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("email", "STRING", email)]
+        ),
+    ).result()
+    return {"email": email, "deleted": True}
+
+
+def restore_tripwire(email: str) -> dict:
+    email = email.strip().lower()
+    rows = {t["email"]: t for t in list_tripwires(include_deleted=True)}
+    if email not in rows:
+        raise ValueError(f"{email} is not a registered tripwire")
+    if not rows[email].get("deleted_at"):
+        raise ValueError(f"{email} is not deleted")
+    client().query(
+        f"UPDATE `{_DATASET}.tripwires` SET deleted_at = NULL, active = TRUE WHERE email = @email",
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("email", "STRING", email)]
+        ),
+    ).result()
+    return {"email": email, "restored": True}
 
 
 # ---- checks ----
@@ -306,6 +373,48 @@ def _check_sink_arrival(email: str, messages: list[dict]) -> dict:
             "detail": "CIO says delivered but not in the sink: " + "; ".join(f"'{s}'" for s in missing[:3]),
         }
     return {"check_name": "sink_arrival", "status": "PASS", "detail": f"all {len(delivered)} deliveries present in the sink"}
+
+
+GUARD_CONVERT_GRACE_H = 2
+SUPPRESSION_GRACE_MIN = 5
+
+
+def _pending_row(created_at: str | None, error: str) -> dict:
+    """A guard that cannot convert yet is normal minutes after provisioning
+    (its first email hasn't arrived); hours later the journey never delivered
+    and the operator needs to see it."""
+    age_h = None
+    if created_at:
+        age_h = (_now() - dt.datetime.fromisoformat(created_at)).total_seconds() / 3600
+    if age_h is not None and age_h < GUARD_CONVERT_GRACE_H:
+        return {
+            "check_name": "guard_conversion",
+            "status": "PASS",
+            "detail": f"Waiting for its first email before unsubscribing ({int(age_h * 60)}m since provisioning)",
+        }
+    return {"check_name": "guard_conversion", "status": "WARN", "detail": f"Still not converted: {error[:140]}"}
+
+
+def _check_suppression(messages: list[dict], unsubscribed_at: str) -> dict:
+    """The inverse of transport: an unsubscribed account must STOP receiving.
+    Any send after the opt-out moment (plus a small grace for in-flight mail)
+    means suppression is not being respected — the compliance half of what an
+    opt-out guard exists to catch."""
+    optout_ts = dt.datetime.fromisoformat(unsubscribed_at).timestamp()
+    cutoff = optout_ts + SUPPRESSION_GRACE_MIN * 60
+    late = [m for m in messages if ((m.get("metrics") or {}).get("sent") or 0) > cutoff]
+    if late:
+        subjects = "; ".join(f"'{m.get('subject')}'" for m in late[:3])
+        return {
+            "check_name": "suppression",
+            "status": "FAIL",
+            "detail": f"{len(late)} send(s) AFTER this account opted out — suppression not respected: {subjects}",
+        }
+    return {
+        "check_name": "suppression",
+        "status": "PASS",
+        "detail": f"No sends since opt-out ({_humanize_dur(_now().timestamp() - optout_ts)} ago)",
+    }
 
 
 def _check_quiet(messages: list[dict], max_quiet_days: int | None) -> dict | None:
@@ -472,6 +581,7 @@ def run_checks(source: str) -> dict:
 
     for tw in list_tripwires(active_only=True):
         email = tw["email"]
+        kind = tw.get("kind") or "campaign"
         rows: list[dict] = []
         # profile check returns a tuple, so it gets its own guard inline
         try:
@@ -482,19 +592,39 @@ def run_checks(source: str) -> dict:
             }
         rows.append(profile_check)
 
+        if person and kind == "guard_unsub" and tw.get("guard_pending"):
+            # A fresh unsubscribed guard waiting on its first email: try the
+            # conversion each tick until the one-click unsubscribe lands.
+            try:
+                make_resub_guard(email)
+            except ValueError as e:
+                rows.append(_pending_row(tw.get("created_at"), str(e)))
+            except Exception as e:  # noqa: BLE001
+                rows.append({"check_name": "guard_conversion", "status": "WARN", "detail": f"conversion attempt failed: {str(e)[:150]}"})
+            else:
+                tw = {**tw, "expect_subscribed": False, "guard_pending": False, "unsubscribed_at": _now().isoformat()}
+                rows.append({"check_name": "guard_conversion", "status": "PASS", "detail": "Converted — unsubscribed via its own one-click link; now expects unsubscribed"})
+
         if person:
             rows.append(_guard(_check_subscription, cio, person["cio_id"], tw["expect_subscribed"], check_name="subscription"))
-            try:
-                messages = cio.customer_messages_page(person["cio_id"], limit=50).get("messages", [])
-            except Exception as e:  # noqa: BLE001
-                messages = []
-                rows.append({"check_name": "transport", "status": "WARN", "detail": f"delivery ledger unavailable: {str(e)[:150]}"})
-            else:
-                rows.append(_guard(_check_transport, messages, check_name="transport"))
-                rows.append(_guard(_check_sink_arrival, email, messages, check_name="sink_arrival"))
-                quiet = _guard(_check_quiet, messages, tw["max_quiet_days"], check_name="quiet")
-                if quiet:
-                    rows.append(quiet)
+            # The subscribed guard only watches its flag — no message-based
+            # checks, so it stays a two-line fixture.
+            wants_suppression = kind == "guard_unsub" and tw.get("unsubscribed_at")
+            if kind == "campaign" or wants_suppression:
+                try:
+                    messages = cio.customer_messages_page(person["cio_id"], limit=50).get("messages", [])
+                except Exception as e:  # noqa: BLE001
+                    warn_as = "transport" if kind == "campaign" else "suppression"
+                    rows.append({"check_name": warn_as, "status": "WARN", "detail": f"delivery ledger unavailable: {str(e)[:150]}"})
+                else:
+                    if wants_suppression:
+                        rows.append(_guard(_check_suppression, messages, tw["unsubscribed_at"], check_name="suppression"))
+                    if kind == "campaign":
+                        rows.append(_guard(_check_transport, messages, check_name="transport"))
+                        rows.append(_guard(_check_sink_arrival, email, messages, check_name="sink_arrival"))
+                        quiet = _guard(_check_quiet, messages, tw["max_quiet_days"], check_name="quiet")
+                        if quiet:
+                            rows.append(quiet)
 
         for r in rows:
             r["email"] = email
@@ -676,9 +806,10 @@ def _alerting(fails: list[dict]) -> dict | None:
 def _record(results: list[dict], source: str) -> None:
     if not results:
         return
+    stamp = _now().isoformat()  # one timestamp per run, so a run groups cleanly
     rows = [
         {
-            "checked_at": _now().isoformat(),
+            "checked_at": stamp,
             "email": r["email"],
             "check_name": r["check_name"],
             "status": r["status"],
@@ -698,15 +829,24 @@ _RANK = {"FAIL": 0, "WARN": 1, "PASS": 2}
 
 
 def state() -> dict:
-    tripwires = list_tripwires()
+    all_rows = list_tripwires(include_deleted=True)
+    tripwires = [t for t in all_rows if not t.get("deleted_at")]
+    deleted = [t for t in all_rows if t.get("deleted_at")]
     latest = list(
         client()
         .query(
+            # Latest row per check, but only checks that were part of the
+            # account's NEWEST run — otherwise a check retired by a config
+            # change (e.g. a guard that no longer runs transport) would show
+            # its stale last result forever. The 2-minute window absorbs
+            # pre-2026-07-29 runs that stamped each row individually.
             f"""
             SELECT email, check_name, status, detail, checked_at FROM (
-              SELECT *, ROW_NUMBER() OVER (PARTITION BY email, check_name ORDER BY checked_at DESC) rn
+              SELECT *,
+                     ROW_NUMBER() OVER (PARTITION BY email, check_name ORDER BY checked_at DESC) rn,
+                     MAX(checked_at) OVER (PARTITION BY email) newest
               FROM `{_DATASET}.tripwire_checks`
-            ) WHERE rn = 1
+            ) WHERE rn = 1 AND checked_at >= TIMESTAMP_SUB(newest, INTERVAL 2 MINUTE)
             """
         )
         .result()
@@ -731,6 +871,7 @@ def state() -> dict:
     canary_checks = sorted(by_email.get("_canary", []), key=lambda c: c["check_name"])
     return {
         "tripwires": out,
+        "deleted": [{**tw, "overall": "DELETED", "checks": []} for tw in deleted],
         "workspace": {"overall": overall(ws_checks), "checks": ws_checks},
         "canary": {
             "overall": overall(canary_checks),

@@ -302,17 +302,26 @@ export interface Tripwire {
   email: string;
   label: string;
   purpose: string | null;
+  /* 'guard_sub' | 'guard_unsub' — the two fixed subscription-flag dummies —
+     or 'campaign' (default) for accounts planted in a journey's audience. */
+  kind: string | null;
   expect_subscribed: boolean;
   max_quiet_days: number | null;
   active: boolean;
   created_at: string | null;
   created_by: string | null;
+  guard_pending: boolean | null;
+  unsubscribed_at: string | null;
+  deleted_at: string | null;
+  provision_slug: string | null;
   overall: string;
   checks: TripwireCheckRow[];
 }
 
 export interface TripwiresState {
   tripwires: Tripwire[];
+  /* Soft-deleted tripwires — hidden from checks, restorable. */
+  deleted: Tripwire[];
   workspace: { overall: string; checks: TripwireCheckRow[] };
   /* Synthetic canary — generates its own traffic, so unlike the tripwires it
      can fail even when nothing else is happening. */
