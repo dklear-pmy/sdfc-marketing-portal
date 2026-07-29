@@ -291,13 +291,17 @@ def list_fans(q: str | None, limit: int = 20, offset: int = 0) -> dict:
 
 
 _LEDGER = f"{GCP_PROJECT}.customerdata_gold.customer_status_ledger"
-_EVENTS = f"{GCP_PROJECT}.customerdata_silver.customer_events"
+# The live union view: hourly-materialized customer_events + the two real-time
+# arms (CIO webhook staging, TB 5-minute poll over bronze externals). Reading
+# it is why portal-sa carries READER on customerio_webhooks/tradablebits_bronze
+# and objectViewer on gs://sdfc-dev-bronze (granted 2026-07-29, Dean's call).
+_EVENTS = f"{GCP_PROJECT}.customerdata_silver.vw_customer_events_live"
 
 
 def fan_ledger(email: str, limit: int = 25, offset: int = 0, q: str | None = None) -> dict:
     """Warehouse activity ledger for one fan: status-domain rows from
-    customer_status_ledger plus a page of customer_events (materialized
-    hourly; the CIO card on the same page covers real-time CIO activity).
+    customer_status_ledger (daily build) plus a page of events from the live
+    union view — fresh to ~5 minutes via the CIO webhook and TB polling arms.
     `q` filters events on activity name, source system and event details;
     the status chips always show the full current state."""
     email = email.strip().lower()

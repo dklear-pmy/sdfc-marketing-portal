@@ -87,6 +87,12 @@ Per-phase additions (grant only when the phase ships):
 - **Phase 3 (customer dashboard, executed 2026-07-26):** READER via dataset ACL
   on `customerio_gold` **only** — the lookup does point queries on the email
   clustering key of `fan_attributes` + `fan_attributes_cio_sync` (~15 MB/scan).
+- **Live activity ledger (executed 2026-07-29, Dean's call):** the Fans-page
+  ledger reads `customerdata_silver.vw_customer_events_live`, whose union arms
+  need READER via dataset ACL on `customerio_webhooks` (native webhook staging)
+  and `tradablebits_bronze` (external tables) plus
+  `roles/storage.objectViewer` on `gs://sdfc-dev-bronze` — the bucket-wide
+  grant previously declined; accepted for 5-minute event freshness.
   No project-wide `bigquery.dataViewer`, no GCS. Granted with:
 
   ```python

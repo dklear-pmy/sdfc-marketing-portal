@@ -1156,8 +1156,8 @@ function LedgerCard({ email }: { email: string }) {
       <CardHeader className="pb-3">
         <CardTitle className="text-base">Activity ledger</CardTitle>
         <CardDescription>
-          The audited source of truth for this fan — current statuses and their history across every
-          system, refreshed hourly.
+          The audited source of truth for this fan — their history across every system, live to
+          within about five minutes. The status chips refresh daily.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
