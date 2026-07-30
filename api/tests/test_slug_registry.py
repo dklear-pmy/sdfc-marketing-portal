@@ -59,9 +59,31 @@ assert TEST_EVENT_PREFIX + "Shop-260715" in messages(f, "fail"), "fix hint must 
 f = analyze(roles4(test_event="shop_test"), SPEC | {"test_event_name": None}, {"sec-dev": True})
 assert TEST_EVENT_PREFIX in messages(f, "fail"), f
 
-# --- registry/test event mismatch ---
+# --- registry/test event mismatch, with the CIO name offered as a one-click fix ---
 f = analyze(roles4(test_event="pmy_test_other"), SPEC, {"sec-dev": True})
 assert "registry says 'pmy_test_shop'" in messages(f, "fail"), f
+fix = next((x["fix"] for x in f if x.get("fix", {}).get("field") == "test_event_name"), None)
+assert fix and fix["value"] == "pmy_test_other", f
+
+# --- registry already on the pmy_test_<slug> convention: instruct the CIO
+# rename that keeps it, and offer the registry revert as the alternative ---
+conv_spec = SPEC | {"test_event_name": "pmy_test_Shop-260715"}
+f = analyze(roles4(test_event="pmy_test_shop"), conv_spec, {"sec-dev": True}, slug="Shop-260715")
+msg = messages(f, "fail")
+assert "convention name 'pmy_test_Shop-260715'" in msg and "Send Event" in msg, f
+fix = next((x["fix"] for x in f if x.get("fix", {}).get("field") == "test_event_name"), None)
+assert fix and fix["value"] == "pmy_test_shop", f
+
+# --- consistent legacy name: info nudge toward the convention, no button
+# (applying the registry side first would CREATE the drift) ---
+f = analyze(roles4(), SPEC, {"sec-dev": True}, slug="Shop-260715")
+nudges = [x for x in f if x["level"] == "info" and "convention is 'pmy_test_Shop-260715'" in x["message"]]
+assert nudges and not any(x.get("fix") for x in nudges), f
+
+# --- prod-side mismatch offers what production actually runs on ---
+f = analyze(roles4(prod_event="Shop-Other"), SPEC, {"sec-dev": True})
+fix = next((x["fix"] for x in f if x.get("fix", {}).get("field") == "event_name"), None)
+assert fix and fix["value"] == "Shop-Other", f
 
 # --- missing twin pair is a fail; missing prod pair only warns ---
 r = roles4()

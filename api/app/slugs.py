@@ -210,19 +210,29 @@ def validate_entry(fields: dict) -> list[str]:
     return errors
 
 
-def analyze(roles: dict[str, dict], spec: dict | None, secrets: dict[str, bool | None]) -> list[dict]:
+def analyze(
+    roles: dict[str, dict],
+    spec: dict | None,
+    secrets: dict[str, bool | None],
+    slug: str | None = None,
+) -> list[dict]:
     """Convention findings for a slug's campaigns — pure, so the failure paths
     are testable without CIO/BQ. `roles` is validator._match_campaigns output,
     `spec` the (draft or saved) registry entry, `secrets` id → exists?.
 
     Levels: fail = will misbehave, warn = blocks or degrades testing,
-    info = expected-but-worth-knowing.
+    info = expected-but-worth-knowing. A finding may carry a `fix` — a
+    registry field/value the portal can apply in one click; only the registry
+    side is ever offered, since the App API cannot rename anything in CIO.
     """
     findings: list[dict] = []
     spec = spec or {}
 
-    def add(level: str, message: str) -> None:
-        findings.append({"level": level, "message": message})
+    def add(level: str, message: str, fix: dict | None = None) -> None:
+        finding: dict = {"level": level, "message": message}
+        if fix:
+            finding["fix"] = fix
+        findings.append(finding)
 
     clean = {k: v for k, v in roles.items() if "duplicate" not in k}
     for role in ("test_trigger", "test_journey"):
@@ -249,12 +259,47 @@ def analyze(roles: dict[str, dict], spec: dict | None, secrets: dict[str, bool |
     if "test_journey" in clean and not test_ev:
         add("warn", "Twin journey exposes no trigger event — non-event trigger or API lag; verify in Customer.io")
 
+    convention = TEST_EVENT_PREFIX + slug if slug else None
     expected_test = spec.get("test_event_name")
     if expected_test and test_ev and test_ev != expected_test:
-        add("fail", f"Twin journey triggers on '{test_ev}' but the registry says '{expected_test}'")
+        adopt = {
+            "field": "test_event_name",
+            "value": test_ev,
+            "label": f"Use '{test_ev}' (what Customer.io runs on)",
+        }
+        if expected_test == convention:
+            add(
+                "fail",
+                f"Registry expects the convention name '{expected_test}' but the twin still runs on "
+                f"'{test_ev}' — every run fails on this drift. Keep the convention by renaming the "
+                f"twin's trigger AND its [1/2] Send Event in Customer.io to '{expected_test}', or "
+                "adopt the current Customer.io name below.",
+                fix=adopt,
+            )
+        else:
+            add(
+                "fail",
+                f"Twin journey triggers on '{test_ev}' but the registry says '{expected_test}'",
+                fix=adopt,
+            )
+    elif convention and test_ev and expected_test == test_ev and test_ev != convention:
+        add(
+            "info",
+            f"This pair runs on legacy event name '{test_ev}'; the convention is '{convention}'. To "
+            "adopt it, rename the twin's trigger and its [1/2] Send Event in Customer.io first — "
+            "this check will then offer the matching registry update.",
+        )
     expected_prod = spec.get("event_name")
     if expected_prod and prod_ev and prod_ev != expected_prod:
-        add("warn", f"Prod journey triggers on '{prod_ev}' but the registry says '{expected_prod}'")
+        add(
+            "warn",
+            f"Prod journey triggers on '{prod_ev}' but the registry says '{expected_prod}'",
+            fix={
+                "field": "event_name",
+                "value": prod_ev,
+                "label": f"Use '{prod_ev}' (what production runs on)",
+            },
+        )
 
     stopped = [
         _ROLE_LABELS[r]
@@ -335,7 +380,7 @@ def precheck(slug: str, overrides: dict | None = None) -> dict:
     url = spec.get("test_webhook_url")
     if url and webhook_url_problem(url):
         findings.append({"level": "fail", "message": webhook_url_problem(url)})
-    findings += analyze(roles, spec, secrets)
+    findings += analyze(roles, spec, secrets, slug=slug)
     runnable = bool(url and not webhook_url_problem(url)) or (
         bool(spec.get("test_webhook_secret"))
         and secrets.get(spec.get("test_webhook_secret")) is True

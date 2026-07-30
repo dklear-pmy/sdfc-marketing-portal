@@ -251,7 +251,10 @@ def _diagnose_missing_email(cio: CioClient, spec: dict, identity: str) -> str:
     if not events:
         return "Profile exists but no event was emitted — check the trigger half's Send Event action"
     if expected and expected not in events:
-        return f"Trigger half emitted {events} but the test journey listens on '{expected}' — event-name mismatch (the copy-paste bug class)"
+        return (
+            f"Trigger half emitted {events} but the test journey listens on '{expected}' — event-name "
+            "mismatch (the copy-paste bug class); the slug's precheck in Campaign Tester offers a one-click fix"
+        )
     # Event was correct — distinguish "journey never sent" from "sent but lost in transport".
     ledger = cio.messages_for_recipient(identity)
     if ledger:
@@ -347,7 +350,10 @@ def advance_run(run_id: str) -> dict:
 
         metric_problems = []
         if expected_event and expected_event not in events:
-            metric_problems.append(f"expected event '{expected_event}', profile shows {events}")
+            metric_problems.append(
+                f"expected event '{expected_event}', profile shows {events} — registry↔CIO drift; "
+                "the slug's precheck in Campaign Tester offers a one-click fix"
+            )
         for typ, minimum in (("sent_email", 2), ("delivered_email", 2), ("opened_email", 2), ("clicked_email", 2)):
             if counts.get(typ, 0) < minimum:
                 metric_problems.append(f"{typ}={counts.get(typ, 0)} (<{minimum})")

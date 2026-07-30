@@ -100,6 +100,9 @@ export type PrecheckLevel = 'fail' | 'warn' | 'info';
 export interface PrecheckFinding {
   level: PrecheckLevel;
   message: string;
+  /* A registry field/value the portal can apply in one click — only the
+     registry side is ever offered; renames inside Customer.io stay manual. */
+  fix?: { field: 'event_name' | 'test_event_name'; value: string; label: string };
 }
 
 export interface SlugPrecheck {

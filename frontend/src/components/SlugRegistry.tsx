@@ -490,7 +490,26 @@ function SlugForm({
                 <Badge variant={findingVariant[f.level]} className="mt-0.5">
                   {f.level}
                 </Badge>
-                <span className="text-muted-foreground">{f.message}</span>
+                <span className="min-w-0 text-muted-foreground">
+                  {f.message}
+                  {f.fix && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      className="ml-2 align-middle"
+                      onClick={() => {
+                        /* Apply into the draft and re-check; Save persists it
+                           through the normal validated path. */
+                        const next = { ...draft, [f.fix!.field]: f.fix!.value };
+                        setDraft(next);
+                        precheck.mutate(next);
+                      }}
+                    >
+                      {f.fix.label}
+                    </Button>
+                  )}
+                </span>
               </li>
             ))}
           </ul>
