@@ -99,7 +99,15 @@ function toBody(d: Draft) {
   };
 }
 
-export default function SlugRegistry({ onValidate }: { onValidate: (slug: string) => void }) {
+export default function SlugRegistry({
+  onValidate,
+  onRun,
+  runPending,
+}: {
+  onValidate: (slug: string) => void;
+  onRun: (slug: string) => void;
+  runPending?: boolean;
+}) {
   const { role } = useAuth();
   const canEdit = role === 'operator' || role === 'admin';
   const [{ rq }, setUrl] = useUrlFilters({ rq: '' });
@@ -137,9 +145,10 @@ export default function SlugRegistry({ onValidate }: { onValidate: (slug: string
       <CardHeader>
         <CardTitle>Registered campaigns</CardTitle>
         <CardDescription>
-          Campaigns the tester knows how to validate and run. To register one, enter its slug and
-          check against Customer.io — the check fills in everything discoverable from the workspace
-          and tells you what's missing before you save.
+          Campaigns the tester knows how to validate and run — Run test fires the campaign's twin
+          end to end to a fresh test identity, Validate checks the wiring without sending anything.
+          To register one, enter its slug and check against Customer.io — the check fills in
+          everything discoverable from the workspace and tells you what's missing before you save.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -214,6 +223,11 @@ export default function SlugRegistry({ onValidate }: { onValidate: (slug: string
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-2">
+                      {canEdit && e.runnable && (
+                        <Button size="sm" disabled={runPending} onClick={() => onRun(e.slug)}>
+                          Run test
+                        </Button>
+                      )}
                       <Button size="sm" variant="outline" onClick={() => onValidate(e.slug)}>
                         Validate
                       </Button>
