@@ -8,7 +8,7 @@ import {
   type LedgerEventsPage,
   type LedgerStatusesPage,
 } from '@/lib/api';
-import { formatUtc, humanizeAttr, relativeFrom } from '@/lib/format';
+import { formatPacific, humanizeAttr, relativeFrom } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -291,7 +291,7 @@ function EventsTab() {
                       onClick={() => navigate(`/fans?email=${encodeURIComponent(e.customer)}`)}
                     >
                       <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                        <div>{formatUtc(e.ts)}</div>
+                        <div>{formatPacific(e.ts)}</div>
                         <div>{relativeFrom(e.ts)}</div>
                       </TableCell>
                       <TableCell className="max-w-56">
@@ -475,7 +475,7 @@ function StatusesTab() {
                         {s.authority ?? '—'}
                       </TableCell>
                       <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                        {s.status_since ? formatUtc(s.status_since) : '—'}
+                        {s.status_since ? formatPacific(s.status_since) : '—'}
                       </TableCell>
                       <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
                         {s.last_event_at ? relativeFrom(s.last_event_at) : '—'}

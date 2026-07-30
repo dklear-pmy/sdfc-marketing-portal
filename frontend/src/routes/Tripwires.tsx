@@ -10,7 +10,7 @@ import {
   type TripwiresState,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { formatUtc, relativeFrom, shortIdentity } from '@/lib/format';
+import { formatPacific, relativeFrom, shortIdentity } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -172,7 +172,7 @@ export default function Tripwires() {
               <AlertTitle>All clear</AlertTitle>
               <AlertDescription>
                 {data.last_run_at
-                  ? `Last checked ${relativeFrom(data.last_run_at)} (${formatUtc(data.last_run_at)}).`
+                  ? `Last checked ${relativeFrom(data.last_run_at)} (${formatPacific(data.last_run_at)}).`
                   : 'No checks recorded yet — run checks or wait for the daily tick.'}
               </AlertDescription>
             </Alert>
@@ -478,7 +478,7 @@ function TripwireCard({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit: b
           <p className="text-xs text-muted-foreground">
             {lastChecked ? (
               <>
-                Checked {relativeFrom(lastChecked)} · {formatUtc(lastChecked)}
+                Checked {relativeFrom(lastChecked)} · {formatPacific(lastChecked)}
               </>
             ) : null}
           </p>
@@ -743,7 +743,7 @@ function HistoryCard() {
                 {rows.slice(0, 100).map((r, i) => (
                   <TableRow key={`${r.checked_at}-${r.email}-${r.check_name}-${i}`}>
                     <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                      {formatUtc(r.checked_at)}
+                      {formatPacific(r.checked_at)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       {r.email === '_workspace'

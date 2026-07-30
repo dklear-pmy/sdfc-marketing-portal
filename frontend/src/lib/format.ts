@@ -32,17 +32,41 @@ export function humanStage(stage: string): string {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-export function formatUtc(iso: string, withDate = true): string {
+const PACIFIC = 'America/Los_Angeles';
+
+function ptParts(d: Date): Record<string, string> {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: PACIFIC,
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(d);
+  return Object.fromEntries(parts.map((p) => [p.type, p.value]));
+}
+
+/* All absolute times display in Pacific — the club's timezone — per Dean
+   (2026-07-30). Data stays UTC end to end; only rendering converts. */
+export function formatPacific(iso: string, withDate = true): string {
   const d = new Date(iso);
-  const time = iso.includes('T') ? iso.slice(11, 16) : '';
-  if (!withDate) return `${time} UTC`;
-  const year = d.getUTCFullYear() !== new Date().getUTCFullYear() ? ` ${d.getUTCFullYear()}` : '';
-  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}${year}${time ? ` · ${time} UTC` : ''}`;
+  if (Number.isNaN(d.getTime())) return iso;
+  if (!iso.includes('T')) {
+    /* A calendar date, not an instant — render it literally; converting it
+       through a timezone would shift it to the previous evening. */
+    const year = d.getUTCFullYear() !== new Date().getUTCFullYear() ? ` ${d.getUTCFullYear()}` : '';
+    return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}${year}`;
+  }
+  const p = ptParts(d);
+  if (!withDate) return `${p.hour}:${p.minute} PT`;
+  const year = p.year !== ptParts(new Date()).year ? ` ${p.year}` : '';
+  return `${p.month} ${p.day}${year} · ${p.hour}:${p.minute} PT`;
 }
 
 export function formatUnix(ts: number | null | undefined): string {
   if (!ts) return '—';
-  return formatUtc(new Date(ts * 1000).toISOString());
+  return formatPacific(new Date(ts * 1000).toISOString());
 }
 
 export function relativeFrom(iso: string | null | undefined): string {

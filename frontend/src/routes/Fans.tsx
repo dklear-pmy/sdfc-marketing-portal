@@ -23,7 +23,7 @@ import {
   type LedgerStatus,
   type MessagesPage,
 } from '@/lib/api';
-import { formatUnix, formatUtc, humanizeAttr, relativeFrom } from '@/lib/format';
+import { formatUnix, formatPacific, humanizeAttr, relativeFrom } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -363,13 +363,13 @@ function SyncCard({ data }: { data: CustomerLookup }) {
         )}
         {warehouse.updated_at && (
           <Fact label="Row last changed">
-            {formatUtc(warehouse.updated_at)}{' '}
+            {formatPacific(warehouse.updated_at)}{' '}
             <span className="text-muted-foreground">({relativeFrom(warehouse.updated_at)})</span>
           </Fact>
         )}
         {warehouse.table_built_at && (
           <Fact label="Warehouse built">
-            {formatUtc(warehouse.table_built_at)}{' '}
+            {formatPacific(warehouse.table_built_at)}{' '}
             <span className="text-muted-foreground">
               ({relativeFrom(warehouse.table_built_at)})
             </span>
@@ -377,7 +377,7 @@ function SyncCard({ data }: { data: CustomerLookup }) {
         )}
         {cio.last_attribute_write && (
           <Fact label="Last CIO write">
-            {formatUtc(cio.last_attribute_write)}{' '}
+            {formatPacific(cio.last_attribute_write)}{' '}
             <span className="text-muted-foreground">
               ({relativeFrom(cio.last_attribute_write)})
             </span>
@@ -422,14 +422,14 @@ function SnapshotCard({ row }: { row: Record<string, unknown> | null }) {
     ],
     [
       'Last attended',
-      row.last_attendance_date ? formatUtc(String(row.last_attendance_date)) : null,
+      row.last_attendance_date ? formatPacific(String(row.last_attendance_date)) : null,
     ],
     ['Lifetime spend', money(row.lifetime_spend)],
     ['Shopify spend', money(row.shopify_amount_spent)],
     [
       'Next event',
       row.ticketing_event_name
-        ? `${row.ticketing_event_name}${row.ticketing_event_date ? ` (${formatUtc(String(row.ticketing_event_date))})` : ''}`
+        ? `${row.ticketing_event_name}${row.ticketing_event_date ? ` (${formatPacific(String(row.ticketing_event_date))})` : ''}`
         : null,
     ],
     ['Signup campaign', (row.tb_signup_campaign as string) || null],
@@ -1059,7 +1059,7 @@ function FanList({ onSelect }: { onSelect: (email: string) => void }) {
                         {f.matches_attended_2026 ?? 0}
                       </TableCell>
                       <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
-                        {f.last_attendance_date ? formatUtc(f.last_attendance_date) : '—'}
+                        {f.last_attendance_date ? formatPacific(f.last_attendance_date) : '—'}
                       </TableCell>
                       <TableCell className="text-right text-sm">
                         {money(f.lifetime_spend)}
@@ -1206,7 +1206,7 @@ function LedgerCard({ email }: { email: string }) {
               <div
                 key={s.status_domain}
                 className="flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm"
-                title={`authority: ${s.authority ?? '—'}${s.status_since ? ` · since ${formatUtc(s.status_since)}` : ''}`}
+                title={`authority: ${s.authority ?? '—'}${s.status_since ? ` · since ${formatPacific(s.status_since)}` : ''}`}
               >
                 <span className="text-muted-foreground">{humanizeAttr(s.status_domain)}</span>
                 <Badge variant={ledgerStatusVariant(s)}>{s.status}</Badge>
@@ -1250,7 +1250,7 @@ function LedgerCard({ email }: { email: string }) {
                   {ledgerEventDetail(e)}
                 </span>
                 <span className="shrink-0 text-xs whitespace-nowrap text-muted-foreground">
-                  {e.source_system ?? ''} · {formatUtc(e.ts)}
+                  {e.source_system ?? ''} · {formatPacific(e.ts)}
                 </span>
               </div>
             ))}

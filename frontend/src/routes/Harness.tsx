@@ -19,7 +19,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import {
-  formatUtc,
+  formatPacific,
   humanizeSlug,
   humanStage,
   relativeFrom,
@@ -191,7 +191,7 @@ export default function Harness() {
                 {report.summary.fail === 0
                   ? 'All static checks passed.'
                   : `${report.summary.fail} check(s) failing.`}{' '}
-                Generated {formatUtc(report.generated_at)}
+                Generated {formatPacific(report.generated_at)}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -355,7 +355,7 @@ function RunHistory({
       columnHelper.accessor('started_at', {
         header: 'Started',
         cell: (info) => (
-          <span className="text-sm whitespace-nowrap">{formatUtc(info.getValue())}</span>
+          <span className="text-sm whitespace-nowrap">{formatPacific(info.getValue())}</span>
         ),
       }),
       columnHelper.accessor('status', {
@@ -607,7 +607,7 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
                 are scheduled and operator runs against the same test pair. */}
             <CardDescription>
               {current
-                ? `${formatUtc(current.started_at)} · ${relativeFrom(current.started_at)}`
+                ? `${formatPacific(current.started_at)} · ${relativeFrom(current.started_at)}`
                 : ''}
             </CardDescription>
           </div>
@@ -646,7 +646,9 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
               <TableBody>
                 {current.timeline.map((t, i) => (
                   <TableRow key={i}>
-                    <TableCell className="text-sm whitespace-nowrap">{formatUtc(t.ts)}</TableCell>
+                    <TableCell className="text-sm whitespace-nowrap">
+                      {formatPacific(t.ts)}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap">{humanStage(t.stage)}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">{t.detail}</TableCell>
                   </TableRow>
