@@ -117,6 +117,48 @@ def _payload(spec: dict, identity: str, run_id: str) -> dict:
     }
 
 
+# The App API exposes a journey's MESSAGES but none of its workflow structure
+# — delays, time windows and branches are invisible (verified 2026-07-30
+# against the Shopify twin: 1-week delay + branch, actions list = 3 emails).
+# So delay blocks are MEASURED from delivery gaps during a run instead of
+# read statically. Anything over the smoke limit is what a smoke-mode run
+# must gate with the -smoke@qa.sdfc.dev condition.
+SMOKE_DELAY_LIMIT_S = 5 * 60
+
+
+def _fmt_gap(seconds: float) -> str:
+    s = int(seconds)
+    if s < 90:
+        return f"{s}s"
+    m, s = divmod(s, 60)
+    if m < 90:
+        return f"{m}m {s:02d}s"
+    h, m = divmod(m, 60)
+    if h < 48:
+        return f"{h}h {m:02d}m"
+    return f"{h // 24}d {h % 24}h"
+
+
+def _delay_profile(started_at: str, messages: list[dict]) -> tuple[str, int]:
+    """Measured gaps trigger→delivery→delivery, flagging blocks over the
+    smoke limit. Returns ('', 0) when nothing is measurable."""
+    prev = datetime.fromisoformat(started_at)
+    prev_label = "trigger"
+    segments, long_gaps = [], 0
+    for m in sorted(messages, key=lambda m: m.get("Created", "")):
+        try:
+            t = datetime.fromisoformat((m.get("Created") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        gap = (t - prev).total_seconds()
+        label = f"'{m.get('Subject')}'"
+        flag = gap > SMOKE_DELAY_LIMIT_S
+        long_gaps += flag
+        segments.append(f"{prev_label} → {label}: {_fmt_gap(gap)}{' (>5m)' if flag else ''}")
+        prev, prev_label = t, label
+    return "; ".join(segments), long_gaps
+
+
 # Rendered-content verification: static validation proves the template's
 # references RESOLVE; this proves the rendering actually DID. Liquid that
 # survives to the delivered MIME is malformed template syntax; a referenced
@@ -317,6 +359,21 @@ def advance_run(run_id: str) -> dict:
             render_problems = []
             render_note = f" Render check could not run: {str(e)[:100]}."
         problems = metric_problems + render_problems
+
+        # Recorded as its own timeline entry so validation can surface the
+        # measured profile (it only persists when this tick goes terminal).
+        try:
+            delay_line, long_gaps = _delay_profile(run["started_at"], messages)
+        except Exception:  # noqa: BLE001
+            delay_line, long_gaps = "", 0
+        if delay_line:
+            profile = f"Delay profile: {delay_line}."
+            if long_gaps:
+                profile += (
+                    f" {long_gaps} block(s) exceed 5 min — gate those delays with the "
+                    "-smoke@qa.sdfc.dev condition before smoke-mode runs."
+                )
+            _tl(run, "delay_profile", profile)
 
         if not problems:
             detail = (

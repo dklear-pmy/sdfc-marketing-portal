@@ -107,8 +107,33 @@ def test_runtime_content() -> list:
     return failures
 
 
+def test_delay_profile() -> list:
+    failures = []
+    started = "2026-07-30T20:00:00+00:00"
+    messages = [
+        {"Subject": "Welcome", "Created": "2026-07-30T20:00:09.5Z"},
+        {"Subject": "Promo", "Created": "2026-07-30T20:10:30Z"},
+    ]
+    line, long_gaps = R._delay_profile(started, messages)
+    if long_gaps != 1:
+        failures.append(f"the ten-minute gap must count as long: {long_gaps}")
+    if "trigger → 'Welcome': 9s" not in line or "'Welcome' → 'Promo': 10m 20s (>5m)" not in line:
+        failures.append(f"profile wording: {line}")
+    if R._delay_profile(started, []) != ("", 0):
+        failures.append("no deliveries → empty profile")
+    # A week-long gap formats in days, not an integer blowup.
+    week = [{"Subject": "Late", "Created": "2026-08-06T20:00:00Z"}]
+    line, long_gaps = R._delay_profile(started, week)
+    if "7d 0h (>5m)" not in line or long_gaps != 1:
+        failures.append(f"week-long gap formatting: {line}")
+
+    for f in failures:
+        print(f"FAIL  {f}")
+    return failures
+
+
 def main() -> int:
-    failures = test_static_refs() + test_runtime_content()
+    failures = test_static_refs() + test_runtime_content() + test_delay_profile()
     print("FAILED" if failures else "static and runtime variable checks behave correctly")
     return 1 if failures else 0
 

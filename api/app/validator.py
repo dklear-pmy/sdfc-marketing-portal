@@ -313,6 +313,33 @@ def validate_slug(slug: str) -> dict:
         "; ".join(liq_notes) or "All trigger.*/event.*/customer.* references covered.",
     )
 
+    # Delay/window/branch blocks are invisible to the App API (actions expose
+    # messages only), so delays are MEASURED from harness-run delivery gaps.
+    delay_status = "warn"
+    delay_detail = (
+        "Delays can't be read statically — no completed run has measured them yet; "
+        "start a run to profile this journey's delay blocks."
+    )
+    try:
+        from .bqstate import get_run, list_runs
+
+        for r in list_runs(q=slug, limit=5):
+            full = get_run(r["run_id"]) or {}
+            entry = next(
+                (e for e in reversed(full.get("timeline") or []) if e.get("stage") == "delay_profile"),
+                None,
+            )
+            if entry:
+                long_blocks = "(>5m)" in entry["detail"]
+                delay_status = "warn" if long_blocks else "pass"
+                delay_detail = f"Measured on {r['run_id']}: {entry['detail']}"
+                break
+    except Exception as e:  # noqa: BLE001 — a state hiccup must not sink the whole validation
+        delay_detail = f"delay measurement unavailable: {str(e)[:120]}"
+    _check(
+        checks, "journey-delays", "Journey delay blocks (≤5 min for smoke runs)", delay_status, delay_detail
+    )
+
     sec_status, sec_notes = "pass", []
     if spec.get("test_webhook_url"):
         sec_notes.append("twin trigger URL stored in the registry")
