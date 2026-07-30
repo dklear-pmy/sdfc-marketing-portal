@@ -83,15 +83,22 @@ def _person_attribute_fields(actions: list[dict]) -> list[str]:
     return []
 
 
-def _liquid_refs(actions: list[dict]) -> dict[str, set[str]]:
-    refs: dict[str, set[str]] = {"trigger": set(), "customer": set(), "event": set()}
+def _liquid_ref_sites(actions: list[dict]) -> dict[str, dict[str, set[str]]]:
+    """scope → field → the email subjects referencing it, so a finding can
+    point at the exact message the tester needs to edit."""
+    sites: dict[str, dict[str, set[str]]] = {"trigger": {}, "customer": {}, "event": {}}
     for a in actions:
         if a.get("type") != "email":
             continue
+        label = a.get("subject") or a.get("name") or f"action {a.get('id')}"
         blob = (a.get("body") or "") + (a.get("body_plain") or "") + (a.get("subject") or "")
         for scope, field in _LIQUID_REF.findall(blob):
-            refs[scope].add(field.split(".")[0])
-    return refs
+            sites[scope].setdefault(field.split(".")[0], set()).add(label)
+    return sites
+
+
+def _liquid_refs(actions: list[dict]) -> dict[str, set[str]]:
+    return {scope: set(fields) for scope, fields in _liquid_ref_sites(actions).items()}
 
 
 def _liquid_gaps(
@@ -275,23 +282,31 @@ def validate_slug(slug: str) -> dict:
         j_acts = actions_by_role.get(journey_role)
         if j_acts is None:
             continue
-        refs = _liquid_refs(j_acts)
+        sites = _liquid_ref_sites(j_acts)
+        refs = {scope: set(fields) for scope, fields in sites.items()}
         event_fields = mappings.get(trig_role, set())
         person_fields = set(_person_attribute_fields(actions_by_role.get(trig_role) or [])) | known_person
         gaps = _liquid_gaps(refs, event_fields, person_fields)
-        if gaps["trigger"]:
-            liq_status = "fail"
-            liq_notes.append(f"{pair} journey references trigger.{sorted(gaps['trigger'])} not in event payload")
-        if gaps["event"]:
-            liq_status = "fail"
-            liq_notes.append(
-                f"{pair} journey references event.{sorted(gaps['event'])} not in the trigger's Send Event mapping"
-            )
-        if gaps["customer"]:
+        trigger_name = (roles.get(trig_role) or {}).get("name") or f"the {pair} [1/2] trigger"
+
+        def _used_in(scope: str, field: str) -> str:
+            return ", ".join(f"'{s}'" for s in sorted(sites[scope].get(field, set()))) or "?"
+
+        for scope in ("trigger", "event"):
+            for field in sorted(gaps[scope]):
+                liq_status = "fail"
+                liq_notes.append(
+                    f"{pair}: {{{{{scope}.{field}}}}} in email {_used_in(scope, field)} has no source — "
+                    f"add '{field}' to the Send Event data mapping in \"{trigger_name}\" "
+                    "(Workflow → Send Event action), or remove it from that email"
+                )
+        for field in sorted(gaps["customer"]):
             if liq_status == "pass":
                 liq_status = "warn"
             liq_notes.append(
-                f"{pair} journey references customer.{sorted(gaps['customer'])} — not set by this trigger; verify synced attributes"
+                f"{pair}: {{{{customer.{field}}}}} in email {_used_in('customer', field)} is not set by "
+                f"\"{trigger_name}\" — set it in that campaign's Create/Update Person action, add it to "
+                "this slug's person attributes in the registry if a sync supplies it, or remove it from that email"
             )
     _check(
         checks, "liquid-refs", "Template Liquid references resolvable", liq_status,

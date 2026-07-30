@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import mailpit  # noqa: E402
 from app import runner as R  # noqa: E402
-from app.validator import _liquid_gaps, _liquid_refs  # noqa: E402
+from app.validator import _liquid_gaps, _liquid_ref_sites, _liquid_refs  # noqa: E402
 
 
 def test_static_refs() -> list:
@@ -34,6 +34,13 @@ def test_static_refs() -> list:
         failures.append(f"trigger refs: {refs['trigger']}")
     if refs["event"] != {"order_id"}:
         failures.append(f"event refs: {refs['event']}")
+
+    # Findings must point at the exact email to edit.
+    sites = _liquid_ref_sites(actions)
+    if sites["event"]["order_id"] != {"Hi {{ customer.first_name }}"}:
+        failures.append(f"event.order_id site: {sites['event']['order_id']}")
+    if sites["trigger"]["promo_code"] != {"Hi {{ customer.first_name }}", "action None"}:
+        failures.append(f"promo_code must list every email using it: {sites['trigger']['promo_code']}")
 
     gaps = _liquid_gaps(refs, event_fields={"promo_code"}, person_fields={"first_name"})
     if gaps["trigger"]:
