@@ -155,6 +155,14 @@ export default function SlugRegistry({ onValidate }: { onValidate: (slug: string
               Register campaign
             </Button>
           )}
+          {rq.trim() && !listQuery.isPending && (
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              Showing {entries.length} of {listQuery.data?.slugs.length ?? 0} registered
+              <Button variant="outline" size="xs" onClick={() => setUrl({ rq: '' })}>
+                Clear search
+              </Button>
+            </span>
+          )}
         </div>
 
         {listQuery.isError && (
@@ -229,6 +237,13 @@ export default function SlugRegistry({ onValidate }: { onValidate: (slug: string
             draft={draft}
             setDraft={setDraft}
             onClose={() => setEditing(null)}
+            onCommitted={() => {
+              setEditing(null);
+              /* The search that seeded this registration would otherwise keep
+                 filtering the list to just the new entry — which reads as the
+                 registry having lost everything else. */
+              setUrl({ rq: '' });
+            }}
           />
         )}
       </CardContent>
@@ -241,11 +256,15 @@ function SlugForm({
   draft,
   setDraft,
   onClose,
+  onCommitted,
 }: {
   existingSlug: string | null;
   draft: Draft;
   setDraft: Dispatch<SetStateAction<Draft>>;
   onClose: () => void;
+  /* After a save or delete lands — unlike onClose (cancel), the parent also
+     clears the list search, so the full registry is visible again. */
+  onCommitted: () => void;
 }) {
   const queryClient = useQueryClient();
   const [filled, setFilled] = useState(0);
@@ -293,7 +312,7 @@ function SlugForm({
       api.put<SlugEntry>(`/api/slugs/${encodeURIComponent(d.slug.trim())}`, toBody(d)),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['slugs'] });
-      onClose();
+      onCommitted();
     },
   });
 
@@ -302,7 +321,7 @@ function SlugForm({
       api.del<{ deleted: string }>(`/api/slugs/${encodeURIComponent(slug)}`),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['slugs'] });
-      onClose();
+      onCommitted();
     },
   });
 
