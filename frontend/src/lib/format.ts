@@ -40,9 +40,9 @@ function ptParts(d: Date): Record<string, string> {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
-    hour: '2-digit',
+    hour: 'numeric',
     minute: '2-digit',
-    hourCycle: 'h23',
+    hour12: true,
   }).formatToParts(d);
   return Object.fromEntries(parts.map((p) => [p.type, p.value]));
 }
@@ -59,9 +59,10 @@ export function formatPacific(iso: string, withDate = true): string {
     return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}${year}`;
   }
   const p = ptParts(d);
-  if (!withDate) return `${p.hour}:${p.minute} PT`;
+  const time = `${p.hour}:${p.minute} ${(p.dayPeriod || '').toLowerCase()} PT`;
+  if (!withDate) return time;
   const year = p.year !== ptParts(new Date()).year ? ` ${p.year}` : '';
-  return `${p.month} ${p.day}${year} · ${p.hour}:${p.minute} PT`;
+  return `${p.month} ${p.day}${year} · ${time}`;
 }
 
 export function formatUnix(ts: number | null | undefined): string {
