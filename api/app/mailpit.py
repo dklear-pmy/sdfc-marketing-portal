@@ -53,6 +53,13 @@ def raw_message(message_id: str) -> str:
     return r.text
 
 
+def rendered_text(raw_mime: str) -> str:
+    """The delivered message as decoded text (headers + all body parts).
+    Render checks must scan this, not the raw form — quoted-printable
+    encoding can split a literal `{{` across a soft line break."""
+    return quopri.decodestring(raw_mime.encode()).decode("utf-8", errors="replace")
+
+
 def tracking_urls(raw_mime: str) -> tuple[list[str], list[str]]:
     decoded = quopri.decodestring(raw_mime.encode()).decode("utf-8", errors="replace")
     opens = sorted(set(_OPEN_RE.findall(decoded)))

@@ -94,6 +94,21 @@ def _liquid_refs(actions: list[dict]) -> dict[str, set[str]]:
     return refs
 
 
+def _liquid_gaps(
+    refs: dict[str, set[str]], event_fields: set[str], person_fields: set[str]
+) -> dict[str, set[str]]:
+    """Template references nothing supplies. trigger.* and event.* both read
+    the triggering event's payload, so both resolve against the Send Event
+    mapping; customer.* resolves against attributes the trigger sets plus
+    registry-known synced attributes. With no readable mapping the event
+    scopes can't be judged, so they stay empty rather than false-flagging."""
+    return {
+        "trigger": refs["trigger"] - event_fields if event_fields else set(),
+        "event": refs["event"] - event_fields if event_fields else set(),
+        "customer": refs["customer"] - person_fields,
+    }
+
+
 def validate_slug(slug: str) -> dict:
     registry = slug_registry()
     spec = registry.get(slug, {})
@@ -263,20 +278,24 @@ def validate_slug(slug: str) -> dict:
         refs = _liquid_refs(j_acts)
         event_fields = mappings.get(trig_role, set())
         person_fields = set(_person_attribute_fields(actions_by_role.get(trig_role) or [])) | known_person
-        missing_trigger = refs["trigger"] - event_fields if event_fields else set()
-        unknown_customer = refs["customer"] - person_fields
-        if missing_trigger:
+        gaps = _liquid_gaps(refs, event_fields, person_fields)
+        if gaps["trigger"]:
             liq_status = "fail"
-            liq_notes.append(f"{pair} journey references trigger.{sorted(missing_trigger)} not in event payload")
-        if unknown_customer:
+            liq_notes.append(f"{pair} journey references trigger.{sorted(gaps['trigger'])} not in event payload")
+        if gaps["event"]:
+            liq_status = "fail"
+            liq_notes.append(
+                f"{pair} journey references event.{sorted(gaps['event'])} not in the trigger's Send Event mapping"
+            )
+        if gaps["customer"]:
             if liq_status == "pass":
                 liq_status = "warn"
             liq_notes.append(
-                f"{pair} journey references customer.{sorted(unknown_customer)} — not set by this trigger; verify synced attributes"
+                f"{pair} journey references customer.{sorted(gaps['customer'])} — not set by this trigger; verify synced attributes"
             )
     _check(
         checks, "liquid-refs", "Template Liquid references resolvable", liq_status,
-        "; ".join(liq_notes) or "All trigger.*/customer.* references covered.",
+        "; ".join(liq_notes) or "All trigger.*/event.*/customer.* references covered.",
     )
 
     sec_status, sec_notes = "pass", []

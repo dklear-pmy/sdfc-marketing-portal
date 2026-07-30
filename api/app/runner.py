@@ -13,6 +13,7 @@ static validation cannot see).
 """
 
 import json
+import re
 from datetime import datetime, timezone
 
 import requests
@@ -114,6 +115,58 @@ def _payload(spec: dict, identity: str, run_id: str) -> dict:
         "has_season_plan": False,
         "postal_code": "92101",
     }
+
+
+# Rendered-content verification: static validation proves the template's
+# references RESOLVE; this proves the rendering actually DID. Liquid that
+# survives to the delivered MIME is malformed template syntax; a referenced
+# field whose minted value shows up nowhere most likely rendered empty
+# (Customer.io substitutes missing attributes as blank, not as literal text).
+_LEFTOVER_LIQUID = re.compile(r"\{\{|\{%\s*[a-zA-Z]")
+# Only fields whose minted values are distinctive enough to search for —
+# booleans, dates and zips would false-match ordinary email content.
+_ASSERTABLE_FIELDS = ("first_name", "last_name")
+
+
+def _content_problems(texts: dict[str, str], refs: set[str] | None, payload: dict) -> list[str]:
+    """Pure core of the render check. texts = delivered messages (subject +
+    decoded body) keyed by a display label; refs = top-level fields the test
+    journey's emails reference (None when unreadable — skip value checks)."""
+    problems = []
+    for label, text in texts.items():
+        m = _LEFTOVER_LIQUID.search(text)
+        if m:
+            snippet = " ".join(text[m.start() : m.start() + 60].split())
+            problems.append(f"unrendered Liquid in {label}: '{snippet}'")
+    if refs and texts:
+        blob = "\n".join(texts.values())
+        for field in _ASSERTABLE_FIELDS:
+            value = str(payload.get(field) or "")
+            if field in refs and value and value not in blob:
+                problems.append(
+                    f"emails reference {field} but its minted value '{value}' appears in "
+                    "no delivery — the substitution likely rendered empty"
+                )
+    return problems
+
+
+def _render_problems(cio: CioClient, spec: dict, slug: str, identity: str, messages: list[dict]) -> list[str]:
+    texts = {}
+    for m in messages:
+        subject = m.get("Subject") or ""
+        label = f"'{subject}' ({m['ID'][:8]})"
+        texts[label] = subject + "\n" + mailpit.rendered_text(mailpit.raw_message(m["ID"]))
+    refs: set[str] | None = None
+    try:
+        from .validator import _liquid_refs, _match_campaigns
+
+        journey = _match_campaigns(cio.campaigns(), slug).get("test_journey")
+        if journey:
+            r = _liquid_refs(cio.campaign_actions(journey["id"]))
+            refs = r["trigger"] | r["event"] | r["customer"]
+    except Exception:  # noqa: BLE001 — value assertions are best-effort; the leftover-Liquid scan still ran
+        refs = None
+    return _content_problems(texts, refs, _payload(spec, identity, ""))
 
 
 def start_run(slug: str, actor: str | None) -> dict:
@@ -250,20 +303,36 @@ def advance_run(run_id: str) -> dict:
         events = [a.get("name") for a in acts if a.get("type") == "event"]
         expected_event = spec.get("test_event_name")
 
-        problems = []
+        metric_problems = []
         if expected_event and expected_event not in events:
-            problems.append(f"expected event '{expected_event}', profile shows {events}")
+            metric_problems.append(f"expected event '{expected_event}', profile shows {events}")
         for typ, minimum in (("sent_email", 2), ("delivered_email", 2), ("opened_email", 2), ("clicked_email", 2)):
             if counts.get(typ, 0) < minimum:
-                problems.append(f"{typ}={counts.get(typ, 0)} (<{minimum})")
+                metric_problems.append(f"{typ}={counts.get(typ, 0)} (<{minimum})")
+
+        render_note = ""
+        try:
+            render_problems = _render_problems(cio, spec, run["slug"], identity, messages)
+        except Exception as e:  # noqa: BLE001 — an unreachable sink must not crash the assert tick
+            render_problems = []
+            render_note = f" Render check could not run: {str(e)[:100]}."
+        problems = metric_problems + render_problems
 
         if not problems:
             detail = (
-                f"Activity stream verified: {counts}. Long-tail journey emails (≈+46h timer) "
+                f"Activity stream verified: {counts}. Render check clean across "
+                f"{len(messages)} deliveries.{render_note} Long-tail journey emails (≈+46h timer) "
                 "are not tracked by this run — see the sink for later deliveries."
             )
             bqstate.update_run(
                 run_id, status="PASSED", stage="asserted", timeline=_tl(run, "asserted", detail), detail=detail
+            )
+        elif render_problems and not metric_problems:
+            # Content bugs are deterministic — re-asserting later cannot heal
+            # them, so fail now rather than waiting out the deadline.
+            detail = "render check failed: " + "; ".join(render_problems)
+            bqstate.update_run(
+                run_id, status="FAILED", stage="asserted", timeline=_tl(run, "asserted", detail), detail=detail
             )
         elif _elapsed_min(run) > EMAIL2_DEADLINE_MIN + 10:
             detail = "assertions failed: " + "; ".join(problems)

@@ -45,3 +45,5 @@ jobs:
       - run: python tests/test_tripwire_checks.py
       # Slug precheck findings incl. the dual-entry (twin on prod event) class.
       - run: python tests/test_slug_registry.py
+      # Liquid coverage: static reference gaps + delivered-render verification.
+      - run: python tests/test_render_checks.py
