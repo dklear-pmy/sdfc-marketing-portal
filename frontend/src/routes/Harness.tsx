@@ -67,6 +67,39 @@ const runStatusVariant: Record<HarnessRun['status'], 'default' | 'destructive' |
 
 const RUN_STATUSES = ['ALL', 'RUNNING', 'PASSED', 'FAILED', 'TIMED_OUT'] as const;
 
+/* The run's stage machine, in order — the board shows each active run's
+   position along it. */
+const RUN_STAGES = [
+  { key: 'fired', label: 'Fired' },
+  { key: 'email1_engaged', label: 'Email 1' },
+  { key: 'email2_engaged', label: 'Email 2' },
+  { key: 'asserted', label: 'Verified' },
+] as const;
+
+function StageProgress({ stage }: { stage: string }) {
+  const idx = Math.max(
+    0,
+    RUN_STAGES.findIndex((s) => s.key === stage)
+  );
+  return (
+    <div className="flex items-start gap-1">
+      {RUN_STAGES.map((s, i) => (
+        <div key={s.key} className="min-w-0 flex-1">
+          <div className={cn('h-1.5 rounded-full', i <= idx ? 'bg-primary' : 'bg-muted')} />
+          <span
+            className={cn(
+              'mt-1 block truncate text-[10px]',
+              i <= idx ? 'text-foreground' : 'text-muted-foreground'
+            )}
+          >
+            {s.label}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function Harness() {
   /* The validated slug and the open run are the shareable bits — "look at this
      failing run" is the whole point of a link here. */
@@ -396,110 +429,148 @@ function RunHistory({
 
   const pageCount = table.getPageCount();
   const pageIndex = table.getState().pagination.pageIndex;
+  const active = (runsQuery.data?.runs ?? []).filter((r) => r.status === 'RUNNING');
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Run history</CardTitle>
-        <CardDescription>
-          Every test run, newest first. Click a row for its full timeline — opening a running test
-          resumes its progress tracking.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="grid gap-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <Input
-            className="max-w-xs"
-            placeholder="Search campaign, identity, run id…"
-            value={globalFilter}
-            onChange={(e) => {
-              setGlobalFilter(e.target.value);
-              table.setPageIndex(0);
-            }}
-          />
-          <Tabs value={statusFilter} onValueChange={setStatusFilter}>
-            <TabsList>
-              {RUN_STATUSES.map((s) => (
-                <TabsTrigger key={s} value={s}>
-                  {s === 'ALL' ? 'All' : statusLabel[s]}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-        </div>
-
-        {runsQuery.isError && (
-          <Alert variant="destructive">
-            <AlertTitle>Could not load runs</AlertTitle>
-            <AlertDescription>{(runsQuery.error as Error).message}</AlertDescription>
-          </Alert>
-        )}
-
-        {table.getRowModel().rows.length === 0 && !runsQuery.isPending && (
-          <p className="text-sm text-muted-foreground">No runs match.</p>
-        )}
-
-        {table.getRowModel().rows.length > 0 && (
-          <>
-            <Table>
-              <TableHeader>
-                {table.getHeaderGroups().map((hg) => (
-                  <TableRow key={hg.id}>
-                    {hg.headers.map((h) => (
-                      <TableHead key={h.id}>
-                        {flexRender(h.column.columnDef.header, h.getContext())}
-                      </TableHead>
-                    ))}
-                  </TableRow>
+    <>
+      {active.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Active runs</CardTitle>
+            <CardDescription>
+              Every test currently in flight — each advances on the 10-minute scheduler tick whether
+              or not anyone is watching. Click one for its live timeline.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid items-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {active.map((r) => (
+              <button
+                key={r.run_id}
+                type="button"
+                onClick={() => onSelect(r.run_id)}
+                className={cn(
+                  'grid gap-2 rounded-lg border p-3 text-left transition-colors hover:bg-accent/50',
+                  r.run_id === activeRunId && 'bg-accent/50'
+                )}
+              >
+                <span className="flex items-baseline justify-between gap-2">
+                  <span className="truncate text-sm font-medium">{humanizeSlug(r.slug)}</span>
+                  <span className="text-xs whitespace-nowrap text-muted-foreground">
+                    started {relativeFrom(r.started_at)}
+                  </span>
+                </span>
+                <code className="truncate text-xs text-muted-foreground">
+                  {shortIdentity(r.identity)}
+                </code>
+                <StageProgress stage={r.stage} />
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+      <Card>
+        <CardHeader>
+          <CardTitle>Run history</CardTitle>
+          <CardDescription>
+            Every test run, newest first. Click a row for its full timeline — opening a running test
+            resumes its progress tracking.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Input
+              className="max-w-xs"
+              placeholder="Search campaign, identity, run id…"
+              value={globalFilter}
+              onChange={(e) => {
+                setGlobalFilter(e.target.value);
+                table.setPageIndex(0);
+              }}
+            />
+            <Tabs value={statusFilter} onValueChange={setStatusFilter}>
+              <TabsList>
+                {RUN_STATUSES.map((s) => (
+                  <TabsTrigger key={s} value={s}>
+                    {s === 'ALL' ? 'All' : statusLabel[s]}
+                  </TabsTrigger>
                 ))}
-              </TableHeader>
-              <TableBody>
-                {table.getRowModel().rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    onClick={() => onSelect(row.original.run_id)}
-                    className={cn('cursor-pointer', row.id === activeRunId && 'bg-accent/50')}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+              </TabsList>
+            </Tabs>
+          </div>
 
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">
-                {table.getFilteredRowModel().rows.length} run(s)
-                {pageCount > 1 ? ` · page ${pageIndex + 1} of ${pageCount}` : ''}
-              </span>
-              {pageCount > 1 && (
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => table.previousPage()}
-                    disabled={!table.getCanPreviousPage()}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => table.nextPage()}
-                    disabled={!table.getCanNextPage()}
-                  >
-                    Next
-                  </Button>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
+          {runsQuery.isError && (
+            <Alert variant="destructive">
+              <AlertTitle>Could not load runs</AlertTitle>
+              <AlertDescription>{(runsQuery.error as Error).message}</AlertDescription>
+            </Alert>
+          )}
+
+          {table.getRowModel().rows.length === 0 && !runsQuery.isPending && (
+            <p className="text-sm text-muted-foreground">No runs match.</p>
+          )}
+
+          {table.getRowModel().rows.length > 0 && (
+            <>
+              <Table>
+                <TableHeader>
+                  {table.getHeaderGroups().map((hg) => (
+                    <TableRow key={hg.id}>
+                      {hg.headers.map((h) => (
+                        <TableHead key={h.id}>
+                          {flexRender(h.column.columnDef.header, h.getContext())}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableHeader>
+                <TableBody>
+                  {table.getRowModel().rows.map((row) => (
+                    <TableRow
+                      key={row.id}
+                      onClick={() => onSelect(row.original.run_id)}
+                      className={cn('cursor-pointer', row.id === activeRunId && 'bg-accent/50')}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell key={cell.id}>
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  {table.getFilteredRowModel().rows.length} run(s)
+                  {pageCount > 1 ? ` · page ${pageIndex + 1} of ${pageCount}` : ''}
+                </span>
+                {pageCount > 1 && (
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => table.previousPage()}
+                      disabled={!table.getCanPreviousPage()}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => table.nextPage()}
+                      disabled={!table.getCanNextPage()}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
