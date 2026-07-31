@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
-import { useUrlFilters } from '@/lib/urlState';
+import { oneOf, useUrlFilters } from '@/lib/urlState';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createColumnHelper,
@@ -42,7 +42,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import SlugRegistry from '@/components/SlugRegistry';
+import SlugRegistry, { CampaignDetail } from '@/components/SlugRegistry';
 import SlugVariablesPanel from '@/components/SlugVariables';
 
 const checkVariant: Record<CheckStatus, 'default' | 'destructive' | 'secondary' | 'outline'> = {
@@ -102,18 +102,32 @@ function StageProgress({ stage }: { stage: string }) {
 }
 
 export default function Harness() {
-  /* The validated slug and the open run are the shareable bits — "look at this
-     failing run" is the whole point of a link here. */
-  const [url, setUrl] = useUrlFilters({ slug: '', run: '' });
+  /* The selected campaign, validated slug and open run are the shareable bits
+     — "look at this failing run" is the whole point of a link here. A link
+     that names a run lands on the results tab even without an explicit tab. */
+  const [url, setUrl] = useUrlFilters({ slug: '', run: '', tab: '', sel: '' });
   const slug = url.slug;
   const activeRunId = url.run || null;
   const setSlug = (v: string) => setUrl({ slug: v });
   const setActiveRunId = (v: string | null) => setUrl({ run: v ?? '' });
+  const tab = url.tab
+    ? oneOf(url.tab, ['campaigns', 'results'] as const, 'campaigns')
+    : url.run
+      ? 'results'
+      : 'campaigns';
   const [formError, setFormError] = useState<string | null>(null);
-  /* Which campaign's variables panel is open — transient UI, not in the URL. */
-  const [variablesFor, setVariablesFor] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
+
+  /* Shares the runs cache with the board/history below — the badge on the
+     results tab costs no extra fetch. */
+  const runsQuery = useQuery({
+    queryKey: ['harness-runs'],
+    queryFn: () => api.get<{ runs: HarnessRunSummary[] }>('/api/harness/runs?limit=200'),
+    refetchInterval: (q) =>
+      q.state.data?.runs.some((r) => r.status === 'RUNNING') ? 30_000 : false,
+  });
+  const runningCount = (runsQuery.data?.runs ?? []).filter((r) => r.status === 'RUNNING').length;
 
   const validation = useMutation({
     mutationFn: (s: string) =>
@@ -123,7 +137,8 @@ export default function Harness() {
   const startRun = useMutation({
     mutationFn: (s: string) => api.post<HarnessRun>(`/api/harness/run/${encodeURIComponent(s)}`),
     onSuccess: (run) => {
-      setActiveRunId(run.run_id);
+      /* Jump to the results tab to watch what was just fired. */
+      setUrl({ run: run.run_id, tab: 'results' });
       void queryClient.invalidateQueries({ queryKey: ['harness-runs'] });
     },
   });
@@ -163,146 +178,176 @@ export default function Harness() {
         </p>
       </div>
 
-      <SlugRegistry
-        onValidate={(s) => {
-          setSlug(s);
-          setFormError(null);
-          validation.mutate(s);
-        }}
-        onRun={onRun}
-        runPending={startRun.isPending}
-        onVariables={(s) => setVariablesFor((cur) => (cur === s ? null : s))}
-      />
+      <Tabs value={tab} onValueChange={(v) => setUrl({ tab: v })}>
+        <TabsList>
+          <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
+          <TabsTrigger value="results">
+            Test results
+            {runningCount > 0 && (
+              <Badge variant="secondary" className="ml-1.5">
+                {runningCount} running
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-      {variablesFor && (
-        <SlugVariablesPanel slug={variablesFor} onClose={() => setVariablesFor(null)} />
-      )}
-
-      {startRun.isError && (
-        <Alert variant="destructive">
-          <AlertTitle>Could not start run</AlertTitle>
-          <AlertDescription>{(startRun.error as Error).message}</AlertDescription>
-        </Alert>
-      )}
-
-      <ActiveRunsBoard activeRunId={activeRunId} onSelect={setActiveRunId} />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Validate wiring</CardTitle>
-          <CardDescription>
-            Pick a registered campaign above, or enter any campaign's name code as it appears in
-            Customer.io, e.g.{' '}
-            <code className="rounded bg-muted px-1 py-0.5">Welcome-General-260715</code>. This
-            confirms the test and live versions are wired identically before anything is sent.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={onSubmit} className="flex items-end gap-3">
-            <div className="grid flex-1 gap-2">
-              <Label htmlFor="slug">Campaign slug</Label>
-              <Input
-                id="slug"
-                required
-                placeholder="e.g. Welcome-General-260715"
-                value={slug}
-                onChange={(e) => setSlug(e.target.value)}
-              />
-            </div>
-            <Button type="submit" disabled={validation.isPending}>
-              {validation.isPending ? 'Validating…' : 'Validate'}
-            </Button>
-          </form>
-          {formError && <p className="mt-2 text-sm text-destructive">{formError}</p>}
-        </CardContent>
-      </Card>
-
-      {validation.isError && (
-        <Alert variant="destructive">
-          <AlertTitle>Validation request failed</AlertTitle>
-          <AlertDescription>{(validation.error as Error).message}</AlertDescription>
-        </Alert>
-      )}
-
-      {report && (
+      {tab === 'campaigns' && (
         <>
+          <SlugRegistry
+            selected={url.sel || null}
+            onSelect={(s) => setUrl({ sel: url.sel === s ? '' : s })}
+          />
+
+          {startRun.isError && (
+            <Alert variant="destructive">
+              <AlertTitle>Could not start run</AlertTitle>
+              <AlertDescription>{(startRun.error as Error).message}</AlertDescription>
+            </Alert>
+          )}
+
+          {url.sel && (
+            <CampaignDetail
+              key={url.sel}
+              slug={url.sel}
+              onRun={onRun}
+              runPending={startRun.isPending}
+              onValidate={(s) => {
+                setSlug(s);
+                setFormError(null);
+                validation.mutate(s);
+              }}
+              validatePending={validation.isPending}
+              onGone={() => setUrl({ sel: '' })}
+            />
+          )}
+
+          {url.sel && <SlugVariablesPanel key={`vars-${url.sel}`} slug={url.sel} />}
+
+          {validation.isError && (
+            <Alert variant="destructive">
+              <AlertTitle>Validation request failed</AlertTitle>
+              <AlertDescription>{(validation.error as Error).message}</AlertDescription>
+            </Alert>
+          )}
+
+          {report && (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>{humanizeSlug(report.slug)} — campaign pairs</CardTitle>
+                  <CardDescription>
+                    {report.summary.fail === 0
+                      ? 'All static checks passed.'
+                      : `${report.summary.fail} check(s) failing.`}{' '}
+                    Generated {formatPacific(report.generated_at)}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Role</TableHead>
+                        <TableHead>ID</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>State</TableHead>
+                        <TableHead>Trigger event</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {report.campaigns.map((c) => (
+                        <TableRow key={c.role}>
+                          <TableCell className="whitespace-nowrap">
+                            {pairLabel[c.role] ?? c.role}
+                          </TableCell>
+                          <TableCell>{c.id}</TableCell>
+                          <TableCell className="max-w-md truncate">{c.name}</TableCell>
+                          <TableCell>
+                            <Badge variant={c.state === 'running' ? 'default' : 'secondary'}>
+                              {c.state}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs">{c.event_name ?? '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Checks</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-24">Status</TableHead>
+                        <TableHead>Check</TableHead>
+                        <TableHead>Detail</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {report.checks.map((check) => (
+                        <TableRow key={check.id}>
+                          <TableCell>
+                            <Badge variant={checkVariant[check.status]}>{check.status}</Badge>
+                          </TableCell>
+                          <TableCell className="font-medium whitespace-nowrap">
+                            {check.name}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {check.detail}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </>
+          )}
+
           <Card>
             <CardHeader>
-              <CardTitle>{humanizeSlug(report.slug)} — campaign pairs</CardTitle>
+              <CardTitle>Validate an unregistered campaign</CardTitle>
               <CardDescription>
-                {report.summary.fail === 0
-                  ? 'All static checks passed.'
-                  : `${report.summary.fail} check(s) failing.`}{' '}
-                Generated {formatPacific(report.generated_at)}
+                Registered campaigns validate from their row above. For anything else, enter the
+                campaign's name code as it appears in Customer.io, e.g.{' '}
+                <code className="rounded bg-muted px-1 py-0.5">Welcome-General-260715</code>. This
+                confirms the test and live versions are wired identically before anything is sent.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Role</TableHead>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>State</TableHead>
-                    <TableHead>Trigger event</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {report.campaigns.map((c) => (
-                    <TableRow key={c.role}>
-                      <TableCell className="whitespace-nowrap">
-                        {pairLabel[c.role] ?? c.role}
-                      </TableCell>
-                      <TableCell>{c.id}</TableCell>
-                      <TableCell className="max-w-md truncate">{c.name}</TableCell>
-                      <TableCell>
-                        <Badge variant={c.state === 'running' ? 'default' : 'secondary'}>
-                          {c.state}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{c.event_name ?? '—'}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Checks</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-24">Status</TableHead>
-                    <TableHead>Check</TableHead>
-                    <TableHead>Detail</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {report.checks.map((check) => (
-                    <TableRow key={check.id}>
-                      <TableCell>
-                        <Badge variant={checkVariant[check.status]}>{check.status}</Badge>
-                      </TableCell>
-                      <TableCell className="font-medium whitespace-nowrap">{check.name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {check.detail}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <form onSubmit={onSubmit} className="flex items-end gap-3">
+                <div className="grid flex-1 gap-2">
+                  <Label htmlFor="slug">Campaign slug</Label>
+                  <Input
+                    id="slug"
+                    required
+                    placeholder="e.g. Welcome-General-260715"
+                    value={slug}
+                    onChange={(e) => setSlug(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" disabled={validation.isPending}>
+                  {validation.isPending ? 'Validating…' : 'Validate'}
+                </Button>
+              </form>
+              {formError && <p className="mt-2 text-sm text-destructive">{formError}</p>}
             </CardContent>
           </Card>
         </>
       )}
 
-      <RunHistory activeRunId={activeRunId} onSelect={setActiveRunId} />
-
-      {activeRunId && <RunDetail runId={activeRunId} onClose={() => setActiveRunId(null)} />}
+      {tab === 'results' && (
+        <>
+          <ActiveRunsBoard activeRunId={activeRunId} onSelect={setActiveRunId} />
+          <RunHistory activeRunId={activeRunId} onSelect={setActiveRunId} />
+          {activeRunId && <RunDetail runId={activeRunId} onClose={() => setActiveRunId(null)} />}
+        </>
+      )}
     </div>
   );
 }

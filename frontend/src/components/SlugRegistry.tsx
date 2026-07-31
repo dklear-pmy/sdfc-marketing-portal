@@ -10,6 +10,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { useUrlFilters } from '@/lib/urlState';
 import { humanizeSlug, relativeFrom } from '@/lib/format';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -110,22 +111,18 @@ function toBody(d: Draft) {
 }
 
 export default function SlugRegistry({
-  onValidate,
-  onRun,
-  runPending,
-  onVariables,
+  selected,
+  onSelect,
 }: {
-  onValidate: (slug: string) => void;
-  onRun: (slug: string) => void;
-  runPending?: boolean;
-  onVariables: (slug: string) => void;
+  selected: string | null;
+  onSelect: (slug: string) => void;
 }) {
   const { role } = useAuth();
   const canEdit = role === 'operator' || role === 'admin';
   const [{ rq }, setUrl] = useUrlFilters({ rq: '' });
-  /* Which entry the form is open for: null closed, '' adding, slug editing.
-     Transient UI — deliberately not in the URL. */
-  const [editing, setEditing] = useState<string | null>(null);
+  /* Whether the register form is open — transient UI, not in the URL.
+     Editing an existing entry lives in CampaignDetail, not here. */
+  const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
 
   const listQuery = useQuery({
@@ -144,12 +141,7 @@ export default function SlugRegistry({
     /* Seed the slug from the search box — searching for a campaign that isn't
        registered yet is the natural first step of registering it. */
     setDraft({ ...EMPTY_DRAFT, slug: rq.trim() });
-    setEditing('');
-  }
-
-  function openEdit(e: SlugEntry) {
-    setDraft(toDraft(e));
-    setEditing(e.slug);
+    setAdding(true);
   }
 
   return (
@@ -157,10 +149,10 @@ export default function SlugRegistry({
       <CardHeader>
         <CardTitle>Registered campaigns</CardTitle>
         <CardDescription>
-          Campaigns the tester knows how to validate and run — Run test fires the campaign's twin
-          end to end to a fresh test identity, Validate checks the wiring without sending anything.
-          To register one, enter its slug and check against Customer.io — the check fills in
-          everything discoverable from the workspace and tells you what's missing before you save.
+          Campaigns the tester knows how to validate and run. Click one to work with it — its
+          actions, variables and registration open below. To register one, enter its slug and check
+          against Customer.io — the check fills in everything discoverable from the workspace and
+          tells you what's missing before you save.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -171,7 +163,7 @@ export default function SlugRegistry({
             value={rq}
             onChange={(e) => setUrl({ rq: e.target.value })}
           />
-          {canEdit && editing === null && (
+          {canEdit && !adding && (
             <Button variant="outline" onClick={openAdd}>
               Register campaign
             </Button>
@@ -196,7 +188,7 @@ export default function SlugRegistry({
         {!listQuery.isPending && entries.length === 0 && (
           <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
             <span>{rq ? 'No registered campaign matches.' : 'No campaigns registered yet.'}</span>
-            {rq.trim() && canEdit && editing === null && (
+            {rq.trim() && canEdit && !adding && (
               <Button size="sm" variant="outline" onClick={openAdd}>
                 Register “{rq.trim()}”
               </Button>
@@ -213,12 +205,15 @@ export default function SlugRegistry({
                 <TableHead>Prod event</TableHead>
                 <TableHead>Runner</TableHead>
                 <TableHead>Updated</TableHead>
-                <TableHead className="w-40" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {entries.map((e) => (
-                <TableRow key={e.slug}>
+                <TableRow
+                  key={e.slug}
+                  onClick={() => onSelect(e.slug)}
+                  className={cn('cursor-pointer', e.slug === selected && 'bg-accent/50')}
+                >
                   <TableCell>
                     <span className="font-medium whitespace-nowrap">{humanizeSlug(e.slug)}</span>
                     <code className="block text-xs text-muted-foreground">{e.slug}</code>
@@ -233,43 +228,22 @@ export default function SlugRegistry({
                   <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
                     {e.updated_at ? relativeFrom(e.updated_at) : '—'}
                   </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end gap-2">
-                      {canEdit && e.runnable && (
-                        <Button size="sm" disabled={runPending} onClick={() => onRun(e.slug)}>
-                          Run test
-                        </Button>
-                      )}
-                      <Button size="sm" variant="outline" onClick={() => onValidate(e.slug)}>
-                        Validate
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => onVariables(e.slug)}>
-                        Variables
-                      </Button>
-                      {canEdit && (
-                        <Button size="sm" variant="ghost" onClick={() => openEdit(e)}>
-                          Edit
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
 
-        {editing !== null && (
+        {adding && (
           <SlugForm
-            key={editing || '__new__'}
-            existingSlug={editing || null}
+            existingSlug={null}
             draft={draft}
             setDraft={setDraft}
             defaultTemplate={listQuery.data?.default_payload_template ?? ''}
             tokens={listQuery.data?.payload_tokens ?? {}}
-            onClose={() => setEditing(null)}
+            onClose={() => setAdding(false)}
             onCommitted={() => {
-              setEditing(null);
+              setAdding(false);
               /* The search that seeded this registration would otherwise keep
                  filtering the list to just the new entry — which reads as the
                  registry having lost everything else. */
@@ -278,6 +252,111 @@ export default function SlugRegistry({
           />
         )}
       </CardContent>
+    </Card>
+  );
+}
+
+/* Everything specific to one selected campaign: its actions, registration
+   editor and notes. The variables panel renders as a sibling (Harness owns
+   the ordering). */
+export function CampaignDetail({
+  slug,
+  onRun,
+  runPending,
+  onValidate,
+  validatePending,
+  onGone,
+}: {
+  slug: string;
+  onRun: (slug: string) => void;
+  runPending?: boolean;
+  onValidate: (slug: string) => void;
+  validatePending?: boolean;
+  /* The entry vanished (deleted in the editor) — parent clears the selection. */
+  onGone: () => void;
+}) {
+  const { role } = useAuth();
+  const canEdit = role === 'operator' || role === 'admin';
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+
+  const listQuery = useQuery({
+    queryKey: ['slugs'],
+    queryFn: () => api.get<SlugListResponse>('/api/slugs'),
+  });
+  const entry = listQuery.data?.slugs.find((e) => e.slug === slug);
+
+  useEffect(() => {
+    if (listQuery.data && !entry) onGone();
+  }, [listQuery.data, entry, onGone]);
+
+  if (!entry) return null;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex flex-wrap items-center gap-2">
+              {humanizeSlug(slug)}
+              <Badge variant={entry.runnable ? 'default' : 'secondary'}>
+                {entry.runnable ? 'Runnable' : 'Not runnable'}
+              </Badge>
+            </CardTitle>
+            <CardDescription className="mt-1">
+              <code className="text-xs">{slug}</code> · test{' '}
+              <code className="text-xs">{entry.test_event_name ?? '—'}</code> · prod{' '}
+              <code className="text-xs">{entry.event_name ?? '—'}</code>
+              {entry.updated_at ? ` · updated ${relativeFrom(entry.updated_at)}` : ''}
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {canEdit && entry.runnable && (
+              <Button size="sm" disabled={runPending} onClick={() => onRun(slug)}>
+                Run test
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={validatePending}
+              onClick={() => onValidate(slug)}
+            >
+              {validatePending ? 'Validating…' : 'Validate wiring'}
+            </Button>
+            {canEdit && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  if (!editing) setDraft(toDraft(entry));
+                  setEditing(!editing);
+                }}
+              >
+                {editing ? 'Close editor' : 'Edit registration'}
+              </Button>
+            )}
+          </div>
+        </div>
+      </CardHeader>
+      {(editing || entry.notes) && (
+        <CardContent className="grid gap-4">
+          {!editing && entry.notes && (
+            <p className="text-sm text-muted-foreground">{entry.notes}</p>
+          )}
+          {editing && (
+            <SlugForm
+              existingSlug={slug}
+              draft={draft}
+              setDraft={setDraft}
+              defaultTemplate={listQuery.data?.default_payload_template ?? ''}
+              tokens={listQuery.data?.payload_tokens ?? {}}
+              onClose={() => setEditing(false)}
+              onCommitted={() => setEditing(false)}
+            />
+          )}
+        </CardContent>
+      )}
     </Card>
   );
 }

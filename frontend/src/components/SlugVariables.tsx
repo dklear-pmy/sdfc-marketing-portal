@@ -67,7 +67,8 @@ export default function SlugVariablesPanel({
   onClose,
 }: {
   slug: string;
-  onClose: () => void;
+  /* Omitted when the panel's visibility is tied to a selection elsewhere. */
+  onClose?: () => void;
 }) {
   const { role } = useAuth();
   const canEdit = role === 'operator' || role === 'admin';
@@ -113,9 +114,11 @@ export default function SlugVariablesPanel({
                 {refresh.isPending ? 'Refreshing…' : 'Refresh contract from Customer.io'}
               </Button>
             )}
-            <Button size="sm" variant="ghost" onClick={onClose}>
-              Close
-            </Button>
+            {onClose && (
+              <Button size="sm" variant="ghost" onClick={onClose}>
+                Close
+              </Button>
+            )}
           </div>
         </div>
       </CardHeader>
