@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Table,
   TableBody,
@@ -306,6 +307,8 @@ export function SlugForm({
 }) {
   const queryClient = useQueryClient();
   const [filled, setFilled] = useState(0);
+  const [confirmTemplate, setConfirmTemplate] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const set = (patch: Partial<Draft>) => setDraft((prev) => ({ ...prev, ...patch }));
 
   const precheck = useMutation({
@@ -466,12 +469,8 @@ export function SlugForm({
               size="xs"
               disabled={!defaultTemplate}
               onClick={() => {
-                if (
-                  !draft.payload_template.trim() ||
-                  window.confirm('Replace the current template with the signup default?')
-                ) {
-                  set({ payload_template: defaultTemplate });
-                }
+                if (!draft.payload_template.trim()) set({ payload_template: defaultTemplate });
+                else setConfirmTemplate(true);
               }}
             >
               Use signup default
@@ -529,20 +528,32 @@ export function SlugForm({
             variant="ghost"
             className="text-destructive"
             disabled={remove.isPending}
-            onClick={() => {
-              if (
-                window.confirm(
-                  `Remove ${existingSlug} from the registry? The Customer.io campaigns are not touched.`
-                )
-              ) {
-                remove.mutate(existingSlug);
-              }
-            }}
+            onClick={() => setConfirmRemove(true)}
           >
             Remove
           </Button>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmTemplate}
+        onOpenChange={setConfirmTemplate}
+        title="Replace the payload template?"
+        description="The current template is overwritten with the signup default. Nothing is saved until you save the entry."
+        confirmLabel="Replace"
+        onConfirm={() => set({ payload_template: defaultTemplate })}
+      />
+      {existingSlug && (
+        <ConfirmDialog
+          open={confirmRemove}
+          onOpenChange={setConfirmRemove}
+          title={`Remove ${humanizeSlug(existingSlug)} from the registry?`}
+          description="The Customer.io campaigns are not touched — only the tester forgets this campaign."
+          confirmLabel="Remove"
+          destructive
+          onConfirm={() => remove.mutate(existingSlug)}
+        />
+      )}
 
       {(save.isError || remove.isError) && (
         <Alert variant="destructive">

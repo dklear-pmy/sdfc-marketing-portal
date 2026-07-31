@@ -12,6 +12,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { formatPacific, relativeFrom, shortIdentity } from '@/lib/format';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -334,6 +335,7 @@ function QuietThreshold({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit:
    are fixtures like the canary, not per-campaign config. */
 function GuardsCard({ guards, canEdit }: { guards: Tripwire[]; canEdit: boolean }) {
   const queryClient = useQueryClient();
+  const [confirmRepair, setConfirmRepair] = useState<string | null>(null);
   const repair = useMutation({
     mutationFn: (email: string) =>
       api.post(`/api/tripwires/${encodeURIComponent(email)}/unsubscribe`),
@@ -388,15 +390,7 @@ function GuardsCard({ guards, canEdit }: { guards: Tripwire[]; canEdit: boolean 
                     variant="outline"
                     size="sm"
                     disabled={repair.isPending}
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `Re-unsubscribe ${g.email} via its own email link? Do this after fixing whatever re-subscribed it.`
-                        )
-                      ) {
-                        repair.mutate(g.email);
-                      }
-                    }}
+                    onClick={() => setConfirmRepair(g.email)}
                   >
                     {repair.isPending ? 'Unsubscribing…' : 'Re-unsubscribe now'}
                   </Button>
@@ -410,6 +404,18 @@ function GuardsCard({ guards, canEdit }: { guards: Tripwire[]; canEdit: boolean 
             {(repair.error as Error).message}
           </p>
         )}
+        <ConfirmDialog
+          open={!!confirmRepair}
+          onOpenChange={(o) => {
+            if (!o) setConfirmRepair(null);
+          }}
+          title={`Re-unsubscribe ${confirmRepair ?? ''}?`}
+          description="Fires the one-click unsubscribe link from the guard's own email — the genuine fan path. Do this after fixing whatever re-subscribed it."
+          confirmLabel="Re-unsubscribe"
+          onConfirm={() => {
+            if (confirmRepair) repair.mutate(confirmRepair);
+          }}
+        />
       </CardContent>
     </Card>
   );
@@ -418,6 +424,7 @@ function GuardsCard({ guards, canEdit }: { guards: Tripwire[]; canEdit: boolean 
 function TripwireCard({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit: boolean }) {
   const queryClient = useQueryClient();
   const [showChecks, setShowChecks] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const lastChecked = t.checks[0]?.checked_at;
   const remove = useMutation({
     mutationFn: () => api.del(`/api/tripwires/${encodeURIComponent(t.email)}`),
@@ -487,19 +494,20 @@ function TripwireCard({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit: b
               variant="destructive"
               size="sm"
               disabled={remove.isPending}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `Soft-delete ${t.email}? Checks stop and the card is hidden. Its Customer.io profile and check history stay, and you can restore it later.`
-                  )
-                ) {
-                  remove.mutate();
-                }
-              }}
+              onClick={() => setConfirmDelete(true)}
             >
               {remove.isPending ? 'Deleting…' : 'Delete'}
             </Button>
           )}
+          <ConfirmDialog
+            open={confirmDelete}
+            onOpenChange={setConfirmDelete}
+            title={`Soft-delete ${t.email}?`}
+            description="Checks stop and the card is hidden. Its Customer.io profile and check history stay, and you can restore it later."
+            confirmLabel="Delete"
+            destructive
+            onConfirm={() => remove.mutate()}
+          />
         </div>
       </CardContent>
     </Card>

@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import SlugRegistry from '@/components/SlugRegistry';
 import CampaignDrilldown, {
   CAMPAIGN_TAB_KEYS,
@@ -48,18 +49,8 @@ export default function Harness() {
     },
   });
 
-  function onRun(s: string) {
-    if (
-      window.confirm(
-        `Start an end-to-end test of ${humanizeSlug(s)}? It mints a fresh test identity, sends ` +
-          "the twin campaign's real emails to the test inbox, and follows delivery, opens and " +
-          'clicks — no real fans involved. First results land in about 15 minutes; several runs ' +
-          'can be in flight at once.'
-      )
-    ) {
-      startRun.mutate(s);
-    }
-  }
+  /* The slug awaiting run confirmation — the dialog is open while set. */
+  const [confirmRun, setConfirmRun] = useState<string | null>(null);
 
   return (
     <div className="grid gap-6">
@@ -78,6 +69,19 @@ export default function Harness() {
         </Alert>
       )}
 
+      <ConfirmDialog
+        open={!!confirmRun}
+        onOpenChange={(o) => {
+          if (!o) setConfirmRun(null);
+        }}
+        title={`Start an end-to-end test of ${confirmRun ? humanizeSlug(confirmRun) : ''}?`}
+        description="It mints a fresh test identity, sends the twin campaign's real emails to the test inbox, and follows delivery, opens and clicks — no real fans involved. First results land in about 15 minutes; several runs can be in flight at once."
+        confirmLabel="Start test"
+        onConfirm={() => {
+          if (confirmRun) startRun.mutate(confirmRun);
+        }}
+      />
+
       {sel ? (
         <CampaignDrilldown
           key={sel}
@@ -87,7 +91,7 @@ export default function Harness() {
           activeRunId={url.run || null}
           onSelectRun={(id) => setUrl({ run: id ?? '' })}
           onBack={() => setUrl({ sel: '', ctab: '', run: '' })}
-          onRun={onRun}
+          onRun={setConfirmRun}
           runPending={startRun.isPending}
         />
       ) : (
