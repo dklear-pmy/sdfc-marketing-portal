@@ -9,6 +9,7 @@ import {
   type LedgerStatusesPage,
 } from '@/lib/api';
 import { formatPacific, humanizeAttr, relativeFrom } from '@/lib/format';
+import { ledgerEventDetail } from '@/lib/ledgerDetail';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -100,45 +101,7 @@ function Pager({
   );
 }
 
-/* Activities whose from_value/to_value are a flip of one named CIO attribute.
-   The polarity is the INVERSE of the activity name — "Resubscribed email"
-   means `unsubscribed` went true → false — so naming the attribute in the
-   detail is what makes the row readable. */
-const FLAG_ATTRIBUTE: Record<string, string> = {
-  unsubscribed_email: 'Unsubscribed',
-  resubscribed_email: 'Unsubscribed',
-};
-
-const present = (v: unknown) => v !== null && v !== '' && v !== undefined;
-
-function flagValue(v: unknown): string {
-  const s = String(v).toLowerCase();
-  if (s === 'true') return 'True';
-  if (s === 'false') return 'False';
-  return String(v);
-}
-
-function eventDetail(e: LedgerEventRow): string {
-  if (!e.feature_json) return '';
-  try {
-    const obj = JSON.parse(e.feature_json) as Record<string, unknown>;
-    const attr = FLAG_ATTRIBUTE[e.activity];
-    if (attr && present(obj.to_value)) {
-      const to = `${attr}=${flagValue(obj.to_value)}`;
-      // A missing `from` means the attribute was set for the first time rather
-      // than flipped, so there is no prior state to show.
-      return present(obj.from_value) ? `${attr}=${flagValue(obj.from_value)} → ${to}` : to;
-    }
-    // cio_id identifies the profile, which the Fan column already names.
-    return Object.entries(obj)
-      .filter(([k, v]) => k !== 'cio_id' && present(v))
-      .slice(0, 3)
-      .map(([k, v]) => `${k}: ${String(v)}`)
-      .join(' · ');
-  } catch {
-    return e.feature_json;
-  }
-}
+const eventDetail = (e: LedgerEventRow) => ledgerEventDetail(e.activity, e.feature_json);
 
 const TABS = ['events', 'statuses'] as const;
 

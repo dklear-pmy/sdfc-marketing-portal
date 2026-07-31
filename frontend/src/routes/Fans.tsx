@@ -24,6 +24,7 @@ import {
   type MessagesPage,
 } from '@/lib/api';
 import { formatUnix, formatPacific, humanizeAttr, relativeFrom } from '@/lib/format';
+import { ledgerEventDetail as eventDetailLine } from '@/lib/ledgerDetail';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -487,9 +488,14 @@ const attrStatusMeta: Record<
   empty: { label: 'Empty', variant: 'outline' },
 };
 
+/* CIO-only attributes are deliberately NOT "needs attention": they're names
+   the sync never sends (legacy imports, campaign-written values) — unmanaged,
+   not broken. They get their own tab so orphans stay auditable without
+   alarming anyone (Kevin's primary_ticketing_account question, Jul 31). */
 const ATTR_TABS = [
-  { key: 'attention', label: 'Needs attention', statuses: ['differs', 'pending', 'cio_only'] },
+  { key: 'attention', label: 'Needs attention', statuses: ['differs', 'pending'] },
   { key: 'match', label: 'Match', statuses: ['match'] },
+  { key: 'cio_only', label: 'CIO only', statuses: ['cio_only'] },
   { key: 'all', label: 'All', statuses: ['match', 'differs', 'pending', 'cio_only', 'empty'] },
 ] as const;
 
@@ -502,9 +508,7 @@ function attrValue(v: unknown): string {
 const attrCol = createColumnHelper<AttrComparison>();
 
 function AttributesCard({ comparison }: { comparison: AttrComparison[] }) {
-  const hasAttention = comparison.some((c) =>
-    ['differs', 'pending', 'cio_only'].includes(c.status)
-  );
+  const hasAttention = comparison.some((c) => ['differs', 'pending'].includes(c.status));
   /* Empty means "pick for me" — a profile with nothing to review opens on All.
      An explicit ?atab= from a shared link always wins over that default. */
   const [{ atab }, setUrl] = useUrlFilters({ atab: '' });
@@ -601,8 +605,9 @@ function AttributesCard({ comparison }: { comparison: AttrComparison[] }) {
     const by: Record<string, number> = {};
     for (const c of comparison) by[c.status] = (by[c.status] ?? 0) + 1;
     return {
-      attention: (by.differs ?? 0) + (by.pending ?? 0) + (by.cio_only ?? 0),
+      attention: (by.differs ?? 0) + (by.pending ?? 0),
       match: by.match ?? 0,
+      cio_only: by.cio_only ?? 0,
       all: comparison.length,
     } as Record<string, number>;
   }, [comparison]);
@@ -634,6 +639,13 @@ function AttributesCard({ comparison }: { comparison: AttrComparison[] }) {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        {tab === 'cio_only' && (
+          <p className="text-sm text-muted-foreground">
+            Attributes on the Customer.io profile that the warehouse sync doesn't send — legacy
+            imports or campaign-written values. They never update, which is only a problem if a
+            journey still references one.
+          </p>
+        )}
         <div className="overflow-x-auto rounded-md border">
           <Table>
             <TableHeader>
@@ -734,9 +746,34 @@ const activityDot: Record<string, string> = {
   attribute_update: 'bg-amber-500',
 };
 
+/* The sync's own watermark rides along as a person attribute (the connector
+   must select updated_at_unix to drive incremental pulls), so a source
+   re-ingest that changes nothing human-visible still logs an attribute_change
+   whose entire diff is the watermark. Those are sync heartbeats, not fan
+   history — hidden from the timeline. */
+const SYNC_PLUMBING_ATTRS = new Set(['updated_at_unix']);
+
+function attributeDiffs(a: CioActivity): Array<{ attr: string; from: string; to: string }> {
+  if (a.type !== 'attribute_change') return [];
+  return Object.entries(a.data ?? {})
+    .filter(([k]) => !SYNC_PLUMBING_ATTRS.has(k) && !k.startsWith('_'))
+    .map(([k, v]) => {
+      const d = (v ?? {}) as Record<string, unknown>;
+      return { attr: k, from: String(d.from ?? ''), to: String(d.to ?? '') };
+    });
+}
+
+const isSyncHeartbeat = (a: CioActivity) =>
+  a.type === 'attribute_change' && attributeDiffs(a).length === 0;
+
 function activityDetail(a: CioActivity): string {
   if (a.name) return String(a.name);
   const d = a.data ?? {};
+  if (a.type === 'attribute_change') {
+    const diffs = attributeDiffs(a);
+    const shown = diffs.slice(0, 2).map((x) => `${x.attr}: ${x.from || '—'} → ${x.to || '—'}`);
+    return shown.join(' · ') + (diffs.length > 2 ? ` · +${diffs.length - 2} more` : '');
+  }
   if (a.type === 'attribute_update')
     return Object.keys(d)
       .filter((k) => !k.startsWith('_'))
@@ -804,7 +841,9 @@ function ActivityCard({ cioId }: { cioId: string }) {
   });
 
   const q = aq.trim().toLowerCase();
-  const allActivities = activities.data?.pages.flatMap((p) => p.activities) ?? [];
+  const allActivities = (activities.data?.pages.flatMap((p) => p.activities) ?? []).filter(
+    (a) => !isSyncHeartbeat(a)
+  );
   const allMessages = messages.data?.pages.flatMap((p) => p.messages) ?? [];
   const activityRows = q
     ? allActivities.filter((a) =>
@@ -1137,19 +1176,7 @@ function ledgerStatusVariant(s: LedgerStatus): 'default' | 'destructive' | 'seco
   return 'secondary';
 }
 
-function ledgerEventDetail(e: LedgerEvent): string {
-  if (!e.feature_json) return '';
-  try {
-    const obj = JSON.parse(e.feature_json) as Record<string, unknown>;
-    return Object.entries(obj)
-      .filter(([, v]) => v !== null && v !== '' && v !== undefined)
-      .slice(0, 3)
-      .map(([k, v]) => `${k}: ${String(v)}`)
-      .join(' · ');
-  } catch {
-    return e.feature_json;
-  }
-}
+const ledgerEventDetail = (e: LedgerEvent) => eventDetailLine(e.activity, e.feature_json);
 
 function LedgerCard({ email }: { email: string }) {
   /* ?lq=… holds the SUBMITTED ledger search so a filtered view is shareable;
