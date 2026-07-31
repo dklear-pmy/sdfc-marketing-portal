@@ -54,13 +54,17 @@ export default function Harness() {
 
   return (
     <div className="grid gap-6">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">Campaign Tester</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Prove a campaign works before any fan sees it — check its setup, then send a real
-          end-to-end test to a safe test inbox.
-        </p>
-      </div>
+      {/* The page heading only frames the list — inside a drilldown the
+          campaign name IS the heading. */}
+      {!sel && (
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Campaign Tester</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Prove a campaign works before any fan sees it — check its setup, then send a real
+            end-to-end test to a safe test inbox.
+          </p>
+        </div>
+      )}
 
       {startRun.isError && (
         <Alert variant="destructive">

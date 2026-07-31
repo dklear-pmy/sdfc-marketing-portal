@@ -150,6 +150,8 @@ export interface SlugVariablesLiquidRow {
   scope: 'trigger' | 'event' | 'customer';
   field: string;
   emails: string[];
+  /* Where the reference appears, with ±10 words of surrounding email text. */
+  contexts: { email: string; context: string }[];
 }
 
 export interface SlugVariables {

@@ -137,10 +137,17 @@ export default function CampaignDrilldown({
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <CardTitle className="flex flex-wrap items-center gap-2 text-lg">
-                {humanizeSlug(slug)}
+              {/* Display typography stays on the name span only — pills must
+                  not inherit the large size or tight tracking. */}
+              <CardTitle className="flex flex-wrap items-center gap-3">
+                <span className="text-4xl font-medium tracking-tight">{humanizeSlug(slug)}</span>
+                {/* Badge runs 25% over its default (h-5/text-xs) to hold its
+                    own next to the display-size name. */}
                 {entry && (
-                  <Badge variant={entry.runnable ? 'default' : 'secondary'}>
+                  <Badge
+                    variant={entry.runnable ? 'default' : 'secondary'}
+                    className="h-[25px] px-2.5 text-[15px] tracking-normal"
+                  >
                     {entry.runnable ? 'Runnable' : 'Not runnable'}
                   </Badge>
                 )}

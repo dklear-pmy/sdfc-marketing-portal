@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { HoverTip } from '@/components/ui/hover-tip';
 import {
   Table,
   TableBody,
@@ -23,7 +24,9 @@ interface FieldRow {
   seTest: boolean | null; // null = that trigger half wasn't readable
   seProd: boolean | null;
   personAttr: boolean;
-  usage: string[]; // "{{customer.first_name}} — 'Welcome!'"
+  /* One entry per distinct {{scope.field}} variable; tooltip holds where it
+     appears with surrounding email text. */
+  usage: { variable: string; tooltip: string }[];
 }
 
 function buildRows(v: SlugVariables): FieldRow[] {
@@ -43,17 +46,30 @@ function buildRows(v: SlugVariables): FieldRow[] {
   ];
   /* Template order first (it's what the runner sends), extras after. */
   const ordered = [...new Set([...v.template.keys, ...all.sort()])];
-  return ordered.map((field) => ({
-    field,
-    inTemplate: v.template.keys.includes(field),
-    inContract: v.registry.payload_fields.includes(field),
-    seTest: test ? (test.send_event_fields?.includes(field) ?? false) : null,
-    seProd: prod ? (prod.send_event_fields?.includes(field) ?? false) : null,
-    personAttr: personAttrs.has(field),
-    usage: v.liquid
-      .filter((l) => l.field === field)
-      .map((l) => `{{${l.scope}.${field}}} — ${l.emails.map((e) => `'${e}'`).join(', ')}`),
-  }));
+  return ordered.map((field) => {
+    /* One chip per distinct variable; test/prod pairs referencing the same
+       variable merge, their contexts pooled into the tooltip. */
+    const byVariable = new Map<string, Set<string>>();
+    for (const l of v.liquid.filter((l) => l.field === field)) {
+      const variable = `{{${l.scope}.${field}}}`;
+      const lines = byVariable.get(variable) ?? new Set<string>();
+      for (const c of l.contexts ?? []) lines.add(`${c.email} (${l.pair}):\n“${c.context}”`);
+      if (!(l.contexts ?? []).length) for (const e of l.emails) lines.add(`${e} (${l.pair})`);
+      byVariable.set(variable, lines);
+    }
+    return {
+      field,
+      inTemplate: v.template.keys.includes(field),
+      inContract: v.registry.payload_fields.includes(field),
+      seTest: test ? (test.send_event_fields?.includes(field) ?? false) : null,
+      seProd: prod ? (prod.send_event_fields?.includes(field) ?? false) : null,
+      personAttr: personAttrs.has(field),
+      usage: [...byVariable.entries()].map(([variable, lines]) => ({
+        variable,
+        tooltip: [...lines].join('\n\n'),
+      })),
+    };
+  });
 }
 
 function Mark({ value, warn }: { value: boolean | null; warn?: boolean }) {
@@ -171,10 +187,18 @@ export default function SlugVariablesPanel({
                     <TableHead>Field</TableHead>
                     <TableHead title="What the runner POSTs (payload template)">Runner</TableHead>
                     <TableHead title="Registry payload contract">Contract</TableHead>
-                    <TableHead title="Mapped on the test twin's Send Event">SE test</TableHead>
-                    <TableHead title="Mapped on the prod trigger's Send Event">SE prod</TableHead>
+                    <TableHead title="Mapped on the test twin's Send Event action — what the test journey's event carries">
+                      <span className="block leading-tight">Send Event</span>
+                      <span className="block leading-tight">(test)</span>
+                    </TableHead>
+                    <TableHead title="Mapped on the prod trigger's Send Event action — what the live journey's event carries">
+                      <span className="block leading-tight">Send Event</span>
+                      <span className="block leading-tight">(prod)</span>
+                    </TableHead>
                     <TableHead title="Set as a person attribute">Person</TableHead>
-                    <TableHead>Used in emails</TableHead>
+                    <TableHead title="Hover a variable for the surrounding email text">
+                      Used in emails
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -201,7 +225,15 @@ export default function SlugVariablesPanel({
                         <Mark value={r.personAttr} />
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {r.usage.length ? r.usage.join('; ') : '—'}
+                        {r.usage.length
+                          ? r.usage.map((u) => (
+                              <HoverTip key={u.variable} content={u.tooltip}>
+                                <code className="mr-1.5 underline decoration-dotted underline-offset-2">
+                                  {u.variable}
+                                </code>
+                              </HoverTip>
+                            ))
+                          : '—'}
                       </TableCell>
                     </TableRow>
                   ))}

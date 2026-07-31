@@ -16,7 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import mailpit  # noqa: E402
 from app import runner as R  # noqa: E402
-from app.validator import _liquid_gaps, _liquid_ref_sites, _liquid_refs  # noqa: E402
+from app.validator import (  # noqa: E402
+    _liquid_gaps,
+    _liquid_ref_sites,
+    _liquid_ref_snippets,
+    _liquid_refs,
+)
 
 
 def test_static_refs() -> list:
@@ -132,8 +137,41 @@ def test_delay_profile() -> list:
     return failures
 
 
+def test_snippets() -> list[str]:
+    """Usage snippets: the variable with ±10 words of surrounding email text."""
+    failures = []
+    long_body = (
+        "<p>one two three four five six seven eight nine ten eleven twelve "
+        "{{customer.first_name}} a b c d e f g h i j k l m</p>"
+    )
+    snip = _liquid_ref_snippets([{"type": "email", "subject": "", "body": long_body, "body_plain": ""}])
+    ctx = snip["customer"]["first_name"][0]["context"]
+    if not ctx.startswith("… three four"):
+        failures.append(f"10-word window with leading ellipsis: {ctx}")
+    if "{{customer.first_name}}" not in ctx:
+        failures.append(f"the variable itself must appear: {ctx}")
+    if not ctx.endswith("j …"):
+        failures.append(f"10 words after with trailing ellipsis: {ctx}")
+    if "<p>" in ctx:
+        failures.append("HTML must be stripped when body_plain is empty")
+
+    # Short surroundings: no ellipses; subject used as the email label.
+    snip = _liquid_ref_snippets(
+        [{"type": "email", "subject": "Hi {{trigger.name}}!", "body_plain": "welcome aboard"}]
+    )
+    row = snip["trigger"]["name"][0]
+    if row["email"] != "Hi {{trigger.name}}!":
+        failures.append(f"subject label: {row}")
+    if "…" in row["context"]:
+        failures.append(f"short text must carry no ellipses: {row}")
+
+    for f in failures:
+        print(f"FAIL  {f}")
+    return failures
+
+
 def main() -> int:
-    failures = test_static_refs() + test_runtime_content() + test_delay_profile()
+    failures = test_static_refs() + test_runtime_content() + test_delay_profile() + test_snippets()
     print("FAILED" if failures else "static and runtime variable checks behave correctly")
     return 1 if failures else 0
 

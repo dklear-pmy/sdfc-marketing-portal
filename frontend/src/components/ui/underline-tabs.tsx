@@ -18,7 +18,15 @@ export function UnderlineTabs<T extends string>({
   className?: string;
 }) {
   return (
-    <nav className={cn('flex justify-start overflow-x-auto border-b border-border', className)}>
+    <nav
+      className={cn(
+        /* Scrollable on narrow screens but never SHOWS a scrollbar — a visible
+           bar under the tab row reads as broken layout. */
+        'flex justify-start overflow-x-auto border-b border-border',
+        '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+        className
+      )}
+    >
       {tabs.map((t) => (
         <button
           key={t.key}

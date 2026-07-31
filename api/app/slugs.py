@@ -433,7 +433,12 @@ def _variables_from(spec: dict, clean: dict[str, dict], actions: dict[str, list[
     """Pure core of the variables panel: what the runner sends, what the
     registry declares, what Customer.io actually maps, and which emails use
     which variables — side by side, so drift is visible at a glance."""
-    from .validator import _event_mapping_fields, _liquid_ref_sites, _person_attribute_fields
+    from .validator import (
+        _event_mapping_fields,
+        _liquid_ref_sites,
+        _liquid_ref_snippets,
+        _person_attribute_fields,
+    )
 
     template = payloads.effective_template(spec)
     cio_rows = []
@@ -457,9 +462,18 @@ def _variables_from(spec: dict, clean: dict[str, dict], actions: dict[str, list[
         if jrole not in actions:
             continue
         sites = _liquid_ref_sites(actions[jrole])
+        snippets = _liquid_ref_snippets(actions[jrole])
         for scope in ("trigger", "event", "customer"):
             for field, subjects in sorted(sites[scope].items()):
-                liquid.append({"pair": pair, "scope": scope, "field": field, "emails": sorted(subjects)})
+                liquid.append(
+                    {
+                        "pair": pair,
+                        "scope": scope,
+                        "field": field,
+                        "emails": sorted(subjects),
+                        "contexts": snippets[scope].get(field, []),
+                    }
+                )
     return {
         "slug": spec.get("slug"),
         "generated_at": datetime.now(timezone.utc).isoformat(),

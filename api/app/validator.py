@@ -102,6 +102,42 @@ def _liquid_refs(actions: list[dict]) -> dict[str, set[str]]:
     return {scope: set(fields) for scope, fields in _liquid_ref_sites(actions).items()}
 
 
+_TAG = re.compile(r"<[^>]+>")
+_WS = re.compile(r"\s+")
+
+
+def _liquid_ref_snippets(actions: list[dict]) -> dict[str, dict[str, list[dict]]]:
+    """scope → field → [{email, context}] where context is the reference with
+    up to ten words of surrounding email text on each side — enough to see how
+    a variable is actually used without opening the template."""
+    out: dict[str, dict[str, list[dict]]] = {"trigger": {}, "customer": {}, "event": {}}
+    for a in actions:
+        if a.get("type") != "email":
+            continue
+        label = a.get("subject") or a.get("name") or f"action {a.get('id')}"
+        raw = a.get("body_plain") or _TAG.sub(" ", a.get("body") or "")
+        text = _WS.sub(" ", f"{a.get('subject') or ''} {raw}").strip()
+        seen: set[tuple[str, str]] = set()
+        for m in _LIQUID_REF.finditer(text):
+            scope, field = m.group(1), m.group(2).split(".")[0]
+            if (scope, field) in seen:
+                continue
+            seen.add((scope, field))
+            close = text.find("}}", m.end())
+            end = close + 2 if close != -1 else m.end()
+            before = text[: m.start()].split()
+            after = text[end:].split()
+            context = " ".join(
+                (["…"] if len(before) > 10 else [])
+                + before[-10:]
+                + [text[m.start() : end]]
+                + after[:10]
+                + (["…"] if len(after) > 10 else [])
+            )
+            out[scope].setdefault(field, []).append({"email": label, "context": context})
+    return out
+
+
 def _liquid_gaps(
     refs: dict[str, set[str]], event_fields: set[str], person_fields: set[str]
 ) -> dict[str, set[str]]:
