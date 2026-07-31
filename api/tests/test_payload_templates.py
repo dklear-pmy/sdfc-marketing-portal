@@ -130,4 +130,55 @@ assert "account_id" not in " | ".join(x["message"] for x in f if x["level"] == "
 f = analyze(ROLES, SPEC, {"sec": True}, slug="Game", trigger_actions=None)
 assert "resolves people" not in " | ".join(x["message"] for x in f), f
 
+# --- event payload propagation (runner assert: full payload on the journey event) ---
+from app.runner import _event_payload_problems, _run_event, _sent_payload  # noqa: E402
+
+SENT = fill(DEFAULT_TEMPLATE, IDENTITY)
+
+# intact echo → no problems, full count in the summary
+probs, summary = _event_payload_problems(SENT, dict(SENT))
+assert probs == [] and summary.startswith("15/15"), (probs, summary)
+
+# a field the Send Event never mapped → deterministic problem naming the field
+short = {k: v for k, v in SENT.items() if k != "signup_form_family"}
+probs, _ = _event_payload_problems(SENT, short)
+assert len(probs) == 1 and "signup_form_family" in probs[0] and "not mapped" in probs[0], probs
+
+# a value that arrived altered (e.g. forwarded empty) → problem with both values
+probs, _ = _event_payload_problems(SENT, dict(SENT) | {"first_name": ""})
+assert len(probs) == 1 and "first_name" in probs[0] and "altered" in probs[0], probs
+
+# tolerant compare: stringified numbers/booleans are not drift
+probs, _ = _event_payload_problems(
+    SENT, dict(SENT) | {"activity_id": "990000012", "is_world_cup": "false"}
+)
+assert probs == [], probs
+
+# volatile fields (re-minted {now}) are presence-only
+probs, _ = _event_payload_problems(
+    SENT, dict(SENT) | {"activity_at": "1999-01-01T00:00:00Z"}, {"activity_at"}
+)
+assert probs == [], probs
+
+# extra mapped-but-never-sent fields (the STM-junk class) → summary note, not a failure
+probs, summary = _event_payload_problems(SENT, dict(SENT) | {"opportunity_id": ""})
+assert probs == [] and "opportunity_id" in summary and "never sent" in summary, summary
+
+# _sent_payload prefers the exact payload stored at fire time...
+stored = {"email": IDENTITY, "activity_at": "2026-07-31T10:16:10Z"}
+run = {"identity": IDENTITY, "timeline": [{"stage": "fired", "payload": stored}]}
+sent, volatile = _sent_payload(run, {})
+assert sent == stored and volatile == set(), (sent, volatile)
+
+# ...and for pre-feature runs re-fills the template, marking {now} fields volatile
+sent, volatile = _sent_payload({"identity": IDENTITY, "timeline": []}, {})
+assert sent["email"] == IDENTITY and volatile == {"fan_created_at", "activity_at"}, volatile
+
+# _run_event: picks this run's event by name, ignores non-events, tolerates None
+ACTS = [{"type": "attribute_update"}, {"type": "event", "name": "other"},
+        {"type": "event", "name": "pmy_test_game", "data": {"a": 1}}]
+assert _run_event(ACTS, "pmy_test_game")["data"] == {"a": 1}
+assert _run_event(ACTS, "missing") is None
+assert _run_event(ACTS, None)["name"] == "other", "no expected name → first event"
+
 print("test_payload_templates: all assertions passed")

@@ -41,11 +41,15 @@ def _elapsed_min(run: dict) -> float:
     return (_now() - started).total_seconds() / 60
 
 
-def _tl(run: dict, stage: str, detail: str, msg_id: str | None = None) -> list[dict]:
+def _tl(
+    run: dict, stage: str, detail: str, msg_id: str | None = None, payload: dict | None = None
+) -> list[dict]:
     timeline = run["timeline"]
     entry: dict = {"ts": _now().isoformat(), "stage": stage, "detail": detail}
     if msg_id:
         entry["msg_id"] = msg_id
+    if payload is not None:
+        entry["payload"] = payload
     timeline.append(entry)
     return timeline
 
@@ -174,6 +178,66 @@ def _content_problems(texts: dict[str, str], refs: set[str] | None, payload: dic
     return problems
 
 
+# Payload-propagation verification: the Variables matrix proves the Send
+# Event MAPPING exists; this proves the values actually ARRIVED. The event on
+# the probe profile's activity stream is exactly what the journey received, so
+# diffing its data against the POSTed payload is end-to-end proof the second
+# automation got the full payload.
+def _sent_payload(run: dict, spec: dict) -> tuple[dict, set[str]]:
+    """What the run actually POSTed (stored on the 'fired' timeline entry).
+    Runs fired before that existed fall back to re-filling the template, where
+    {now}-bearing fields re-mint and can only be checked for presence."""
+    for e in run["timeline"]:
+        if e.get("stage") == "fired" and isinstance(e.get("payload"), dict):
+            return e["payload"], set()
+    template = payloads.effective_template(spec)
+    volatile = {k for k, v in template.items() if isinstance(v, str) and "{now}" in v}
+    return payloads.fill(template, run["identity"]), volatile
+
+
+def _event_payload_problems(
+    sent: dict, event_data: dict, skip_values: set[str] = frozenset()
+) -> tuple[list[str], str]:
+    """Field-by-field diff of the POSTed payload vs the journey event's data.
+    Returns (problems, human summary); problems are deterministic — a Send
+    Event mapping gap won't heal on a later tick."""
+
+    def _same(a, b) -> bool:
+        return a == b or str(a).lower() == str(b).lower()
+
+    problems, intact = [], 0
+    for field, value in sent.items():
+        if field not in event_data:
+            problems.append(
+                f"payload field '{field}' is missing from the journey event — not mapped "
+                "on the trigger's Send Event action"
+            )
+        elif field in skip_values or _same(value, event_data[field]):
+            intact += 1
+        else:
+            problems.append(
+                f"payload field '{field}' arrived altered: sent {value!r}, "
+                f"event carries {event_data[field]!r}"
+            )
+    summary = f"{intact}/{len(sent)} payload fields verified intact on the journey event"
+    extras = sorted(set(event_data) - set(sent))
+    if extras:
+        summary += (
+            f"; event carries {len(extras)} mapped field(s) the runner never sent "
+            f"(forwarded empty): {', '.join(extras)}"
+        )
+    return problems, summary
+
+
+def _run_event(acts: list[dict], expected_event: str | None) -> dict | None:
+    """This run's trigger event on the probe profile (identities are minted
+    fresh per run, so at most one matching event exists)."""
+    for a in acts:
+        if a.get("type") == "event" and (not expected_event or a.get("name") == expected_event):
+            return a
+    return None
+
+
 def _render_problems(cio: CioClient, spec: dict, slug: str, identity: str, messages: list[dict]) -> list[str]:
     texts = {}
     for m in messages:
@@ -202,7 +266,8 @@ def start_run(slug: str, actor: str | None) -> dict:
     run = bqstate.get_run(run_id)
 
     url = _webhook_url(spec)
-    resp = requests.post(url, json=_payload(spec, run["identity"], run_id), timeout=20)
+    payload = _payload(spec, run["identity"], run_id)
+    resp = requests.post(url, json=payload, timeout=20)
     if resp.status_code not in (200, 202):
         bqstate.update_run(
             run_id,
@@ -213,11 +278,18 @@ def start_run(slug: str, actor: str | None) -> dict:
         )
         return bqstate.get_run(run_id)
 
+    # The payload rides on the fired entry so the assert tick can diff the
+    # journey event against EXACTLY what was sent ({now} fields included).
     bqstate.update_run(
         run_id,
         status="RUNNING",
         stage="fired",
-        timeline=_tl(run, "fired", f"webhook HTTP {resp.status_code} for {run['identity']}"),
+        timeline=_tl(
+            run,
+            "fired",
+            f"webhook HTTP {resp.status_code} for {run['identity']}",
+            payload=payload,
+        ),
     )
     return bqstate.get_run(run_id)
 
@@ -237,7 +309,18 @@ def _diagnose_missing_email(cio: CioClient, spec: dict, identity: str) -> str:
             f"Trigger half emitted {events} but the test journey listens on '{expected}' — event-name "
             "mismatch (the copy-paste bug class); the slug's precheck in Campaign Tester offers a one-click fix"
         )
-    # Event was correct — distinguish "journey never sent" from "sent but lost in transport".
+    # Event was correct — payload gaps explain most entry-filter no-sends
+    # (a filter field that forwarded empty silently fails the condition).
+    event_act = _run_event(acts, expected)
+    if event_act is not None and isinstance(event_act.get("data"), dict):
+        template = payloads.effective_template(spec)
+        volatile = {k for k, v in template.items() if isinstance(v, str) and "{now}" in v}
+        gaps, _ = _event_payload_problems(
+            payloads.fill(template, identity), event_act["data"], volatile
+        )
+        if gaps:
+            return "No email sent, and the journey event is missing payload — " + "; ".join(gaps)
+    # Distinguish "journey never sent" from "sent but lost in transport".
     ledger = cio.messages_for_recipient(identity)
     if ledger:
         undelivered = [
@@ -346,7 +429,32 @@ def advance_run(run_id: str) -> dict:
         except Exception as e:  # noqa: BLE001 — an unreachable sink must not crash the assert tick
             render_problems = []
             render_note = f" Render check could not run: {str(e)[:100]}."
-        problems = metric_problems + render_problems
+
+        # Did the FULL payload exist on the event the journey received?
+        payload_problems: list[str] = []
+        payload_summary = ""
+        event_act = _run_event(acts, expected_event)
+        if event_act is not None and isinstance(event_act.get("data"), dict):
+            sent, volatile = _sent_payload(run, spec)
+            payload_problems, payload_summary = _event_payload_problems(
+                sent, event_act["data"], volatile
+            )
+            _tl(
+                run,
+                "payload_verified",
+                payload_summary
+                if not payload_problems
+                else "payload check: " + "; ".join(payload_problems),
+            )
+        elif event_act is not None:
+            payload_summary = "journey event carries no data payload"
+            payload_problems = [
+                "the journey event has no data attributes at all — the trigger's Send Event "
+                "action forwards nothing"
+            ]
+
+        deterministic = render_problems + payload_problems
+        problems = metric_problems + deterministic
 
         # Recorded as its own timeline entry so validation can surface the
         # measured profile (it only persists when this tick goes terminal).
@@ -365,17 +473,18 @@ def advance_run(run_id: str) -> dict:
 
         if not problems:
             detail = (
-                f"Activity stream verified: {counts}. Render check clean across "
+                f"Activity stream verified: {counts}. "
+                f"{payload_summary + '. ' if payload_summary else ''}Render check clean across "
                 f"{len(messages)} deliveries.{render_note} Long-tail journey emails (≈+46h timer) "
                 "are not tracked by this run — see the sink for later deliveries."
             )
             bqstate.update_run(
                 run_id, status="PASSED", stage="asserted", timeline=_tl(run, "asserted", detail), detail=detail
             )
-        elif render_problems and not metric_problems:
-            # Content bugs are deterministic — re-asserting later cannot heal
-            # them, so fail now rather than waiting out the deadline.
-            detail = "render check failed: " + "; ".join(render_problems)
+        elif deterministic and not metric_problems:
+            # Content and payload-mapping bugs are deterministic — re-asserting
+            # later cannot heal them, so fail now rather than waiting out the deadline.
+            detail = "render/payload checks failed: " + "; ".join(deterministic)
             bqstate.update_run(
                 run_id, status="FAILED", stage="asserted", timeline=_tl(run, "asserted", detail), detail=detail
             )
