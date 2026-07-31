@@ -24,6 +24,8 @@ interface FieldRow {
   seTest: boolean | null; // null = that trigger half wasn't readable
   seProd: boolean | null;
   personAttr: boolean;
+  /* Registry-declared journey entry-filter input (not API-verifiable). */
+  journeyFilter: boolean;
   /* One entry per distinct {{scope.field}} variable; tooltip holds where it
      appears with surrounding email text. */
   usage: { variable: string; tooltip: string }[];
@@ -42,6 +44,7 @@ function buildRows(v: SlugVariables): FieldRow[] {
     ...(test?.send_event_fields ?? []),
     ...(prod?.send_event_fields ?? []),
     ...personAttrs,
+    ...v.registry.filter_fields,
     ...v.liquid.map((l) => l.field),
   ];
   /* Template order first (it's what the runner sends), extras after. */
@@ -64,6 +67,7 @@ function buildRows(v: SlugVariables): FieldRow[] {
       seTest: test ? (test.send_event_fields?.includes(field) ?? false) : null,
       seProd: prod ? (prod.send_event_fields?.includes(field) ?? false) : null,
       personAttr: personAttrs.has(field),
+      journeyFilter: v.registry.filter_fields.includes(field),
       usage: [...byVariable.entries()].map(([variable, lines]) => ({
         variable,
         tooltip: [...lines].join('\n\n'),
@@ -195,6 +199,10 @@ export default function SlugVariablesPanel({
                       <span className="block leading-tight">Send Event</span>
                       <span className="block leading-tight">(prod)</span>
                     </TableHead>
+                    <TableHead title="Declared input to the journey's entry-filter conditions — Customer.io does not expose filter conditions via API, so this list is maintained on the Registration tab">
+                      <span className="block leading-tight">Journey</span>
+                      <span className="block leading-tight">filtering</span>
+                    </TableHead>
                     <TableHead title="Set as a person attribute">Person</TableHead>
                     <TableHead title="Hover a variable for the surrounding email text">
                       Used in emails
@@ -222,6 +230,9 @@ export default function SlugVariablesPanel({
                         <Mark value={r.seProd} warn={!!r.seProd && !r.inTemplate} />
                       </TableCell>
                       <TableCell>
+                        <Mark value={r.journeyFilter} />
+                      </TableCell>
+                      <TableCell>
                         <Mark value={r.personAttr} />
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
@@ -242,11 +253,13 @@ export default function SlugVariablesPanel({
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Amber ✓ = mapped in Customer.io but absent from the runner payload, so it forwards
-              empty on test runs (and flags contract drift to fix in the trigger's Send Event
-              mapping). Refresh overwrites the registry's payload contract with what Customer.io
-              maps right now and merges newly-set person attributes; the payload template is never
-              touched.
+              Journey filtering ✓ = declared input to the journey's entry-filter conditions
+              (Customer.io does not expose filter conditions via API — maintain the list on the
+              Registration tab). Amber ✓ = mapped in Customer.io but absent from the runner payload,
+              so it forwards empty on test runs (and flags contract drift to fix in the trigger's
+              Send Event mapping). Refresh overwrites the registry's payload contract with what
+              Customer.io maps right now and merges newly-set person attributes; the payload
+              template is never touched.
             </p>
           </>
         )}

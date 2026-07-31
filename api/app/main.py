@@ -39,6 +39,7 @@ class SlugUpsert(BaseModel):
     test_event_name: str | None = None
     payload_fields: list[str] = []
     person_attributes: list[str] = []
+    filter_fields: list[str] = []
     webhook_secrets: list[str] = []
     test_webhook_secret: str | None = None
     test_webhook_url: str | None = None

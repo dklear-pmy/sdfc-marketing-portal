@@ -82,6 +82,7 @@ def _row_to_entry(r: dict) -> dict:
         "test_event_name": r.get("test_event_name"),
         "payload_fields": json.loads(r.get("payload_fields_json") or "[]"),
         "person_attributes": json.loads(r.get("person_attributes_json") or "[]"),
+        "filter_fields": json.loads(r.get("filter_fields_json") or "[]"),
         "webhook_secrets": json.loads(r.get("webhook_secrets_json") or "[]"),
         "test_webhook_secret": r.get("test_webhook_secret"),
         "test_webhook_url": r.get("test_webhook_url"),
@@ -134,17 +135,19 @@ def upsert_slug(slug: str, fields: dict, actor: str | None) -> dict:
     WHEN MATCHED THEN UPDATE SET
       trigger_key = @trigger_key, event_name = @event_name,
       test_event_name = @test_event_name, payload_fields_json = @payload_fields,
-      person_attributes_json = @person_attributes, webhook_secrets_json = @webhook_secrets,
+      person_attributes_json = @person_attributes, filter_fields_json = @filter_fields,
+      webhook_secrets_json = @webhook_secrets,
       test_webhook_secret = @test_webhook_secret, test_webhook_url = @test_webhook_url,
       payload_template = @payload_template,
       notes = @notes, updated_at = CURRENT_TIMESTAMP(), updated_by = @actor
     WHEN NOT MATCHED THEN INSERT
       (slug, trigger_key, event_name, test_event_name, payload_fields_json,
-       person_attributes_json, webhook_secrets_json, test_webhook_secret, test_webhook_url,
-       payload_template, notes, created_at, created_by, updated_at, updated_by)
+       person_attributes_json, filter_fields_json, webhook_secrets_json, test_webhook_secret,
+       test_webhook_url, payload_template, notes, created_at, created_by, updated_at, updated_by)
     VALUES (@slug, @trigger_key, @event_name, @test_event_name, @payload_fields,
-            @person_attributes, @webhook_secrets, @test_webhook_secret, @test_webhook_url,
-            @payload_template, @notes, CURRENT_TIMESTAMP(), @actor, CURRENT_TIMESTAMP(), @actor)
+            @person_attributes, @filter_fields, @webhook_secrets, @test_webhook_secret,
+            @test_webhook_url, @payload_template, @notes, CURRENT_TIMESTAMP(), @actor,
+            CURRENT_TIMESTAMP(), @actor)
     """
     params = [
         bigquery.ScalarQueryParameter("slug", "STRING", slug),
@@ -153,6 +156,7 @@ def upsert_slug(slug: str, fields: dict, actor: str | None) -> dict:
         bigquery.ScalarQueryParameter("test_event_name", "STRING", fields.get("test_event_name")),
         bigquery.ScalarQueryParameter("payload_fields", "STRING", json.dumps(fields.get("payload_fields") or [])),
         bigquery.ScalarQueryParameter("person_attributes", "STRING", json.dumps(fields.get("person_attributes") or [])),
+        bigquery.ScalarQueryParameter("filter_fields", "STRING", json.dumps(fields.get("filter_fields") or [])),
         bigquery.ScalarQueryParameter("webhook_secrets", "STRING", json.dumps(fields.get("webhook_secrets") or [])),
         bigquery.ScalarQueryParameter("test_webhook_secret", "STRING", fields.get("test_webhook_secret")),
         bigquery.ScalarQueryParameter("test_webhook_url", "STRING", fields.get("test_webhook_url")),
@@ -191,6 +195,7 @@ def validate_entry(fields: dict) -> list[str]:
     for key, label in (
         ("payload_fields", "Payload field"),
         ("person_attributes", "Person attribute"),
+        ("filter_fields", "Journey filter field"),
     ):
         for v in fields.get(key) or []:
             if not FIELD_RE.match(v):
@@ -484,6 +489,9 @@ def _variables_from(spec: dict, clean: dict[str, dict], actions: dict[str, list[
         "registry": {
             "payload_fields": spec.get("payload_fields") or [],
             "person_attributes": spec.get("person_attributes") or [],
+            # Journey entry-filter inputs are declared here, not read live —
+            # the App API exposes none of the workflow's filter conditions.
+            "filter_fields": spec.get("filter_fields") or [],
         },
         "cio": cio_rows,
         "liquid": liquid,

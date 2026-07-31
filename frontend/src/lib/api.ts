@@ -86,6 +86,7 @@ export interface SlugEntry {
   test_event_name: string | null;
   payload_fields: string[];
   person_attributes: string[];
+  filter_fields: string[];
   webhook_secrets: string[];
   test_webhook_secret: string | null;
   test_webhook_url: string | null;
@@ -158,7 +159,12 @@ export interface SlugVariables {
   slug: string;
   generated_at: string;
   template: { keys: string[]; is_custom: boolean };
-  registry: { payload_fields: string[]; person_attributes: string[] };
+  registry: {
+    payload_fields: string[];
+    person_attributes: string[];
+    /* Declared journey entry-filter inputs — not readable via the App API. */
+    filter_fields: string[];
+  };
   cio: SlugVariablesCioRow[];
   liquid: SlugVariablesLiquidRow[];
 }

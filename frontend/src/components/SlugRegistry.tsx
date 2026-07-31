@@ -61,6 +61,7 @@ export interface Draft {
   test_event_name: string;
   payload_fields: string;
   person_attributes: string;
+  filter_fields: string;
   webhook_secrets: string;
   test_webhook_secret: string;
   test_webhook_url: string;
@@ -75,6 +76,7 @@ const EMPTY_DRAFT: Draft = {
   test_event_name: '',
   payload_fields: '',
   person_attributes: '',
+  filter_fields: '',
   webhook_secrets: '',
   test_webhook_secret: '',
   test_webhook_url: '',
@@ -90,6 +92,7 @@ export function toDraft(e: SlugEntry): Draft {
     test_event_name: e.test_event_name ?? '',
     payload_fields: e.payload_fields.join('\n'),
     person_attributes: e.person_attributes.join('\n'),
+    filter_fields: e.filter_fields.join('\n'),
     webhook_secrets: e.webhook_secrets.join(', '),
     test_webhook_secret: e.test_webhook_secret ?? '',
     test_webhook_url: e.test_webhook_url ?? '',
@@ -111,6 +114,7 @@ function toBody(d: Draft) {
     test_event_name: d.test_event_name.trim() || null,
     payload_fields: parseList(d.payload_fields),
     person_attributes: parseList(d.person_attributes),
+    filter_fields: parseList(d.filter_fields),
     webhook_secrets: parseList(d.webhook_secrets),
     test_webhook_secret: d.test_webhook_secret.trim() || null,
     test_webhook_url: d.test_webhook_url.trim() || null,
@@ -459,6 +463,21 @@ export function SlugForm({
             value={draft.person_attributes}
             onChange={(e) => set({ person_attributes: e.target.value })}
           />
+        </div>
+        <div className="grid gap-2 sm:col-span-2">
+          <Label htmlFor="reg-filters">Journey filter fields (one per line)</Label>
+          <Textarea
+            id="reg-filters"
+            rows={3}
+            value={draft.filter_fields}
+            onChange={(e) => set({ filter_fields: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">
+            Payload fields the journey's entry-filter conditions read to decide who enters.
+            Customer.io does not expose filter conditions via API, so keep this in step with the
+            journey's trigger filters by hand — the Variables tab shows it as the "Journey
+            filtering" column.
+          </p>
         </div>
         <div className="grid gap-2 sm:col-span-2">
           <div className="flex items-center justify-between">
