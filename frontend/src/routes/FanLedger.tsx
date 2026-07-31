@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { UnderlineTabs } from '@/components/ui/underline-tabs';
 import {
   Table,
   TableBody,
@@ -158,13 +159,17 @@ export default function FanLedger() {
             fan's full profile.
           </p>
         </div>
-        <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
-          <TabsList>
-            <TabsTrigger value="events">Events</TabsTrigger>
-            <TabsTrigger value="statuses">Statuses</TabsTrigger>
-          </TabsList>
-        </Tabs>
       </div>
+      <UnderlineTabs
+        tabs={
+          [
+            { key: 'events', label: 'Events' },
+            { key: 'statuses', label: 'Statuses' },
+          ] as const
+        }
+        value={tab}
+        onChange={setTab}
+      />
       {tab === 'events' ? <EventsTab /> : <StatusesTab />}
     </div>
   );

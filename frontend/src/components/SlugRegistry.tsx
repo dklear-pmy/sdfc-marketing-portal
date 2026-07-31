@@ -2,6 +2,7 @@ import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
+  type HarnessRunSummary,
   type PrecheckLevel,
   type SlugEntry,
   type SlugListResponse,
@@ -9,7 +10,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useUrlFilters } from '@/lib/urlState';
-import { humanizeSlug, relativeFrom } from '@/lib/format';
+import { humanizeSlug, relativeFrom, statusLabel } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -40,12 +41,19 @@ const roleLabel: Record<string, string> = {
   prod_journey: 'Prod · Journey [2/2]',
 };
 
+const runVariant: Record<HarnessRunSummary['status'], 'default' | 'destructive' | 'secondary'> = {
+  RUNNING: 'secondary',
+  PASSED: 'default',
+  FAILED: 'destructive',
+  TIMED_OUT: 'destructive',
+};
+
 /* Form drafts keep list fields as raw text (one per line or comma-separated)
    so typing stays natural; parsing happens only on save/precheck.
    webhook_secrets / test_webhook_secret are legacy Secret Manager references —
    no longer edited here, but carried through saves so old entries keep
    working until their URL is filled in. */
-interface Draft {
+export interface Draft {
   slug: string;
   trigger_key: string;
   event_name: string;
@@ -73,7 +81,7 @@ const EMPTY_DRAFT: Draft = {
   notes: '',
 };
 
-function toDraft(e: SlugEntry): Draft {
+export function toDraft(e: SlugEntry): Draft {
   return {
     slug: e.slug,
     trigger_key: e.trigger_key ?? '',
@@ -114,14 +122,14 @@ export default function SlugRegistry({
   selected,
   onSelect,
 }: {
-  selected: string | null;
+  selected?: string | null;
   onSelect: (slug: string) => void;
 }) {
   const { role } = useAuth();
   const canEdit = role === 'operator' || role === 'admin';
   const [{ rq }, setUrl] = useUrlFilters({ rq: '' });
   /* Whether the register form is open — transient UI, not in the URL.
-     Editing an existing entry lives in CampaignDetail, not here. */
+     Editing an existing entry lives in the campaign drilldown, not here. */
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
 
@@ -129,6 +137,12 @@ export default function SlugRegistry({
     queryKey: ['slugs'],
     queryFn: () => api.get<SlugListResponse>('/api/slugs'),
   });
+  /* Shared cache with the drilldown's run views — the health column is free. */
+  const runsQuery = useQuery({
+    queryKey: ['harness-runs'],
+    queryFn: () => api.get<{ runs: HarnessRunSummary[] }>('/api/harness/runs?limit=200'),
+  });
+  const lastRun = (slug: string) => runsQuery.data?.runs.find((r) => r.slug === slug);
 
   const entries = (listQuery.data?.slugs ?? []).filter(
     (e) =>
@@ -149,10 +163,10 @@ export default function SlugRegistry({
       <CardHeader>
         <CardTitle>Registered campaigns</CardTitle>
         <CardDescription>
-          Campaigns the tester knows how to validate and run. Click one to work with it — its
-          actions, variables and registration open below. To register one, enter its slug and check
-          against Customer.io — the check fills in everything discoverable from the workspace and
-          tells you what's missing before you save.
+          Campaigns the tester knows how to validate and run. Click one to open it — overview,
+          registration, variables, wiring check and test runs. To register one, enter its slug and
+          check against Customer.io — the check fills in everything discoverable from the workspace
+          and tells you what's missing before you save.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -204,6 +218,7 @@ export default function SlugRegistry({
                 <TableHead>Test event</TableHead>
                 <TableHead>Prod event</TableHead>
                 <TableHead>Runner</TableHead>
+                <TableHead>Last run</TableHead>
                 <TableHead>Updated</TableHead>
               </TableRow>
             </TableHeader>
@@ -224,6 +239,20 @@ export default function SlugRegistry({
                     <Badge variant={e.runnable ? 'default' : 'secondary'}>
                       {e.runnable ? 'Runnable' : 'Not runnable'}
                     </Badge>
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    {(() => {
+                      const r = lastRun(e.slug);
+                      if (!r) return <span className="text-sm text-muted-foreground">—</span>;
+                      return (
+                        <span className="flex items-center gap-2">
+                          <Badge variant={runVariant[r.status]}>{statusLabel[r.status]}</Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {relativeFrom(r.started_at)}
+                          </span>
+                        </span>
+                      );
+                    })()}
                   </TableCell>
                   <TableCell className="text-sm whitespace-nowrap text-muted-foreground">
                     {e.updated_at ? relativeFrom(e.updated_at) : '—'}
@@ -256,112 +285,7 @@ export default function SlugRegistry({
   );
 }
 
-/* Everything specific to one selected campaign: its actions, registration
-   editor and notes. The variables panel renders as a sibling (Harness owns
-   the ordering). */
-export function CampaignDetail({
-  slug,
-  onRun,
-  runPending,
-  onValidate,
-  validatePending,
-  onGone,
-}: {
-  slug: string;
-  onRun: (slug: string) => void;
-  runPending?: boolean;
-  onValidate: (slug: string) => void;
-  validatePending?: boolean;
-  /* The entry vanished (deleted in the editor) — parent clears the selection. */
-  onGone: () => void;
-}) {
-  const { role } = useAuth();
-  const canEdit = role === 'operator' || role === 'admin';
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
-
-  const listQuery = useQuery({
-    queryKey: ['slugs'],
-    queryFn: () => api.get<SlugListResponse>('/api/slugs'),
-  });
-  const entry = listQuery.data?.slugs.find((e) => e.slug === slug);
-
-  useEffect(() => {
-    if (listQuery.data && !entry) onGone();
-  }, [listQuery.data, entry, onGone]);
-
-  if (!entry) return null;
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <CardTitle className="flex flex-wrap items-center gap-2">
-              {humanizeSlug(slug)}
-              <Badge variant={entry.runnable ? 'default' : 'secondary'}>
-                {entry.runnable ? 'Runnable' : 'Not runnable'}
-              </Badge>
-            </CardTitle>
-            <CardDescription className="mt-1">
-              <code className="text-xs">{slug}</code> · test{' '}
-              <code className="text-xs">{entry.test_event_name ?? '—'}</code> · prod{' '}
-              <code className="text-xs">{entry.event_name ?? '—'}</code>
-              {entry.updated_at ? ` · updated ${relativeFrom(entry.updated_at)}` : ''}
-            </CardDescription>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {canEdit && entry.runnable && (
-              <Button size="sm" disabled={runPending} onClick={() => onRun(slug)}>
-                Run test
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={validatePending}
-              onClick={() => onValidate(slug)}
-            >
-              {validatePending ? 'Validating…' : 'Validate wiring'}
-            </Button>
-            {canEdit && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  if (!editing) setDraft(toDraft(entry));
-                  setEditing(!editing);
-                }}
-              >
-                {editing ? 'Close editor' : 'Edit registration'}
-              </Button>
-            )}
-          </div>
-        </div>
-      </CardHeader>
-      {(editing || entry.notes) && (
-        <CardContent className="grid gap-4">
-          {!editing && entry.notes && (
-            <p className="text-sm text-muted-foreground">{entry.notes}</p>
-          )}
-          {editing && (
-            <SlugForm
-              existingSlug={slug}
-              draft={draft}
-              setDraft={setDraft}
-              defaultTemplate={listQuery.data?.default_payload_template ?? ''}
-              tokens={listQuery.data?.payload_tokens ?? {}}
-              onClose={() => setEditing(false)}
-              onCommitted={() => setEditing(false)}
-            />
-          )}
-        </CardContent>
-      )}
-    </Card>
-  );
-}
-
-function SlugForm({
+export function SlugForm({
   existingSlug,
   draft,
   setDraft,
