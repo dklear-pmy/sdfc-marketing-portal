@@ -113,10 +113,12 @@ export default function SlugRegistry({
   onValidate,
   onRun,
   runPending,
+  onVariables,
 }: {
   onValidate: (slug: string) => void;
   onRun: (slug: string) => void;
   runPending?: boolean;
+  onVariables: (slug: string) => void;
 }) {
   const { role } = useAuth();
   const canEdit = role === 'operator' || role === 'admin';
@@ -240,6 +242,9 @@ export default function SlugRegistry({
                       )}
                       <Button size="sm" variant="outline" onClick={() => onValidate(e.slug)}>
                         Validate
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => onVariables(e.slug)}>
+                        Variables
                       </Button>
                       {canEdit && (
                         <Button size="sm" variant="ghost" onClick={() => openEdit(e)}>

@@ -43,6 +43,7 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import SlugRegistry from '@/components/SlugRegistry';
+import SlugVariablesPanel from '@/components/SlugVariables';
 
 const checkVariant: Record<CheckStatus, 'default' | 'destructive' | 'secondary' | 'outline'> = {
   pass: 'default',
@@ -109,6 +110,8 @@ export default function Harness() {
   const setSlug = (v: string) => setUrl({ slug: v });
   const setActiveRunId = (v: string | null) => setUrl({ run: v ?? '' });
   const [formError, setFormError] = useState<string | null>(null);
+  /* Which campaign's variables panel is open — transient UI, not in the URL. */
+  const [variablesFor, setVariablesFor] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
 
@@ -168,7 +171,12 @@ export default function Harness() {
         }}
         onRun={onRun}
         runPending={startRun.isPending}
+        onVariables={(s) => setVariablesFor((cur) => (cur === s ? null : s))}
       />
+
+      {variablesFor && (
+        <SlugVariablesPanel slug={variablesFor} onClose={() => setVariablesFor(null)} />
+      )}
 
       {startRun.isError && (
         <Alert variant="destructive">

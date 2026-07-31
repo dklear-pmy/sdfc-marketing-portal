@@ -82,6 +82,24 @@ def slugs_precheck(
         raise HTTPException(status_code=502, detail=f"Customer.io API error: {e}")
 
 
+@app.get("/api/slugs/{slug}/variables")
+def slugs_variables(slug: str, principal: Principal = require_role("viewer")) -> dict:
+    try:
+        return slugs.variables_report(_valid_slug(slug))
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Customer.io API error: {e}")
+
+
+@app.post("/api/slugs/{slug}/variables/refresh")
+def slugs_variables_refresh(slug: str, principal: Principal = require_role("operator")) -> dict:
+    try:
+        return slugs.refresh_variables(_valid_slug(slug), actor=principal.email)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Slug not registered")
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Customer.io API error: {e}")
+
+
 @app.get("/api/slugs/{slug}")
 def slugs_get(slug: str, principal: Principal = require_role("viewer")) -> dict:
     entry = slugs.get_slug(_valid_slug(slug))

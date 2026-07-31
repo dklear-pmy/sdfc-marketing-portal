@@ -416,6 +416,115 @@ def suggested_entry(roles: dict[str, dict], cio, actions_by_role: dict | None = 
     return {k: v for k, v in out.items() if v}
 
 
+def _person_recipient_field(actions: list[dict]) -> str | None:
+    """The trigger field the Create/Update Person action resolves people by."""
+    for a in actions:
+        if a.get("type") == "attribute_update":
+            try:
+                recipient = json.loads(a.get("recipient") or "{}")
+            except json.JSONDecodeError:
+                return None
+            if recipient.get("type") == "trigger_attribute":
+                return recipient.get("value")
+    return None
+
+
+def _variables_from(spec: dict, clean: dict[str, dict], actions: dict[str, list[dict]]) -> dict:
+    """Pure core of the variables panel: what the runner sends, what the
+    registry declares, what Customer.io actually maps, and which emails use
+    which variables — side by side, so drift is visible at a glance."""
+    from .validator import _event_mapping_fields, _liquid_ref_sites, _person_attribute_fields
+
+    template = payloads.effective_template(spec)
+    cio_rows = []
+    for role in ("test_trigger", "prod_trigger"):
+        c = clean.get(role)
+        if not c or role not in actions:
+            continue
+        acts = actions[role]
+        cio_rows.append(
+            {
+                "role": role,
+                "campaign_id": c["id"],
+                "campaign_name": c.get("name"),
+                "send_event_fields": _event_mapping_fields(acts),
+                "person_attribute_fields": _person_attribute_fields(acts),
+                "recipient_field": _person_recipient_field(acts),
+            }
+        )
+    liquid = []
+    for pair, jrole in (("test", "test_journey"), ("prod", "prod_journey")):
+        if jrole not in actions:
+            continue
+        sites = _liquid_ref_sites(actions[jrole])
+        for scope in ("trigger", "event", "customer"):
+            for field, subjects in sorted(sites[scope].items()):
+                liquid.append({"pair": pair, "scope": scope, "field": field, "emails": sorted(subjects)})
+    return {
+        "slug": spec.get("slug"),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "template": {
+            "keys": list(template),
+            "is_custom": payloads.parse_template(spec.get("payload_template")) is not None,
+        },
+        "registry": {
+            "payload_fields": spec.get("payload_fields") or [],
+            "person_attributes": spec.get("person_attributes") or [],
+        },
+        "cio": cio_rows,
+        "liquid": liquid,
+    }
+
+
+def _live_roles_actions(slug: str) -> tuple[dict, dict]:
+    from .cio import CioClient
+    from .validator import _match_campaigns
+
+    cio = CioClient()
+    roles = _match_campaigns(cio.campaigns(), slug)
+    clean = {k: v for k, v in roles.items() if "duplicate" not in k}
+    actions: dict[str, list[dict]] = {}
+    for role, c in clean.items():
+        try:
+            actions[role] = cio.campaign_actions(c["id"])
+        except Exception:  # noqa: BLE001 — a role we can't read just drops out of the panel
+            pass
+    return clean, actions
+
+
+def variables_report(slug: str) -> dict:
+    spec = get_slug(slug) or {"slug": slug}
+    clean, actions = _live_roles_actions(slug)
+    return _variables_from(spec, clean, actions)
+
+
+def refresh_variables(slug: str, actor: str | None) -> dict:
+    """Overwrite the registry's payload/person contracts with what Customer.io
+    maps right now — the explicit-refresh counterpart of the precheck's
+    fill-empty-only suggestions."""
+    entry = get_slug(slug)
+    if entry is None:
+        raise KeyError(slug)
+    clean, actions = _live_roles_actions(slug)
+    role = "prod_trigger" if clean.get("prod_trigger") else "test_trigger"
+    acts = actions.get(role)
+    if acts:
+        from .validator import _event_mapping_fields, _person_attribute_fields
+
+        fields = dict(entry)
+        mapped = _event_mapping_fields(acts)
+        if mapped:
+            fields["payload_fields"] = mapped
+        fields["person_attributes"] = sorted(
+            set(_person_attribute_fields(acts)) | set(entry.get("person_attributes") or [])
+        )
+        upsert_slug(slug, fields, actor)
+        spec = get_slug(slug)
+    else:
+        spec = entry
+    return _variables_from(spec or entry, clean, actions)
+
+
 def precheck(slug: str, overrides: dict | None = None) -> dict:
     """Live check: do the four campaigns exist, and is the twin safe to run?
 

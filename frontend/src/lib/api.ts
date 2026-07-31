@@ -135,6 +135,32 @@ export interface SlugPrecheck {
   payload_is_custom?: boolean;
 }
 
+export interface SlugVariablesCioRow {
+  role: 'test_trigger' | 'prod_trigger';
+  campaign_id: number;
+  campaign_name: string | null;
+  /* null = no Send Event action found (itself a finding) */
+  send_event_fields: string[] | null;
+  person_attribute_fields: string[];
+  recipient_field: string | null;
+}
+
+export interface SlugVariablesLiquidRow {
+  pair: 'test' | 'prod';
+  scope: 'trigger' | 'event' | 'customer';
+  field: string;
+  emails: string[];
+}
+
+export interface SlugVariables {
+  slug: string;
+  generated_at: string;
+  template: { keys: string[]; is_custom: boolean };
+  registry: { payload_fields: string[]; person_attributes: string[] };
+  cio: SlugVariablesCioRow[];
+  liquid: SlugVariablesLiquidRow[];
+}
+
 export interface RunTimelineEntry {
   ts: string;
   stage: string;

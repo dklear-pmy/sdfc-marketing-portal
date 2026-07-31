@@ -190,4 +190,50 @@ assert s["event_name"] == "Shop-260715" and "payload_fields" not in s, s
 # no campaigns at all → nothing to suggest, and no crash
 assert suggested_entry({}, StubCio(ACTIONS)) == {}
 
+
+# --- variables panel: template vs registry vs CIO vs email usage ---
+from app.slugs import _variables_from  # noqa: E402
+
+TRIGGER_ACTS = [
+    {
+        "type": "attribute_update",
+        "name": "Create or Update Person 1",
+        "body": '[{"name": "first_name"}]',
+        "recipient": '{"field": "id", "type": "trigger_attribute", "value": "account_id"}',
+    },
+    {"type": "create_event", "name": "Send Event", "body": '[{"name": "product"}, {"name": "amount"}]'},
+]
+JOURNEY_ACTS = [
+    {
+        "type": "email",
+        "subject": "Welcome!",
+        "body": "Hi {{customer.first_name}}, you bought {{event.product}}",
+    }
+]
+VSPEC = {
+    "slug": "Shop-260715",
+    "payload_fields": ["product", "amount"],
+    "person_attributes": ["first_name"],
+    "payload_template": '{"email": "{identity}", "product": "Scarf", "amount": 20}',
+}
+v = _variables_from(
+    VSPEC,
+    roles4(),
+    {"test_trigger": TRIGGER_ACTS, "test_journey": JOURNEY_ACTS},
+)
+assert v["template"]["is_custom"] and v["template"]["keys"] == ["email", "product", "amount"], v["template"]
+assert v["registry"]["payload_fields"] == ["product", "amount"], v["registry"]
+assert len(v["cio"]) == 1 and v["cio"][0]["role"] == "test_trigger", v["cio"]
+assert v["cio"][0]["send_event_fields"] == ["product", "amount"], v["cio"]
+assert v["cio"][0]["person_attribute_fields"] == ["first_name"], v["cio"]
+assert v["cio"][0]["recipient_field"] == "account_id", v["cio"]
+liq = {(x["pair"], x["scope"], x["field"]) for x in v["liquid"]}
+assert liq == {("test", "customer", "first_name"), ("test", "event", "product")}, liq
+assert v["liquid"][0]["emails"] == ["Welcome!"], v["liquid"]
+
+# no template → default signup keys; no actions → cio/liquid empty, no crash
+v = _variables_from({"slug": "X"}, {}, {})
+assert not v["template"]["is_custom"] and "signup_form_family" in v["template"]["keys"], v["template"]
+assert v["cio"] == [] and v["liquid"] == [], v
+
 print("test_slug_registry: all assertions passed")
