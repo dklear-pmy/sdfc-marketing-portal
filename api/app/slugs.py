@@ -5,11 +5,13 @@ no longer needs a repo deploy. Rows live in customerio_state.slug_registry;
 validator/runner/tripwires keep reading through config.slug_registry(), whose
 dict shape is unchanged from the YAML contract.
 
-The precheck is the campaigns-list subset of the full validator: one CIO call,
-no per-campaign actions fetches. It answers "do the four campaigns for this
+The precheck is a light subset of the full validator: the campaigns list plus
+one actions fetch per trigger half. It answers "do the four campaigns for this
 slug actually exist, and is the twin safely wired?" before an entry is saved —
 including the dual-entry hazard (twin journey listening on the production
-event) that a fresh dupe always starts out with.
+event) that a fresh dupe always starts out with, and the recipient-resolution
+hazard (a trigger keying people on a payload field the runner never sends,
+which burns a full run timeout to discover dynamically).
 """
 
 import json
@@ -18,7 +20,7 @@ from datetime import datetime, timezone
 
 from google.cloud import bigquery
 
-from . import bqstate
+from . import bqstate, payloads
 from .config import secret_exists
 
 _DATASET = f"{bqstate.GCP_PROJECT}.customerio_state"
@@ -83,6 +85,7 @@ def _row_to_entry(r: dict) -> dict:
         "webhook_secrets": json.loads(r.get("webhook_secrets_json") or "[]"),
         "test_webhook_secret": r.get("test_webhook_secret"),
         "test_webhook_url": r.get("test_webhook_url"),
+        "payload_template": r.get("payload_template"),
         "notes": r.get("notes"),
         "updated_at": r.get("updated_at"),
         "updated_by": r.get("updated_by"),
@@ -133,14 +136,15 @@ def upsert_slug(slug: str, fields: dict, actor: str | None) -> dict:
       test_event_name = @test_event_name, payload_fields_json = @payload_fields,
       person_attributes_json = @person_attributes, webhook_secrets_json = @webhook_secrets,
       test_webhook_secret = @test_webhook_secret, test_webhook_url = @test_webhook_url,
+      payload_template = @payload_template,
       notes = @notes, updated_at = CURRENT_TIMESTAMP(), updated_by = @actor
     WHEN NOT MATCHED THEN INSERT
       (slug, trigger_key, event_name, test_event_name, payload_fields_json,
        person_attributes_json, webhook_secrets_json, test_webhook_secret, test_webhook_url,
-       notes, created_at, created_by, updated_at, updated_by)
+       payload_template, notes, created_at, created_by, updated_at, updated_by)
     VALUES (@slug, @trigger_key, @event_name, @test_event_name, @payload_fields,
             @person_attributes, @webhook_secrets, @test_webhook_secret, @test_webhook_url,
-            @notes, CURRENT_TIMESTAMP(), @actor, CURRENT_TIMESTAMP(), @actor)
+            @payload_template, @notes, CURRENT_TIMESTAMP(), @actor, CURRENT_TIMESTAMP(), @actor)
     """
     params = [
         bigquery.ScalarQueryParameter("slug", "STRING", slug),
@@ -152,6 +156,7 @@ def upsert_slug(slug: str, fields: dict, actor: str | None) -> dict:
         bigquery.ScalarQueryParameter("webhook_secrets", "STRING", json.dumps(fields.get("webhook_secrets") or [])),
         bigquery.ScalarQueryParameter("test_webhook_secret", "STRING", fields.get("test_webhook_secret")),
         bigquery.ScalarQueryParameter("test_webhook_url", "STRING", fields.get("test_webhook_url")),
+        bigquery.ScalarQueryParameter("payload_template", "STRING", fields.get("payload_template")),
         bigquery.ScalarQueryParameter("notes", "STRING", fields.get("notes")),
         bigquery.ScalarQueryParameter("actor", "STRING", actor),
     ]
@@ -199,6 +204,9 @@ def validate_entry(fields: dict) -> list[str]:
         problem = webhook_url_problem(url)
         if problem:
             errors.append(problem)
+    template = fields.get("payload_template")
+    if template:
+        errors += payloads.template_problems(template)
     test_ev = fields.get("test_event_name")
     if test_ev and not test_ev.startswith(TEST_EVENT_PREFIX):
         errors.append(f"Test trigger event must start with '{TEST_EVENT_PREFIX}' (got '{test_ev}')")
@@ -210,15 +218,36 @@ def validate_entry(fields: dict) -> list[str]:
     return errors
 
 
+def _recipient_gaps(actions: list[dict], payload_keys: set[str]) -> list[tuple[str, str]]:
+    """(action label, trigger field) for every person-resolving action whose
+    recipient rule keys on a payload field the run payload won't carry —
+    Customer.io accepts such a webhook and silently resolves nobody."""
+    gaps = []
+    for a in actions:
+        if a.get("type") not in ("attribute_update", "create_event"):
+            continue
+        try:
+            recipient = json.loads(a.get("recipient") or "{}")
+        except json.JSONDecodeError:
+            continue
+        field = recipient.get("value")
+        if recipient.get("type") == "trigger_attribute" and field and field not in payload_keys:
+            gaps.append((a.get("name") or a.get("type"), field))
+    return gaps
+
+
 def analyze(
     roles: dict[str, dict],
     spec: dict | None,
     secrets: dict[str, bool | None],
     slug: str | None = None,
+    trigger_actions: dict[str, list[dict]] | None = None,
 ) -> list[dict]:
     """Convention findings for a slug's campaigns — pure, so the failure paths
     are testable without CIO/BQ. `roles` is validator._match_campaigns output,
-    `spec` the (draft or saved) registry entry, `secrets` id → exists?.
+    `spec` the (draft or saved) registry entry, `secrets` id → exists?,
+    `trigger_actions` role → campaign_actions for the trigger halves (omitted
+    when CIO couldn't supply them — the recipient checks then stay silent).
 
     Levels: fail = will misbehave, warn = blocks or degrades testing,
     info = expected-but-worth-knowing. A finding may carry a `fix` — a
@@ -301,6 +330,34 @@ def analyze(
             },
         )
 
+    payload_keys = set(payloads.effective_template(spec))
+    for role, level in (("test_trigger", "fail"), ("prod_trigger", "warn")):
+        acts = (trigger_actions or {}).get(role)
+        if not acts:
+            continue
+        name = (clean.get(role) or {}).get("name") or _ROLE_LABELS[role]
+        for action_label, field in _recipient_gaps(acts, payload_keys):
+            consequence = (
+                "every run fires the webhook, creates nobody, and times out with no profile"
+                if role == "test_trigger"
+                else "at launch the journey would silently no-op on every real trigger"
+            )
+            hint = ""
+            declared = spec.get("payload_fields") or []
+            if declared and field not in declared:
+                hint = (
+                    f" Note: '{field}' is not in this slug's payload contract either — the "
+                    "production relay does not send it."
+                )
+            add(
+                level,
+                f'"{name}" resolves people by trigger field \'{field}\' (its {action_label} '
+                f"action), but the payload this slug sends has no '{field}' — {consequence}."
+                f" Point the action's recipient at 'email' in Customer.io (like the "
+                f"Welcome-General twin), or add '{field}' to this slug's payload template if "
+                f"the real trigger genuinely carries it.{hint}",
+            )
+
     stopped = [
         _ROLE_LABELS[r]
         for r in ("test_trigger", "test_journey")
@@ -325,7 +382,7 @@ def analyze(
     return findings
 
 
-def suggested_entry(roles: dict[str, dict], cio) -> dict:
+def suggested_entry(roles: dict[str, dict], cio, actions_by_role: dict | None = None) -> dict:
     """Registry values discoverable from the workspace alone: event names off
     the journeys, payload/person fields off the trigger half's action
     mappings. A twin still carrying the prod event (fresh dupe) gets the
@@ -345,12 +402,15 @@ def suggested_entry(roles: dict[str, dict], cio) -> dict:
             else (TEST_EVENT_PREFIX + prod_ev if prod_ev else None)
         ),
     }
-    trigger = clean.get("prod_trigger") or clean.get("test_trigger")
+    role = "prod_trigger" if clean.get("prod_trigger") else "test_trigger"
+    trigger = clean.get(role)
     if trigger:
-        try:
-            acts = cio.campaign_actions(trigger["id"])
-        except Exception:  # noqa: BLE001 — suggestions are best-effort, precheck must still answer
-            acts = []
+        acts = (actions_by_role or {}).get(role)
+        if acts is None:
+            try:
+                acts = cio.campaign_actions(trigger["id"])
+            except Exception:  # noqa: BLE001 — suggestions are best-effort, precheck must still answer
+                acts = []
         out["payload_fields"] = _event_mapping_fields(acts)
         out["person_attributes"] = _person_attribute_fields(acts)
     return {k: v for k, v in out.items() if v}
@@ -371,6 +431,14 @@ def precheck(slug: str, overrides: dict | None = None) -> dict:
 
     cio = CioClient()
     roles = _match_campaigns(cio.campaigns(), slug)
+    trigger_actions: dict[str, list[dict]] = {}
+    for role in ("test_trigger", "prod_trigger"):
+        c = roles.get(role)
+        if c:
+            try:
+                trigger_actions[role] = cio.campaign_actions(c["id"])
+            except Exception:  # noqa: BLE001 — recipient checks stay silent; the rest must still answer
+                pass
 
     secret_ids = [s for s in [spec.get("test_webhook_secret"), *(spec.get("webhook_secrets") or [])] if s]
     ref_problems = {sid: secret_ref_problem(sid) for sid in dict.fromkeys(secret_ids)}
@@ -380,7 +448,11 @@ def precheck(slug: str, overrides: dict | None = None) -> dict:
     url = spec.get("test_webhook_url")
     if url and webhook_url_problem(url):
         findings.append({"level": "fail", "message": webhook_url_problem(url)})
-    findings += analyze(roles, spec, secrets, slug=slug)
+    if spec.get("payload_template"):
+        findings += [
+            {"level": "fail", "message": p} for p in payloads.template_problems(spec["payload_template"])
+        ]
+    findings += analyze(roles, spec, secrets, slug=slug, trigger_actions=trigger_actions)
     runnable = bool(url and not webhook_url_problem(url)) or (
         bool(spec.get("test_webhook_secret"))
         and secrets.get(spec.get("test_webhook_secret")) is True
@@ -403,7 +475,11 @@ def precheck(slug: str, overrides: dict | None = None) -> dict:
         "campaigns": sorted(campaigns, key=lambda c: str(c["role"])),
         "findings": findings,
         "secrets": secrets,
-        "suggested": suggested_entry(roles, cio),
+        "suggested": suggested_entry(roles, cio, actions_by_role=trigger_actions),
         "runnable": runnable,
         "runnable_reason": None if runnable else "no usable test webhook URL registered",
+        "payload_preview": payloads.fill(
+            payloads.effective_template(spec), "scenario-000@qa.sdfc.dev"
+        ),
+        "payload_is_custom": payloads.parse_template(spec.get("payload_template")) is not None,
     }

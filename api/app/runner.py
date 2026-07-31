@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 import requests
 from google.cloud import secretmanager
 
-from . import bqstate, mailpit
+from . import bqstate, mailpit, payloads
 from .cio import CioClient
 from .config import GCP_PROJECT, slug_registry
 
@@ -94,27 +94,9 @@ def _webhook_url(spec: dict) -> str:
 
 
 def _payload(spec: dict, identity: str, run_id: str) -> dict:
-    """tb_signup-shaped payload; dedup key derives from the identity number."""
-    num = int(identity.split("-")[1].split("@")[0])
-    now = _now().strftime("%Y-%m-%dT%H:%M:%SZ")
-    activity_id = 990000000 + num
-    return {
-        "dedup_key": str(activity_id),
-        "email": identity,
-        "activity_id": activity_id,
-        "campaign_title": "San Diego FC / Stay Informed",
-        "signup_form_family": "stay_informed",
-        "is_world_cup": False,
-        "is_new_fan_24h": True,
-        "fan_created_at": now,
-        "activity_at": now,
-        "first_name": "Scenario",
-        "last_name": f"Harness {num:03d}",
-        "fan_source": "",
-        "phone_subscribed": False,
-        "has_season_plan": False,
-        "postal_code": "92101",
-    }
+    """The slug's payload template (payloads.py) filled for this identity;
+    entries without one get the tb_signup default shape."""
+    return payloads.fill(payloads.effective_template(spec), identity)
 
 
 # The App API exposes a journey's MESSAGES but none of its workflow structure

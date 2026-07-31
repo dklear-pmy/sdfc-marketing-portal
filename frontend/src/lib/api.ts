@@ -89,10 +89,19 @@ export interface SlugEntry {
   webhook_secrets: string[];
   test_webhook_secret: string | null;
   test_webhook_url: string | null;
+  payload_template: string | null;
   notes: string | null;
   updated_at: string | null;
   updated_by: string | null;
   runnable?: boolean;
+}
+
+export interface SlugListResponse {
+  slugs: SlugEntry[];
+  /* The tb_signup shape the runner sends when a slug has no template of its
+     own — offered as the editor's starting point. */
+  default_payload_template: string;
+  payload_tokens: Record<string, string>;
 }
 
 export type PrecheckLevel = 'fail' | 'warn' | 'info';
@@ -120,6 +129,10 @@ export interface SlugPrecheck {
   };
   runnable: boolean;
   runnable_reason: string | null;
+  /* The exact payload a run would POST (sample identity scenario-000), and
+     whether it comes from this slug's own template or the signup default. */
+  payload_preview?: Record<string, unknown>;
+  payload_is_custom?: boolean;
 }
 
 export interface RunTimelineEntry {

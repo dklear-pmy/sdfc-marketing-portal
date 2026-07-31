@@ -1,6 +1,12 @@
 import { useEffect, useState, type Dispatch, type FormEvent, type SetStateAction } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type PrecheckLevel, type SlugEntry, type SlugPrecheck } from '@/lib/api';
+import {
+  api,
+  type PrecheckLevel,
+  type SlugEntry,
+  type SlugListResponse,
+  type SlugPrecheck,
+} from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useUrlFilters } from '@/lib/urlState';
 import { humanizeSlug, relativeFrom } from '@/lib/format';
@@ -48,6 +54,7 @@ interface Draft {
   webhook_secrets: string;
   test_webhook_secret: string;
   test_webhook_url: string;
+  payload_template: string;
   notes: string;
 }
 
@@ -61,6 +68,7 @@ const EMPTY_DRAFT: Draft = {
   webhook_secrets: '',
   test_webhook_secret: '',
   test_webhook_url: '',
+  payload_template: '',
   notes: '',
 };
 
@@ -75,6 +83,7 @@ function toDraft(e: SlugEntry): Draft {
     webhook_secrets: e.webhook_secrets.join(', '),
     test_webhook_secret: e.test_webhook_secret ?? '',
     test_webhook_url: e.test_webhook_url ?? '',
+    payload_template: e.payload_template ?? '',
     notes: e.notes ?? '',
   };
 }
@@ -95,6 +104,7 @@ function toBody(d: Draft) {
     webhook_secrets: parseList(d.webhook_secrets),
     test_webhook_secret: d.test_webhook_secret.trim() || null,
     test_webhook_url: d.test_webhook_url.trim() || null,
+    payload_template: d.payload_template.trim() || null,
     notes: d.notes.trim() || null,
   };
 }
@@ -118,7 +128,7 @@ export default function SlugRegistry({
 
   const listQuery = useQuery({
     queryKey: ['slugs'],
-    queryFn: () => api.get<{ slugs: SlugEntry[] }>('/api/slugs'),
+    queryFn: () => api.get<SlugListResponse>('/api/slugs'),
   });
 
   const entries = (listQuery.data?.slugs ?? []).filter(
@@ -250,6 +260,8 @@ export default function SlugRegistry({
             existingSlug={editing || null}
             draft={draft}
             setDraft={setDraft}
+            defaultTemplate={listQuery.data?.default_payload_template ?? ''}
+            tokens={listQuery.data?.payload_tokens ?? {}}
             onClose={() => setEditing(null)}
             onCommitted={() => {
               setEditing(null);
@@ -269,12 +281,16 @@ function SlugForm({
   existingSlug,
   draft,
   setDraft,
+  defaultTemplate,
+  tokens,
   onClose,
   onCommitted,
 }: {
   existingSlug: string | null;
   draft: Draft;
   setDraft: Dispatch<SetStateAction<Draft>>;
+  defaultTemplate: string;
+  tokens: Record<string, string>;
   onClose: () => void;
   /* After a save or delete lands — unlike onClose (cancel), the parent also
      clears the list search, so the full registry is visible again. */
@@ -290,6 +306,7 @@ function SlugForm({
       if (d.event_name.trim()) qs.set('event_name', d.event_name.trim());
       if (d.test_event_name.trim()) qs.set('test_event_name', d.test_event_name.trim());
       if (d.test_webhook_url.trim()) qs.set('test_webhook_url', d.test_webhook_url.trim());
+      if (d.payload_template.trim()) qs.set('payload_template', d.payload_template.trim());
       const suffix = qs.size ? `?${qs}` : '';
       return api.get<SlugPrecheck>(
         `/api/slugs/${encodeURIComponent(d.slug.trim())}/precheck${suffix}`
@@ -433,6 +450,48 @@ function SlugForm({
           />
         </div>
         <div className="grid gap-2 sm:col-span-2">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="reg-payload-template">Payload template (JSON, optional)</Label>
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              disabled={!defaultTemplate}
+              onClick={() => {
+                if (
+                  !draft.payload_template.trim() ||
+                  window.confirm('Replace the current template with the signup default?')
+                ) {
+                  set({ payload_template: defaultTemplate });
+                }
+              }}
+            >
+              Use signup default
+            </Button>
+          </div>
+          <Textarea
+            id="reg-payload-template"
+            rows={8}
+            className="max-w-full font-mono text-xs"
+            placeholder='{"email": "{identity}", …}'
+            value={draft.payload_template}
+            onChange={(e) => set({ payload_template: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">
+            What the runner POSTs to the twin's webhook. Leave empty for the signup shape (right for
+            Welcome-General). For other journeys, mirror the fields the production trigger hub sends
+            so runs exercise the real input shape — the check below compares it against how the
+            campaigns resolve people. Tokens fill in at fire time:{' '}
+            {Object.entries(tokens).map(([tok, doc], i) => (
+              <span key={tok}>
+                {i > 0 && ' · '}
+                <code title={doc}>{tok}</code>
+              </span>
+            ))}
+            .
+          </p>
+        </div>
+        <div className="grid gap-2 sm:col-span-2">
           <Label htmlFor="reg-notes">Notes</Label>
           <Textarea
             id="reg-notes"
@@ -516,6 +575,17 @@ function SlugForm({
                 </span>
               ))}
             </div>
+          )}
+          {report.payload_preview && (
+            <details className="text-sm">
+              <summary className="cursor-pointer text-muted-foreground select-none">
+                Payload the runner will send —{' '}
+                {report.payload_is_custom ? 'this slug’s template' : 'signup default'}
+              </summary>
+              <pre className="mt-2 overflow-x-auto rounded-md border bg-muted/40 p-2 font-mono text-xs">
+                {JSON.stringify(report.payload_preview, null, 2)}
+              </pre>
+            </details>
           )}
           <ul className="grid gap-1.5">
             {report.findings.map((f, i) => (

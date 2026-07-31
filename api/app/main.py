@@ -1,3 +1,4 @@
+import json
 import re
 
 import requests
@@ -5,7 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import admin, bqstate, customers, emailer, ledger, runner, slugs, stadium, tripwires
+from . import admin, bqstate, customers, emailer, ledger, payloads, runner, slugs, stadium, tripwires
 from .auth import Principal, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
 from .validator import validate_slug
@@ -41,6 +42,7 @@ class SlugUpsert(BaseModel):
     webhook_secrets: list[str] = []
     test_webhook_secret: str | None = None
     test_webhook_url: str | None = None
+    payload_template: str | None = None
     notes: str | None = None
 
 
@@ -48,7 +50,11 @@ class SlugUpsert(BaseModel):
 def slugs_list(q: str | None = None, principal: Principal = require_role("viewer")) -> dict:
     if q and len(q) > 120:
         raise HTTPException(status_code=400, detail="Search too long")
-    return {"slugs": slugs.list_slugs(q=q)}
+    return {
+        "slugs": slugs.list_slugs(q=q),
+        "default_payload_template": json.dumps(payloads.DEFAULT_TEMPLATE, indent=2),
+        "payload_tokens": payloads.TOKEN_DOC,
+    }
 
 
 @app.get("/api/slugs/{slug}/precheck")
@@ -57,8 +63,11 @@ def slugs_precheck(
     event_name: str | None = None,
     test_event_name: str | None = None,
     test_webhook_url: str | None = None,
+    payload_template: str | None = None,
     principal: Principal = require_role("viewer"),
 ) -> dict:
+    if payload_template and len(payload_template) > 10_000:
+        raise HTTPException(status_code=400, detail="Payload template too long")
     try:
         return slugs.precheck(
             _valid_slug(slug),
@@ -66,6 +75,7 @@ def slugs_precheck(
                 "event_name": event_name,
                 "test_event_name": test_event_name,
                 "test_webhook_url": test_webhook_url,
+                "payload_template": payload_template,
             },
         )
     except requests.RequestException as e:

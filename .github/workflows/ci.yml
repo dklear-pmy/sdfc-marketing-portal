@@ -47,3 +47,5 @@ jobs:
       - run: python tests/test_slug_registry.py
       # Liquid coverage: static reference gaps + delivered-render verification.
       - run: python tests/test_render_checks.py
+      # Payload templates: token filling, save validation, recipient-resolution gap.
+      - run: python tests/test_payload_templates.py

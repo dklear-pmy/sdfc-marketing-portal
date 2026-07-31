@@ -20,6 +20,7 @@ import json
 import re
 from datetime import datetime, timezone
 
+from . import payloads
 from .cio import CioClient
 from .config import secret_exists, slug_registry
 
@@ -219,18 +220,33 @@ def validate_slug(slug: str) -> dict:
             actions_by_role[role] = cio.campaign_actions(c["id"])
 
     id_status, id_notes = "pass", []
+    payload_keys = set(payloads.effective_template(spec))
     for role in ("test_trigger", "prod_trigger"):
         acts = actions_by_role.get(role)
         if acts is None:
             continue
-        bad = [
-            a.get("name") or a.get("type")
-            for a in acts
-            if a.get("type") in ("attribute_update", "create_event") and not _recipient_is_email(a)
-        ]
-        if bad:
-            id_status = "fail"
-            id_notes.append(f"{role}: non-email recipient on {bad}")
+        for a in acts:
+            if a.get("type") not in ("attribute_update", "create_event") or _recipient_is_email(a):
+                continue
+            try:
+                recipient = json.loads(a.get("recipient") or "{}")
+            except json.JSONDecodeError:
+                recipient = {}
+            field = recipient.get("value") or "?"
+            label = a.get("name") or a.get("type")
+            if recipient.get("type") == "trigger_attribute" and field in payload_keys:
+                if id_status == "pass":
+                    id_status = "warn"
+                id_notes.append(
+                    f"{role}: {label} keys on '{field}' — works (the payload carries it) "
+                    "but 'email' is the convention"
+                )
+            else:
+                id_status = "fail"
+                id_notes.append(
+                    f"{role}: {label} resolves people by '{field}', which this slug's payload "
+                    "does not carry — the action silently resolves nobody"
+                )
     _check(
         checks, "identify-by-email", "Trigger halves identify by email", id_status,
         "; ".join(id_notes) or "Create/Update Person and Send Event both key on trigger email.",
