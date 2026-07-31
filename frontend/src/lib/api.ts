@@ -217,6 +217,9 @@ export interface CustomerLookup {
   sync: {
     in_sync_view: boolean;
     excluded_reason: string | null;
+    /* Set when the fan is in the sync view but has no CIO profile yet —
+       the estimated time of the next hourly Data-In pull. */
+    first_sync_eta: string | null;
     comparison: AttrComparison[];
     summary: Partial<Record<AttrStatus, number>>;
   };

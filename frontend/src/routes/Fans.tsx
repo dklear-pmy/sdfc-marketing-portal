@@ -228,8 +228,14 @@ function IdentityCard({ data }: { data: CustomerLookup }) {
       </CardHeader>
       <CardContent className="grid gap-2">
         <div className="flex flex-wrap gap-1.5">
-          <Badge variant={cio.found ? 'default' : 'outline'}>
-            {cio.found ? 'Customer.io profile' : 'Not in Customer.io'}
+          <Badge
+            variant={cio.found ? 'default' : data.sync.first_sync_eta ? 'secondary' : 'outline'}
+          >
+            {cio.found
+              ? 'Customer.io profile'
+              : data.sync.first_sync_eta
+                ? `Syncing by ~${formatPacific(data.sync.first_sync_eta, false)}`
+                : 'Not in Customer.io'}
           </Badge>
           <Badge variant={warehouse.found ? 'default' : 'outline'}>
             {warehouse.found ? 'Warehouse row' : 'Not in warehouse'}
@@ -346,12 +352,22 @@ function SyncCard({ data }: { data: CustomerLookup }) {
             <Badge variant="outline">Not in sync view</Badge>
           )}
           {sync.comparison.length > 0 &&
-            (attention > 0 ? (
+            (sync.first_sync_eta && !cio.found ? (
+              <Badge variant="secondary">
+                First sync by ~{formatPacific(sync.first_sync_eta, false)}
+              </Badge>
+            ) : attention > 0 ? (
               <Badge variant="destructive">{attention} need attention</Badge>
             ) : (
               <Badge variant="default">Attributes in sync</Badge>
             ))}
         </div>
+        {sync.first_sync_eta && !cio.found && (
+          <p className="text-sm text-muted-foreground">
+            This fan's row is newer than the connector's last hourly pull — Customer.io creates the
+            profile and writes every pending attribute on the next one.
+          </p>
+        )}
         {sync.excluded_reason && (
           <p className="text-sm text-muted-foreground">{sync.excluded_reason}</p>
         )}

@@ -206,6 +206,16 @@ def lookup(email: str) -> dict:
             "(no resuppression or opt-out-push flag active)"
         )
 
+    # In the sync view but no CIO profile yet = a fan awaiting their first
+    # pull. The Data-In connector pulls hourly, with writes observed landing
+    # within ~15 min of the top of the hour — so the ETA is :15 past the next.
+    first_sync_eta = None
+    if in_view and not cio_side.get("found"):
+        now = dt.datetime.now(dt.timezone.utc)
+        first_sync_eta = (
+            now.replace(minute=0, second=0, microsecond=0) + dt.timedelta(hours=1, minutes=15)
+        ).isoformat()
+
     comparison: list[dict] = []
     summary: dict = {}
     if in_view:
@@ -229,6 +239,7 @@ def lookup(email: str) -> dict:
         "sync": {
             "in_sync_view": in_view,
             "excluded_reason": excluded_reason,
+            "first_sync_eta": first_sync_eta,
             "comparison": comparison,
             "summary": summary,
         },
