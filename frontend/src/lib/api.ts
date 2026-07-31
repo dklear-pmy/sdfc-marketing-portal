@@ -220,6 +220,10 @@ export interface CustomerLookup {
     /* Set when the fan is in the sync view but has no CIO profile yet —
        the estimated time of the next hourly Data-In pull. */
     first_sync_eta: string | null;
+    /* Set when the warehouse row changed after the connector's last write of
+       this profile and the pull carrying it hasn't run yet — mismatches are
+       in-flight cargo (reported as 'pending'), not drift. */
+    sync_due_eta: string | null;
     comparison: AttrComparison[];
     summary: Partial<Record<AttrStatus, number>>;
   };

@@ -99,7 +99,12 @@ def _norm(v) -> str:
         return s
 
 
-def _compare(payload: dict, base_row: dict, customer: dict) -> tuple[list[dict], dict]:
+def _compare(
+    payload: dict, base_row: dict, customer: dict, in_flight: bool = False
+) -> tuple[list[dict], dict]:
+    """in_flight = the warehouse row is newer than the connector's last write
+    of this profile AND the pull that will carry it hasn't run yet — so a value
+    mismatch is normal propagation, not drift."""
     attrs = customer.get("attributes") or {}
     stamps = customer.get("timestamps") or {}
     rows: list[dict] = []
@@ -127,7 +132,9 @@ def _compare(payload: dict, base_row: dict, customer: dict) -> tuple[list[dict],
         elif not wh_n:
             status = "cio_only"  # set in CIO (trigger webhook / in-app), not in warehouse
         else:
-            status = "differs"
+            # A mismatch inside the propagation window is the next pull's
+            # cargo; only a mismatch that survived a pull is real drift.
+            status = "pending" if in_flight else "differs"
         rows.append(
             {
                 "name": name,
@@ -216,12 +223,34 @@ def lookup(email: str) -> dict:
             now.replace(minute=0, second=0, microsecond=0) + dt.timedelta(hours=1, minutes=15)
         ).isoformat()
 
+    # A profile whose warehouse row changed AFTER the connector's last write of
+    # it (updated_at_unix's own CIO write stamp = the last time a pull touched
+    # this row) is in the normal ≤1-hour propagation window until the pull
+    # after the row change (+15 min for write lag). Mismatches inside that
+    # window are cargo, not drift.
+    sync_due_eta = None
+    row_updated = base_row.get("updated_at") if base_row else None
+    if in_view and cio_side.get("found") and isinstance(row_updated, dt.datetime):
+        last_row_write = (customer.get("timestamps") or {}).get("updated_at_unix")
+        eta = row_updated.replace(minute=0, second=0, microsecond=0) + dt.timedelta(
+            hours=1, minutes=15
+        )
+        # CIO stamps attributes with the PAYLOAD's timestamp — updated_at
+        # truncated to seconds — so compare whole seconds: the same second
+        # means this row-version was already written.
+        if (not last_row_write or int(row_updated.timestamp()) > last_row_write) and dt.datetime.now(
+            dt.timezone.utc
+        ) < eta:
+            sync_due_eta = eta.isoformat()
+
     comparison: list[dict] = []
     summary: dict = {}
     if in_view:
         # With no CIO profile yet, every populated attribute reads "pending" —
         # exactly right for a fan awaiting their first hourly sync.
-        comparison, summary = _compare(payload, base_row or {}, customer)
+        comparison, summary = _compare(
+            payload, base_row or {}, customer, in_flight=sync_due_eta is not None
+        )
 
     return {
         "email": email,
@@ -240,6 +269,7 @@ def lookup(email: str) -> dict:
             "in_sync_view": in_view,
             "excluded_reason": excluded_reason,
             "first_sync_eta": first_sync_eta,
+            "sync_due_eta": sync_due_eta,
             "comparison": comparison,
             "summary": summary,
         },

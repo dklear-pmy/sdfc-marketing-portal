@@ -196,7 +196,9 @@ function LookupResult({ data }: { data: CustomerLookup }) {
         <SnapshotCard row={warehouse.row} />
       </div>
       {cio.found && cio.cio_id && <ActivityCard cioId={cio.cio_id} />}
-      {sync.comparison.length > 0 && <AttributesCard comparison={sync.comparison} />}
+      {sync.comparison.length > 0 && (
+        <AttributesCard comparison={sync.comparison} syncDueEta={sync.sync_due_eta} />
+      )}
       <LedgerCard email={data.email} />
       {(cio.segments?.length ?? 0) > 0 && <SegmentsCard segments={cio.segments!} />}
     </>
@@ -337,7 +339,10 @@ function SegmentsCard({ segments }: { segments: { id: number | null; name: strin
 function SyncCard({ data }: { data: CustomerLookup }) {
   const { warehouse, sync, cio } = data;
   const s = sync.summary;
-  const attention = (s.differs ?? 0) + (s.pending ?? 0);
+  /* Pendings inside the propagation window ride the next pull — they're
+     in-flight, not problems. Without an ETA they're genuinely stuck. */
+  const inFlight = cio.found && sync.sync_due_eta ? (s.pending ?? 0) : 0;
+  const attention = (s.differs ?? 0) + (s.pending ?? 0) - inFlight;
 
   return (
     <Card>
@@ -359,6 +364,10 @@ function SyncCard({ data }: { data: CustomerLookup }) {
               </Badge>
             ) : attention > 0 ? (
               <Badge variant="destructive">{attention} need attention</Badge>
+            ) : inFlight > 0 ? (
+              <Badge variant="secondary">
+                {inFlight} syncing by ~{formatPacific(sync.sync_due_eta!, false)}
+              </Badge>
             ) : (
               <Badge variant="default">Attributes in sync</Badge>
             ))}
@@ -507,7 +516,13 @@ function attrValue(v: unknown): string {
 
 const attrCol = createColumnHelper<AttrComparison>();
 
-function AttributesCard({ comparison }: { comparison: AttrComparison[] }) {
+function AttributesCard({
+  comparison,
+  syncDueEta,
+}: {
+  comparison: AttrComparison[];
+  syncDueEta?: string | null;
+}) {
   const hasAttention = comparison.some((c) => ['differs', 'pending'].includes(c.status));
   /* Empty means "pick for me" — a profile with nothing to review opens on All.
      An explicit ?atab= from a shared link always wins over that default. */
@@ -559,6 +574,13 @@ function AttributesCard({ comparison }: { comparison: AttrComparison[] }) {
       attrCol.accessor('status', {
         header: 'Status',
         cell: (c) => {
+          // In-flight rows say when the pull that carries them lands.
+          if (c.getValue() === 'pending' && syncDueEta)
+            return (
+              <Badge variant="secondary" className="whitespace-nowrap">
+                Sync due ~{formatPacific(syncDueEta, false)}
+              </Badge>
+            );
           const meta = attrStatusMeta[c.getValue()];
           return <Badge variant={meta.variant}>{meta.label}</Badge>;
         },
@@ -577,7 +599,7 @@ function AttributesCard({ comparison }: { comparison: AttrComparison[] }) {
         },
       }),
     ],
-    []
+    [syncDueEta]
   );
 
   const table = useReactTable({
