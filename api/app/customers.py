@@ -249,7 +249,7 @@ def lookup(email: str) -> dict:
 _LIST_COLUMNS = (
     "email, full_name, sprocket_macro, stm_product, stm_type, ticketing_member_status, "
     "matches_attended_2026, matches_attended_lifetime, last_attendance_date, "
-    "lifetime_spend, tb_fan_source, updated_at"
+    "lifetime_spend, ticket_lifetime_spend, shopify_amount_spent, tb_fan_source, updated_at"
 )
 
 

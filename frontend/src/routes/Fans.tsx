@@ -440,8 +440,9 @@ function SnapshotCard({ row }: { row: Record<string, unknown> | null }) {
       'Last attended',
       row.last_attendance_date ? formatPacific(String(row.last_attendance_date)) : null,
     ],
+    ['Ticket spend', money(row.ticket_lifetime_spend)],
+    ['Merch spend', money(row.shopify_amount_spent)],
     ['Lifetime spend', money(row.lifetime_spend)],
-    ['Shopify spend', money(row.shopify_amount_spent)],
     [
       'Next event',
       row.ticketing_event_name
@@ -1043,14 +1044,15 @@ function FanList({ onSelect }: { onSelect: (email: string) => void }) {
                     <TableHead>STM</TableHead>
                     <TableHead className="text-right">2026 matches</TableHead>
                     <TableHead>Last attended</TableHead>
-                    <TableHead className="text-right">Spend</TableHead>
+                    <TableHead className="text-right">Ticket spend</TableHead>
+                    <TableHead className="text-right">Merch spend</TableHead>
                     <TableHead>Updated</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {data.fans.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={7} className="h-16 text-center text-muted-foreground">
+                      <TableCell colSpan={8} className="h-16 text-center text-muted-foreground">
                         No fans match{q ? ` “${q}”` : ''}.
                       </TableCell>
                     </TableRow>
@@ -1078,7 +1080,10 @@ function FanList({ onSelect }: { onSelect: (email: string) => void }) {
                         {f.last_attendance_date ? formatPacific(f.last_attendance_date) : '—'}
                       </TableCell>
                       <TableCell className="text-right text-sm">
-                        {money(f.lifetime_spend)}
+                        {money(f.ticket_lifetime_spend ?? 0)}
+                      </TableCell>
+                      <TableCell className="text-right text-sm">
+                        {money(f.shopify_amount_spent ?? 0)}
                       </TableCell>
                       <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
                         {relativeFrom(f.updated_at)}

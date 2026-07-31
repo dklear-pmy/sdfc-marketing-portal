@@ -267,6 +267,10 @@ export interface FanRow {
   matches_attended_lifetime: number | null;
   last_attendance_date: string | null;
   lifetime_spend: number | null;
+  /* The two components of lifetime_spend: SOLD seats from the reconciled
+     seat ledger, and all-time Shopify merch. */
+  ticket_lifetime_spend: number | null;
+  shopify_amount_spent: number | null;
   tb_fan_source: string | null;
   updated_at: string;
 }
