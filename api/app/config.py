@@ -9,10 +9,15 @@ GCP_PROJECT = "sdfc-udp-dev"
 CORS_ORIGINS = [
     o.strip()
     for o in os.environ.get(
-        "CORS_ORIGINS", "https://marketing.sdfc.dev,http://localhost:5173"
+        "CORS_ORIGINS",
+        "https://marketing.sdfc.dev,https://portal.sdfc.dev,http://localhost:5173",
     ).split(",")
     if o.strip()
 ]
+
+# Base URL for deep links in outbound alert emails. Kept on the legacy domain
+# until portal.sdfc.dev is validated; flip via env, then retire the default.
+PORTAL_BASE_URL = os.environ.get("PORTAL_BASE_URL", "https://marketing.sdfc.dev").rstrip("/")
 
 # Local-dev escape hatch only. Refused unless ENV=local so it can never be
 # switched on in a deployed revision by a stray env var.

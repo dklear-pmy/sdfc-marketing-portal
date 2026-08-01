@@ -21,7 +21,7 @@ from google.cloud import secretmanager
 
 from . import bqstate, mailpit, payloads
 from .cio import CioClient
-from .config import GCP_PROJECT, slug_registry
+from .config import GCP_PROJECT, PORTAL_BASE_URL, slug_registry
 
 EMAIL1_DEADLINE_MIN = 12  # CIO SMTP retries after a transient failure can land within ~10 min
 EMAIL2_DEADLINE_MIN = 30  # +10 min journey timer with generous tolerance
@@ -525,7 +525,7 @@ def advance_all() -> dict:
         alert = emailer.send_alert(
             subject=f"[Campaign Tester] {len(went_bad)} run{'s' if len(went_bad) > 1 else ''} failed unattended",
             text_body=f"Runs that went terminal on the scheduler tick:\n\n{lines}\n\n"
-            "Details: https://marketing.sdfc.dev/harness",
+            f"Details: {PORTAL_BASE_URL}/harness",
         )
     return {"advanced": len(results), "runs": results, "alert": alert}
 

@@ -48,7 +48,7 @@ from google.cloud import bigquery
 from . import emailer, mailpit
 from .bqstate import client
 from .cio import CioClient
-from .config import GCP_PROJECT, slug_registry
+from .config import GCP_PROJECT, PORTAL_BASE_URL, slug_registry
 from .runner import _webhook_url
 
 _DATASET = f"{GCP_PROJECT}.customerio_state"
@@ -666,7 +666,7 @@ def run_checks(source: str) -> dict:
 # ---- instance churn in customerio_state.tripwire_alert_state.
 
 REMINDER_MINUTES = 60
-_PORTAL_LINK = "https://marketing.sdfc.dev/tripwires"
+_PORTAL_LINK = f"{PORTAL_BASE_URL}/tripwires"
 
 
 def _humanize_dur(seconds: float) -> str:
