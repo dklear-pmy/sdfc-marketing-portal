@@ -12,9 +12,28 @@ import { auth } from './firebase';
 
 export type Role = 'viewer' | 'operator' | 'admin';
 
+export type Section = 'marketing' | 'fans' | 'stadium';
+export const SECTIONS: readonly Section[] = ['marketing', 'fans', 'stadium'];
+export const SECTION_LABELS: Record<Section, string> = {
+  marketing: 'Marketing tools',
+  fans: 'Fan data',
+  stadium: 'Stadium',
+};
+
+/* Mirrors the API's resolve_sections: admins hold everything, and a MISSING
+   claim also grants everything — pre-sections accounts were invited when
+   access was all-or-nothing. An explicit list (even []) is authoritative. */
+function resolveSections(role: Role | null, claim: unknown): Section[] {
+  if (!role) return [];
+  if (role === 'admin' || claim == null) return [...SECTIONS];
+  if (!Array.isArray(claim)) return [];
+  return SECTIONS.filter((s) => (claim as unknown[]).includes(s));
+}
+
 interface AuthState {
   user: User | null;
   role: Role | null;
+  sections: Section[];
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
@@ -26,6 +45,7 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<Role | null>(null);
+  const [sections, setSections] = useState<Section[]>([]);
   const [loading, setLoading] = useState(true);
 
   /* First sign-in creates the account before any role is stamped, so a user
@@ -43,9 +63,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           refreshed.current.add(u.uid);
           token = await u.getIdTokenResult(true);
         }
-        setRole((token.claims.portal_role as Role | undefined) ?? null);
+        const nextRole = (token.claims.portal_role as Role | undefined) ?? null;
+        setRole(nextRole);
+        setSections(resolveSections(nextRole, token.claims.portal_sections));
       } else {
         setRole(null);
+        setSections([]);
       }
       setLoading(false);
     });
@@ -62,7 +85,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = () => firebaseSignOut(auth);
 
   return (
-    <AuthContext.Provider value={{ user, role, loading, signIn, signInWithGoogle, signOut }}>
+    <AuthContext.Provider
+      value={{ user, role, sections, loading, signIn, signInWithGoogle, signOut }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -72,6 +97,66 @@ export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
+}
+
+/* Per-section route guard. Sits INSIDE RequireAuth, so user+role exist here;
+   this only decides whether this signed-in user may see this area. */
+export function RequireSection({ section, children }: { section: Section; children: ReactNode }) {
+  const { sections } = useAuth();
+  if (!sections.includes(section))
+    return (
+      <div className="flex min-h-[60svh] items-center justify-center p-8 text-center">
+        <div>
+          <h1 className="text-lg font-semibold">No access to {SECTION_LABELS[section]}</h1>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
+            Your account has portal access but not this section. Ask an admin to grant{' '}
+            {SECTION_LABELS[section]} — if it was just granted, sign out and back in to pick it up.
+          </p>
+        </div>
+      </div>
+    );
+  return children;
+}
+
+/* "/" lands on the first section this user can actually see. */
+const SECTION_HOME: Record<Section, string> = {
+  marketing: '/harness',
+  fans: '/fans',
+  stadium: '/stadium',
+};
+
+export function LandingRedirect() {
+  const { sections, role } = useAuth();
+  const first = SECTIONS.find((s) => sections.includes(s));
+  if (first) return <Navigate to={SECTION_HOME[first]} replace />;
+  if (role === 'admin') return <Navigate to="/admin" replace />;
+  return (
+    <div className="flex min-h-[60svh] items-center justify-center p-8 text-center">
+      <div>
+        <h1 className="text-lg font-semibold">No sections granted</h1>
+        <p className="mt-2 max-w-md text-sm text-muted-foreground">
+          Your account has portal access but no sections yet. Ask an admin to grant one — if that
+          just happened, sign out and back in to pick it up.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export function RequireAdmin({ children }: { children: ReactNode }) {
+  const { role } = useAuth();
+  if (role !== 'admin')
+    return (
+      <div className="flex min-h-[60svh] items-center justify-center p-8 text-center">
+        <div>
+          <h1 className="text-lg font-semibold">Admins only</h1>
+          <p className="mt-2 max-w-md text-sm text-muted-foreground">
+            Invites, roles, and alert recipients are managed by portal admins.
+          </p>
+        </div>
+      </div>
+    );
+  return children;
 }
 
 export function RequireAuth({ children }: { children: ReactNode }) {

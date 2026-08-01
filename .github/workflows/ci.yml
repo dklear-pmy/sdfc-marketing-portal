@@ -49,3 +49,5 @@ jobs:
       - run: python tests/test_render_checks.py
       # Payload templates: token filling, save validation, recipient-resolution gap.
       - run: python tests/test_payload_templates.py
+      # Two-axis access: section resolution, level/section decisions, merge-only claims.
+      - run: python tests/test_access_model.py

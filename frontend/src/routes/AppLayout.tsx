@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
-import { useAuth } from '@/lib/auth';
+import { useAuth, type Section } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
@@ -38,17 +38,17 @@ const paths = {
   map: 'M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7',
 };
 
-const nav = [
-  { to: '/harness', label: 'Campaign Tester', icon: paths.beaker },
-  { to: '/fans', label: 'Fan Activity', icon: paths.users },
-  { to: '/ledger', label: 'Fan Ledger', icon: paths.ledger },
-  { to: '/tripwires', label: 'Tripwires', icon: paths.bell },
-  { to: '/stadium', label: 'Stadium Heat', icon: paths.map },
+const nav: { to: string; label: string; icon: string; section: Section }[] = [
+  { to: '/harness', label: 'Campaign Tester', icon: paths.beaker, section: 'marketing' },
+  { to: '/fans', label: 'Fan Activity', icon: paths.users, section: 'fans' },
+  { to: '/ledger', label: 'Fan Ledger', icon: paths.ledger, section: 'fans' },
+  { to: '/tripwires', label: 'Tripwires', icon: paths.bell, section: 'marketing' },
+  { to: '/stadium', label: 'Stadium Heat', icon: paths.map, section: 'stadium' },
 ];
 
 function Wordmark() {
   return (
-    <NavLink to="/harness" className="flex items-center gap-2.5">
+    <NavLink to="/" className="flex items-center gap-2.5">
       <span className="size-2 rounded-[2px] bg-sdfc-orange" aria-hidden />
       <span className="font-heading text-2xl font-bold tracking-wide text-white">SDFC</span>
       <span className="h-5 w-px bg-sdfc-overlay" aria-hidden />
@@ -69,9 +69,10 @@ function useTheme() {
 }
 
 function SidebarNav({ children }: { children?: ReactNode }) {
-  const { role } = useAuth();
+  const { role, sections } = useAuth();
+  const visible = nav.filter((item) => sections.includes(item.section));
   const items =
-    role === 'admin' ? [...nav, { to: '/admin', label: 'Admin', icon: paths.gear }] : nav;
+    role === 'admin' ? [...visible, { to: '/admin', label: 'Admin', icon: paths.gear }] : visible;
   return (
     <nav className="mt-4 flex-1 overflow-y-auto">
       {items.map((item) => (

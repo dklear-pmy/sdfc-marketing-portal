@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { SECTIONS, SECTION_LABELS, type Section } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -21,6 +22,8 @@ interface PortalUser {
   uid: string;
   email: string | null;
   portal_role: string | null;
+  /* null = pre-sections account: full access until explicit grants are stamped. */
+  portal_sections: string[] | null;
   providers: string[];
   disabled: boolean;
 }
@@ -36,16 +39,57 @@ interface InviteResult {
   uid: string;
   email: string;
   portal_role: string;
+  portal_sections: string[] | null;
   created: boolean;
   invite_link: string;
 }
 
 const ROLES = ['viewer', 'operator', 'admin'] as const;
 
+/* What this user can currently see — mirrors the API's resolution: a missing
+   grants list means legacy full access. */
+function userSections(u: PortalUser): Section[] {
+  if (u.portal_sections == null) return [...SECTIONS];
+  return SECTIONS.filter((s) => u.portal_sections!.includes(s));
+}
+
+function SectionChips({
+  value,
+  disabled,
+  onToggle,
+}: {
+  value: Section[];
+  disabled?: boolean;
+  onToggle: (s: Section) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1">
+      {SECTIONS.map((s) => {
+        const active = value.includes(s);
+        return (
+          <Button
+            key={s}
+            type="button"
+            variant={active ? 'secondary' : 'outline'}
+            size="sm"
+            disabled={disabled}
+            className={active ? '' : 'text-muted-foreground'}
+            aria-pressed={active}
+            onClick={() => onToggle(s)}
+          >
+            {SECTION_LABELS[s]}
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Admin() {
   const queryClient = useQueryClient();
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<(typeof ROLES)[number]>('viewer');
+  const [inviteSections, setInviteSections] = useState<Section[]>([...SECTIONS]);
   const [lastInvite, setLastInvite] = useState<InviteResult | null>(null);
 
   const users = useQuery({
@@ -54,7 +98,13 @@ export default function Admin() {
   });
 
   const invite = useMutation({
-    mutationFn: () => api.post<InviteResult>('/api/admin/invites', { email, role }),
+    mutationFn: () =>
+      api.post<InviteResult>('/api/admin/invites', {
+        email,
+        role,
+        // Admins hold every section implicitly — send no grants.
+        sections: role === 'admin' ? null : inviteSections,
+      }),
     onSuccess: (result) => {
       setLastInvite(result);
       setEmail('');
@@ -63,8 +113,20 @@ export default function Admin() {
   });
 
   const setUserRole = useMutation({
-    mutationFn: ({ uid, newRole }: { uid: string; newRole: string | null }) =>
-      api.put<PortalUser>(`/api/admin/users/${uid}/role`, { role: newRole }),
+    mutationFn: ({
+      uid,
+      newRole,
+      sections,
+    }: {
+      uid: string;
+      newRole: string | null;
+      sections?: Section[];
+    }) =>
+      api.put<PortalUser>(`/api/admin/users/${uid}/role`, {
+        role: newRole,
+        // Omitted = leave the user's grants untouched (role-only change).
+        sections: sections ?? null,
+      }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['admin-users'] }),
   });
 
@@ -78,7 +140,10 @@ export default function Admin() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Admin</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Invite teammates and manage their portal roles.
+          Invite teammates, set their portal role, and choose which sections they can see. Role =
+          what they can do (viewer reads, operator runs and edits); sections = which areas exist for
+          them. Changes reach a signed-in user within an hour, or immediately after they sign out
+          and back in.
         </p>
       </div>
 
@@ -115,6 +180,22 @@ export default function Admin() {
             <Button type="submit" disabled={invite.isPending}>
               {invite.isPending ? 'Inviting…' : 'Invite'}
             </Button>
+            <div className="grid w-full gap-2">
+              <Label>Sections</Label>
+              {role === 'admin' ? (
+                <p className="text-sm text-muted-foreground">Admins see every section.</p>
+              ) : (
+                <SectionChips
+                  value={inviteSections}
+                  disabled={invite.isPending}
+                  onToggle={(s) =>
+                    setInviteSections((cur) =>
+                      cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]
+                    )
+                  }
+                />
+              )}
+            </div>
           </form>
 
           {invite.isError && (
@@ -127,8 +208,14 @@ export default function Admin() {
           {lastInvite && (
             <Alert>
               <AlertTitle>
-                {lastInvite.created ? 'Invited' : 'Role updated for existing account'}:{' '}
-                {lastInvite.email} ({lastInvite.portal_role})
+                {lastInvite.created ? 'Invited' : 'Access updated for existing account'}:{' '}
+                {lastInvite.email} ({lastInvite.portal_role}
+                {lastInvite.portal_role !== 'admin' && lastInvite.portal_sections
+                  ? ` — ${lastInvite.portal_sections
+                      .map((s) => SECTION_LABELS[s as Section] ?? s)
+                      .join(', ')}`
+                  : ''}
+                )
               </AlertTitle>
               <AlertDescription>
                 <div className="grid gap-2">
@@ -181,6 +268,7 @@ export default function Admin() {
                 <TableRow>
                   <TableHead>Email</TableHead>
                   <TableHead>Portal role</TableHead>
+                  <TableHead>Sections</TableHead>
                   <TableHead>Sign-in</TableHead>
                   <TableHead className="text-right">Change role</TableHead>
                 </TableRow>
@@ -197,6 +285,35 @@ export default function Admin() {
                           <Badge>{u.portal_role}</Badge>
                         ) : (
                           <span className="text-sm text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {u.portal_role === 'admin' ? (
+                          <Badge variant="outline">all sections</Badge>
+                        ) : (
+                          <div className="grid gap-1">
+                            <SectionChips
+                              value={userSections(u)}
+                              disabled={setUserRole.isPending}
+                              onToggle={(s) => {
+                                const cur = userSections(u);
+                                const next = cur.includes(s)
+                                  ? cur.filter((x) => x !== s)
+                                  : [...cur, s];
+                                setUserRole.mutate({
+                                  uid: u.uid,
+                                  newRole: u.portal_role,
+                                  sections: next,
+                                });
+                              }}
+                            />
+                            {u.portal_sections == null && (
+                              <span className="text-xs text-muted-foreground">
+                                full access from before sections existed — any toggle makes grants
+                                explicit
+                              </span>
+                            )}
+                          </div>
                         )}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">

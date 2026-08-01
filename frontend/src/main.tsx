@@ -2,7 +2,13 @@ import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { AuthProvider, RequireAuth } from '@/lib/auth';
+import {
+  AuthProvider,
+  LandingRedirect,
+  RequireAdmin,
+  RequireAuth,
+  RequireSection,
+} from '@/lib/auth';
 import AppLayout from '@/routes/AppLayout';
 import Login from '@/routes/Login';
 import Harness from '@/routes/Harness';
@@ -31,21 +37,58 @@ const router = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      { index: true, element: <Navigate to="/harness" replace /> },
-      { path: 'harness', element: <Harness /> },
-      { path: 'fans', element: <Fans /> },
-      { path: 'ledger', element: <FanLedger /> },
+      { index: true, element: <LandingRedirect /> },
+      {
+        path: 'harness',
+        element: (
+          <RequireSection section="marketing">
+            <Harness />
+          </RequireSection>
+        ),
+      },
+      {
+        path: 'fans',
+        element: (
+          <RequireSection section="fans">
+            <Fans />
+          </RequireSection>
+        ),
+      },
+      {
+        path: 'ledger',
+        element: (
+          <RequireSection section="fans">
+            <FanLedger />
+          </RequireSection>
+        ),
+      },
       { path: 'customers', element: <Navigate to="/fans" replace /> },
       {
         path: 'stadium',
         element: (
-          <Suspense fallback={null}>
-            <Stadium />
-          </Suspense>
+          <RequireSection section="stadium">
+            <Suspense fallback={null}>
+              <Stadium />
+            </Suspense>
+          </RequireSection>
         ),
       },
-      { path: 'tripwires', element: <Tripwires /> },
-      { path: 'admin', element: <Admin /> },
+      {
+        path: 'tripwires',
+        element: (
+          <RequireSection section="marketing">
+            <Tripwires />
+          </RequireSection>
+        ),
+      },
+      {
+        path: 'admin',
+        element: (
+          <RequireAdmin>
+            <Admin />
+          </RequireAdmin>
+        ),
+      },
     ],
   },
 ]);

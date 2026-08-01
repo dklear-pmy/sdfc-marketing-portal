@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from . import admin, bqstate, customers, emailer, ledger, payloads, runner, slugs, stadium, tripwires
-from .auth import Principal, require_role, require_scheduler_oidc
+from .auth import Principal, require_access, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
 from .validator import validate_slug
 
@@ -48,7 +48,7 @@ class SlugUpsert(BaseModel):
 
 
 @app.get("/api/slugs")
-def slugs_list(q: str | None = None, principal: Principal = require_role("viewer")) -> dict:
+def slugs_list(q: str | None = None, principal: Principal = require_access("marketing")) -> dict:
     if q and len(q) > 120:
         raise HTTPException(status_code=400, detail="Search too long")
     return {
@@ -65,7 +65,7 @@ def slugs_precheck(
     test_event_name: str | None = None,
     test_webhook_url: str | None = None,
     payload_template: str | None = None,
-    principal: Principal = require_role("viewer"),
+    principal: Principal = require_access("marketing"),
 ) -> dict:
     if payload_template and len(payload_template) > 10_000:
         raise HTTPException(status_code=400, detail="Payload template too long")
@@ -84,7 +84,7 @@ def slugs_precheck(
 
 
 @app.get("/api/slugs/{slug}/variables")
-def slugs_variables(slug: str, principal: Principal = require_role("viewer")) -> dict:
+def slugs_variables(slug: str, principal: Principal = require_access("marketing")) -> dict:
     try:
         return slugs.variables_report(_valid_slug(slug))
     except requests.RequestException as e:
@@ -92,7 +92,7 @@ def slugs_variables(slug: str, principal: Principal = require_role("viewer")) ->
 
 
 @app.post("/api/slugs/{slug}/variables/refresh")
-def slugs_variables_refresh(slug: str, principal: Principal = require_role("operator")) -> dict:
+def slugs_variables_refresh(slug: str, principal: Principal = require_access("marketing", "operator")) -> dict:
     try:
         return slugs.refresh_variables(_valid_slug(slug), actor=principal.email)
     except KeyError:
@@ -102,7 +102,7 @@ def slugs_variables_refresh(slug: str, principal: Principal = require_role("oper
 
 
 @app.get("/api/slugs/{slug}")
-def slugs_get(slug: str, principal: Principal = require_role("viewer")) -> dict:
+def slugs_get(slug: str, principal: Principal = require_access("marketing")) -> dict:
     entry = slugs.get_slug(_valid_slug(slug))
     if entry is None:
         raise HTTPException(status_code=404, detail="Slug not registered")
@@ -111,7 +111,7 @@ def slugs_get(slug: str, principal: Principal = require_role("viewer")) -> dict:
 
 @app.put("/api/slugs/{slug}")
 def slugs_upsert(
-    slug: str, body: SlugUpsert, principal: Principal = require_role("operator")
+    slug: str, body: SlugUpsert, principal: Principal = require_access("marketing", "operator")
 ) -> dict:
     fields = body.model_dump()
     if body.notes and len(body.notes) > 2000:
@@ -123,21 +123,21 @@ def slugs_upsert(
 
 
 @app.delete("/api/slugs/{slug}")
-def slugs_delete(slug: str, principal: Principal = require_role("operator")) -> dict:
+def slugs_delete(slug: str, principal: Principal = require_access("marketing", "operator")) -> dict:
     if not slugs.delete_slug(_valid_slug(slug)):
         raise HTTPException(status_code=404, detail="Slug not registered")
     return {"deleted": slug}
 
 
 @app.get("/api/harness/validate/{slug}")
-def harness_validate(slug: str, principal: Principal = require_role("viewer")) -> dict:
+def harness_validate(slug: str, principal: Principal = require_access("marketing")) -> dict:
     if len(slug) > 120:
         raise HTTPException(status_code=400, detail="Slug too long")
     return validate_slug(slug)
 
 
 @app.post("/api/harness/run/{slug}")
-def harness_start_run(slug: str, principal: Principal = require_role("operator")) -> dict:
+def harness_start_run(slug: str, principal: Principal = require_access("marketing", "operator")) -> dict:
     try:
         return runner.start_run(slug, actor=principal.email)
     except ValueError as e:
@@ -149,7 +149,7 @@ def harness_list_runs(
     q: str | None = None,
     status: str | None = None,
     limit: int = 50,
-    principal: Principal = require_role("viewer"),
+    principal: Principal = require_access("marketing"),
 ) -> dict:
     if q and len(q) > 200:
         raise HTTPException(status_code=400, detail="Search too long")
@@ -157,7 +157,7 @@ def harness_list_runs(
 
 
 @app.get("/api/harness/runs/{run_id}")
-def harness_get_run(run_id: str, principal: Principal = require_role("viewer")) -> dict:
+def harness_get_run(run_id: str, principal: Principal = require_access("marketing")) -> dict:
     run = bqstate.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Unknown run")
@@ -165,7 +165,7 @@ def harness_get_run(run_id: str, principal: Principal = require_role("viewer")) 
 
 
 @app.post("/api/harness/runs/{run_id}/advance")
-def harness_advance_run(run_id: str, principal: Principal = require_role("operator")) -> dict:
+def harness_advance_run(run_id: str, principal: Principal = require_access("marketing", "operator")) -> dict:
     try:
         return runner.advance_run(run_id)
     except KeyError:
@@ -182,12 +182,12 @@ _EVENT_RE = re.compile(r"[A-Za-z0-9 /&'.-]{1,60}")
 
 
 @app.get("/api/stadium-heat/events")
-def stadium_events(principal: Principal = require_role("viewer")) -> dict:
+def stadium_events(principal: Principal = require_access("stadium")) -> dict:
     return stadium.events()
 
 
 @app.get("/api/stadium-heat")
-def stadium_heat(event: str = "next", principal: Principal = require_role("viewer")) -> dict:
+def stadium_heat(event: str = "next", principal: Principal = require_access("stadium")) -> dict:
     if not _EVENT_RE.fullmatch(event):
         raise HTTPException(status_code=400, detail="Invalid event name")
     try:
@@ -204,7 +204,7 @@ def _valid_email(email: str) -> str:
 
 
 @app.get("/api/customers/lookup")
-def customers_lookup(email: str, principal: Principal = require_role("viewer")) -> dict:
+def customers_lookup(email: str, principal: Principal = require_access("fans")) -> dict:
     try:
         return customers.lookup(_valid_email(email))
     except requests.RequestException as e:
@@ -220,7 +220,7 @@ def ledger_events(
     include_echo: bool = False,
     limit: int = 20,
     offset: int = 0,
-    principal: Principal = require_role("viewer"),
+    principal: Principal = require_access("fans"),
 ) -> dict:
     if window not in ledger.WINDOWS:
         raise HTTPException(status_code=400, detail=f"window must be one of {list(ledger.WINDOWS)}")
@@ -240,7 +240,7 @@ def ledger_statuses(
     latched_only: bool = False,
     limit: int = 20,
     offset: int = 0,
-    principal: Principal = require_role("viewer"),
+    principal: Principal = require_access("fans"),
 ) -> dict:
     if q and len(q) > 200:
         raise HTTPException(status_code=400, detail="Search too long")
@@ -256,7 +256,7 @@ def customers_ledger(
     limit: int = 25,
     offset: int = 0,
     q: str | None = None,
-    principal: Principal = require_role("viewer"),
+    principal: Principal = require_access("fans"),
 ) -> dict:
     if q and len(q) > 200:
         raise HTTPException(status_code=400, detail="Search too long")
@@ -273,7 +273,7 @@ def customers_list(
     q: str | None = None,
     limit: int = 20,
     offset: int = 0,
-    principal: Principal = require_role("viewer"),
+    principal: Principal = require_access("fans"),
 ) -> dict:
     if q and len(q) > 200:
         raise HTTPException(status_code=400, detail="Search too long")
@@ -285,7 +285,7 @@ def customers_activities(
     cio_id: str,
     start: str | None = None,
     limit: int = 20,
-    principal: Principal = require_role("viewer"),
+    principal: Principal = require_access("fans"),
 ) -> dict:
     if not _CIO_ID_RE.fullmatch(cio_id):
         raise HTTPException(status_code=400, detail="Invalid cio_id")
@@ -300,7 +300,7 @@ def customers_messages(
     cio_id: str,
     start: str | None = None,
     limit: int = 20,
-    principal: Principal = require_role("viewer"),
+    principal: Principal = require_access("fans"),
 ) -> dict:
     if not _CIO_ID_RE.fullmatch(cio_id):
         raise HTTPException(status_code=400, detail="Invalid cio_id")
@@ -320,7 +320,7 @@ class TripwireCreate(BaseModel):
 
 
 @app.get("/api/tripwires")
-def tripwires_state(principal: Principal = require_role("viewer")) -> dict:
+def tripwires_state(principal: Principal = require_access("marketing")) -> dict:
     return tripwires.state()
 
 
@@ -328,13 +328,13 @@ def tripwires_state(principal: Principal = require_role("viewer")) -> dict:
 def tripwires_history(
     limit: int = 100,
     email: str | None = None,
-    principal: Principal = require_role("viewer"),
+    principal: Principal = require_access("marketing"),
 ) -> dict:
     return {"history": tripwires.history(limit=limit, email=email)}
 
 
 @app.post("/api/tripwires/run")
-def tripwires_run(principal: Principal = require_role("operator")) -> dict:
+def tripwires_run(principal: Principal = require_access("marketing", "operator")) -> dict:
     return tripwires.run_checks(source=principal.email or "manual")
 
 
@@ -344,7 +344,7 @@ def tripwires_tick() -> dict:
 
 
 @app.post("/api/tripwires")
-def tripwires_add(body: TripwireCreate, principal: Principal = require_role("operator")) -> dict:
+def tripwires_add(body: TripwireCreate, principal: Principal = require_access("marketing", "operator")) -> dict:
     if len(body.label) > 60:
         raise HTTPException(status_code=400, detail="Label too long")
     try:
@@ -374,7 +374,7 @@ class TripwireUpdate(BaseModel):
 
 @app.patch("/api/tripwires/{email}")
 def tripwires_update(
-    email: str, body: TripwireUpdate, principal: Principal = require_role("operator")
+    email: str, body: TripwireUpdate, principal: Principal = require_access("marketing", "operator")
 ) -> dict:
     if body.label and len(body.label) > 60:
         raise HTTPException(status_code=400, detail="Label too long")
@@ -398,7 +398,7 @@ def tripwires_update(
 
 @app.post("/api/tripwires/{email}/unsubscribe")
 def tripwires_make_resub_guard(
-    email: str, principal: Principal = require_role("operator")
+    email: str, principal: Principal = require_access("marketing", "operator")
 ) -> dict:
     """Unsubscribe a tripwire through its own email's one-click link and flip
     its expectation — from then on the 5-minute checks alert on re-subscription."""
@@ -409,7 +409,7 @@ def tripwires_make_resub_guard(
 
 
 @app.delete("/api/tripwires/{email}")
-def tripwires_delete(email: str, principal: Principal = require_role("operator")) -> dict:
+def tripwires_delete(email: str, principal: Principal = require_access("marketing", "operator")) -> dict:
     """Soft delete — checks stop and the card is hidden; CIO profile and check
     history stay, and the tripwire can be restored."""
     try:
@@ -419,7 +419,7 @@ def tripwires_delete(email: str, principal: Principal = require_role("operator")
 
 
 @app.post("/api/tripwires/{email}/restore")
-def tripwires_restore(email: str, principal: Principal = require_role("operator")) -> dict:
+def tripwires_restore(email: str, principal: Principal = require_access("marketing", "operator")) -> dict:
     try:
         return tripwires.restore_tripwire(_valid_email(email))
     except ValueError as e:
@@ -427,7 +427,7 @@ def tripwires_restore(email: str, principal: Principal = require_role("operator"
 
 
 @app.post("/api/tripwires/canary")
-def tripwires_canary(principal: Principal = require_role("operator")) -> dict:
+def tripwires_canary(principal: Principal = require_access("marketing", "operator")) -> dict:
     """Fire the synthetic canary by hand (the hourly Scheduler job posts to
     /api/tripwires/canary/tick)."""
     try:
@@ -474,10 +474,14 @@ def alert_recipients_remove(email: str, principal: Principal = require_role("adm
 class InviteRequest(BaseModel):
     email: str
     role: str
+    # None = leave grants alone (existing user) / legacy full access (new user).
+    sections: list[str] | None = None
 
 
 class RoleRequest(BaseModel):
     role: str | None
+    # None = leave grants unchanged; a list (even []) is authoritative.
+    sections: list[str] | None = None
 
 
 @app.get("/api/admin/users")
@@ -490,7 +494,7 @@ def admin_invite(body: InviteRequest, principal: Principal = require_role("admin
     if "@" not in body.email or len(body.email) > 254:
         raise HTTPException(status_code=400, detail="Invalid email")
     try:
-        return admin.invite(body.email.strip().lower(), body.role)
+        return admin.invite(body.email.strip().lower(), body.role, body.sections)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -500,6 +504,6 @@ def admin_set_role(uid: str, body: RoleRequest, principal: Principal = require_r
     if principal.uid == uid and body.role != "admin":
         raise HTTPException(status_code=400, detail="You cannot demote your own admin role")
     try:
-        return admin.set_role(uid, body.role)
+        return admin.set_role(uid, body.role, body.sections)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
