@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -151,14 +152,17 @@ export default function AppLayout() {
                 <Icon d="M19 9l-7 7-7-7" className="size-4 text-sdfc-chrome" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuLabel>
-                  <div className="grid gap-1">
-                    <span className="truncate text-sm font-medium">{user?.email}</span>
-                    <span>
-                      <Badge variant="outline">{role ?? 'no role'}</Badge>
-                    </span>
-                  </div>
-                </DropdownMenuLabel>
+                {/* Base UI's GroupLabel throws outside a Menu.Group (error #31). */}
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>
+                    <div className="grid gap-1">
+                      <span className="truncate text-sm font-medium">{user?.email}</span>
+                      <span>
+                        <Badge variant="outline">{role ?? 'no role'}</Badge>
+                      </span>
+                    </div>
+                  </DropdownMenuLabel>
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 {role === 'admin' && (
                   <DropdownMenuItem
