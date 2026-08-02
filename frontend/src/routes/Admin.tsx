@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { SECTIONS, SECTION_LABELS, type Section } from '@/lib/auth';
+import { ROLE_LABELS, SECTIONS, SECTION_LABELS, type Role, type Section } from '@/lib/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -172,7 +172,7 @@ export default function Admin() {
               <TabsList>
                 {ROLES.map((r) => (
                   <TabsTrigger key={r} value={r}>
-                    {r}
+                    {ROLE_LABELS[r]}
                   </TabsTrigger>
                 ))}
               </TabsList>
@@ -209,7 +209,8 @@ export default function Admin() {
             <Alert>
               <AlertTitle>
                 {lastInvite.created ? 'Invited' : 'Access updated for existing account'}:{' '}
-                {lastInvite.email} ({lastInvite.portal_role}
+                {lastInvite.email} (
+                {ROLE_LABELS[lastInvite.portal_role as Role] ?? lastInvite.portal_role}
                 {lastInvite.portal_role !== 'admin' && lastInvite.portal_sections
                   ? ` — ${lastInvite.portal_sections
                       .map((s) => SECTION_LABELS[s as Section] ?? s)
@@ -282,7 +283,7 @@ export default function Admin() {
                       <TableCell>{u.email ?? u.uid}</TableCell>
                       <TableCell>
                         {u.portal_role ? (
-                          <Badge>{u.portal_role}</Badge>
+                          <Badge>{ROLE_LABELS[u.portal_role as Role] ?? u.portal_role}</Badge>
                         ) : (
                           <span className="text-sm text-muted-foreground">—</span>
                         )}
@@ -329,7 +330,7 @@ export default function Admin() {
                               disabled={setUserRole.isPending}
                               onClick={() => setUserRole.mutate({ uid: u.uid, newRole: r })}
                             >
-                              {r}
+                              {ROLE_LABELS[r]}
                             </Button>
                           ))}
                           {u.portal_role && (
@@ -339,7 +340,7 @@ export default function Admin() {
                               disabled={setUserRole.isPending}
                               onClick={() => setUserRole.mutate({ uid: u.uid, newRole: null })}
                             >
-                              revoke
+                              Revoke
                             </Button>
                           )}
                         </div>

@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
-import { useAuth, type Section } from '@/lib/auth';
+import { ROLE_LABELS, useAuth, type Section } from '@/lib/auth';
 import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
@@ -158,7 +158,7 @@ export default function AppLayout() {
                     <div className="grid gap-1">
                       <span className="truncate text-sm font-medium">{user?.email}</span>
                       <span>
-                        <Badge variant="outline">{role ?? 'no role'}</Badge>
+                        <Badge variant="outline">{role ? ROLE_LABELS[role] : 'No role'}</Badge>
                       </span>
                     </div>
                   </DropdownMenuLabel>

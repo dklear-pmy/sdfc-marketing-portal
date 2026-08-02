@@ -485,7 +485,7 @@ export default function Stadium() {
                 }}
                 className="pb-2 text-xs text-white/60 hover:text-white"
               >
-                clear
+                Clear
               </button>
             )}
             {pickerOpen && (

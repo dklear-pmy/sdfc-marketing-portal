@@ -12,6 +12,13 @@ import { auth } from './firebase';
 
 export type Role = 'viewer' | 'operator' | 'admin';
 
+/* Claim values stay lowercase; every user-facing rendering uses these. */
+export const ROLE_LABELS: Record<Role, string> = {
+  viewer: 'Viewer',
+  operator: 'Operator',
+  admin: 'Admin',
+};
+
 export type Section = 'marketing' | 'fans' | 'stadium';
 export const SECTIONS: readonly Section[] = ['marketing', 'fans', 'stadium'];
 export const SECTION_LABELS: Record<Section, string> = {
