@@ -22,6 +22,7 @@ from google.cloud import secretmanager
 from . import bqstate, mailpit, payloads
 from .cio import CioClient
 from .config import GCP_PROJECT, PORTAL_BASE_URL, slug_registry
+from .slugs import get_slug
 
 EMAIL1_DEADLINE_MIN = 12  # CIO SMTP retries after a transient failure can land within ~10 min
 EMAIL2_DEADLINE_MIN = 30  # +10 min journey timer with generous tolerance
@@ -101,6 +102,76 @@ def _payload(spec: dict, identity: str, run_id: str) -> dict:
     """The slug's payload template (payloads.py) filled for this identity;
     entries without one get the tb_signup default shape."""
     return payloads.fill(payloads.effective_template(spec), identity)
+
+
+# The fixed identity for composer samples — deliberately NOT a minted run
+# identity: samples exist to seed Customer.io's Trigger data panel (so
+# trigger.* references validate), not to exercise a journey, and reusing one
+# address keeps the workspace free of throwaway profiles.
+SAMPLE_IDENTITY = "scenario-000@qa.sdfc.dev"
+
+
+# Campaign states where a webhook payload is stored as Trigger data but no
+# workflow executes. Anything else (running, or a state we couldn't read)
+# means the sample identity would enter the live workflow.
+_SAMPLE_SAFE_STATES = {"draft", "stopped", "paused"}
+
+
+def send_sample(slug: str, target: str, force: bool = False) -> dict | None:
+    """POST one contract-shaped payload at the slug's test or prod inbound
+    webhook, outside any run. Populates the campaign's Trigger data sample in
+    the Customer.io composer.
+
+    Prod sends are fail-closed: the prod trigger campaign's live state is
+    read from Customer.io first, and anything not provably draft/stopped is
+    {'blocked': True} unless force — a sample into a RUNNING campaign enters
+    the live workflow for SAMPLE_IDENTITY. Test sends skip the gate: firing
+    the twin is the harness's whole job.
+
+    Returns None when the slug is unregistered; {'error': ...} when the
+    target has no URL or the gate blocks.
+    """
+    spec = get_slug(slug)
+    if spec is None:
+        return None
+    url = (
+        spec.get("prod_webhook_url")
+        if target == "prod"
+        else spec.get("test_webhook_url")
+    )
+    if not url:
+        return {"error": f"No {target} webhook URL registered for this campaign"}
+
+    state = None
+    if target == "prod":
+        from .validator import _match_campaigns
+
+        try:
+            roles = _match_campaigns(CioClient().campaigns(), slug)
+            state = (roles.get("prod_trigger") or {}).get("state")
+        except Exception:  # noqa: BLE001 — unreadable state is treated as unsafe below
+            state = None
+        if not force and state not in _SAMPLE_SAFE_STATES:
+            return {
+                "blocked": True,
+                "state": state,
+                "error": (
+                    f"Prod campaign state is '{state or 'unverifiable'}' — a sample would enter "
+                    "the live workflow. Fix the state in Customer.io, or force-send if that is "
+                    "genuinely intended."
+                ),
+            }
+
+    payload = payloads.fill(payloads.effective_template(spec), SAMPLE_IDENTITY)
+    resp = requests.post(url.strip(), json=payload, timeout=20)
+    return {
+        "target": target,
+        "status_code": resp.status_code,
+        "ok": resp.status_code in (200, 202),
+        "identity": SAMPLE_IDENTITY,
+        "state": state,
+        "payload": payload,
+    }
 
 
 # The App API exposes a journey's MESSAGES but none of its workflow structure

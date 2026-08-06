@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type SlugVariables } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -76,6 +77,13 @@ function buildRows(v: SlugVariables): FieldRow[] {
   });
 }
 
+/* The paste-ready Send Event body for CIO's Build event editor (JSON →
+   JavaScript mode), generated from the payload contract so chat-copied
+   variants can't drift. trigger.* refs = the incoming webhook payload. */
+function sendEventSnippet(fields: string[]): string {
+  return `return {\n${fields.map((f) => `  "${f}": trigger.${f}`).join(',\n')}\n};`;
+}
+
 function Mark({ value, warn }: { value: boolean | null; warn?: boolean }) {
   if (value === null) return <span className="text-muted-foreground">?</span>;
   if (!value) return <span className="text-muted-foreground">—</span>;
@@ -110,6 +118,20 @@ export default function SlugVariablesPanel({
 
   const v = query.data;
   const rows = v ? buildRows(v) : [];
+
+  const snippetFields = v
+    ? v.registry.payload_fields.length
+      ? v.registry.payload_fields
+      : v.template.keys
+    : [];
+  const snippet = sendEventSnippet(snippetFields);
+  const [copied, setCopied] = useState(false);
+  const copySnippet = () => {
+    void navigator.clipboard.writeText(snippet).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   return (
     <Card>
@@ -183,6 +205,30 @@ export default function SlugVariablesPanel({
                 </p>
               )}
             </div>
+
+            {snippetFields.length > 0 && (
+              <div className="rounded-md border">
+                <div className="flex flex-wrap items-start justify-between gap-2 px-3 py-2">
+                  <div>
+                    <p className="text-sm font-medium">
+                      Send Event mapping — paste into Customer.io
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Generated from this campaign&apos;s payload contract. In each [1/2] trigger
+                      campaign: Send Event → Build event → JSON → JavaScript — replace the editor
+                      contents with this block. The EVENT NAME box stays per half (test uses the
+                      pmy_test_… name); leave &quot;Who do you want to update?&quot; as email =
+                      trigger attribute email. The harness&apos;s test payload is separate — it
+                      lives on the Registration tab and is sent automatically by Run test.
+                    </p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={copySnippet}>
+                    {copied ? 'Copied ✓' : 'Copy'}
+                  </Button>
+                </div>
+                <pre className="overflow-x-auto border-t bg-muted/40 p-3 text-xs">{snippet}</pre>
+              </div>
+            )}
 
             <div className="overflow-x-auto">
               <Table>

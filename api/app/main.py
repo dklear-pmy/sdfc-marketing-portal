@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import admin, bqstate, customers, emailer, ledger, payloads, runner, slugs, stadium, tripwires
+from . import admin, affected, bqstate, customers, emailer, ledger, payloads, runner, slugs, stadium, tripwires
 from .auth import Principal, require_access, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
 from .validator import validate_slug
@@ -35,6 +35,7 @@ def _valid_slug(slug: str) -> str:
 
 class SlugUpsert(BaseModel):
     trigger_key: str | None = None
+    trigger_label: str | None = None
     event_name: str | None = None
     test_event_name: str | None = None
     payload_fields: list[str] = []
@@ -99,6 +100,69 @@ def slugs_variables_refresh(slug: str, principal: Principal = require_access("ma
         raise HTTPException(status_code=404, detail="Slug not registered")
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=f"Customer.io API error: {e}")
+
+
+@app.get("/api/slugs/{slug}/affected")
+def slugs_affected(
+    slug: str,
+    q: str | None = None,
+    status: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    principal: Principal = require_access("marketing"),
+) -> dict:
+    if q and len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search too long")
+    page = affected.affected_page(
+        _valid_slug(slug),
+        q,
+        status,
+        limit=max(1, min(limit, 100)),
+        offset=max(0, min(offset, 100_000)),
+    )
+    if page is None:
+        raise HTTPException(status_code=404, detail="Slug not registered")
+    return page
+
+
+@app.get("/api/slugs/{slug}/preview")
+def slugs_preview(
+    slug: str,
+    q: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    principal: Principal = require_access("marketing"),
+) -> dict:
+    if q and len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search too long")
+    page = affected.would_fire_page(
+        _valid_slug(slug),
+        q,
+        limit=max(1, min(limit, 100)),
+        offset=max(0, min(offset, 100_000)),
+    )
+    if page is None:
+        raise HTTPException(status_code=404, detail="Slug not registered")
+    return page
+
+
+@app.post("/api/slugs/{slug}/sample")
+def slugs_send_sample(
+    slug: str,
+    target: str = "test",
+    force: bool = False,
+    principal: Principal = require_access("marketing", "operator"),
+) -> dict:
+    if target not in ("test", "prod"):
+        raise HTTPException(status_code=400, detail="target must be 'test' or 'prod'")
+    result = runner.send_sample(_valid_slug(slug), target, force=force)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Slug not registered")
+    if result.get("blocked"):
+        raise HTTPException(status_code=409, detail=result["error"])
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 @app.get("/api/slugs/{slug}")

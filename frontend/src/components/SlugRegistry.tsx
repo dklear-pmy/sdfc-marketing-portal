@@ -4,6 +4,7 @@ import {
   api,
   type HarnessRunSummary,
   type PrecheckLevel,
+  type SampleResult,
   type SlugEntry,
   type SlugListResponse,
   type SlugPrecheck,
@@ -57,6 +58,7 @@ const runVariant: Record<HarnessRunSummary['status'], 'default' | 'destructive' 
 export interface Draft {
   slug: string;
   trigger_key: string;
+  trigger_label: string;
   event_name: string;
   test_event_name: string;
   payload_fields: string;
@@ -65,6 +67,7 @@ export interface Draft {
   webhook_secrets: string;
   test_webhook_secret: string;
   test_webhook_url: string;
+  prod_webhook_url: string;
   payload_template: string;
   notes: string;
 }
@@ -72,6 +75,7 @@ export interface Draft {
 const EMPTY_DRAFT: Draft = {
   slug: '',
   trigger_key: '',
+  trigger_label: '',
   event_name: '',
   test_event_name: '',
   payload_fields: '',
@@ -80,6 +84,7 @@ const EMPTY_DRAFT: Draft = {
   webhook_secrets: '',
   test_webhook_secret: '',
   test_webhook_url: '',
+  prod_webhook_url: '',
   payload_template: '',
   notes: '',
 };
@@ -88,6 +93,7 @@ export function toDraft(e: SlugEntry): Draft {
   return {
     slug: e.slug,
     trigger_key: e.trigger_key ?? '',
+    trigger_label: e.trigger_label ?? '',
     event_name: e.event_name ?? '',
     test_event_name: e.test_event_name ?? '',
     payload_fields: e.payload_fields.join('\n'),
@@ -96,6 +102,7 @@ export function toDraft(e: SlugEntry): Draft {
     webhook_secrets: e.webhook_secrets.join(', '),
     test_webhook_secret: e.test_webhook_secret ?? '',
     test_webhook_url: e.test_webhook_url ?? '',
+    prod_webhook_url: e.prod_webhook_url ?? '',
     payload_template: e.payload_template ?? '',
     notes: e.notes ?? '',
   };
@@ -110,6 +117,7 @@ const parseList = (s: string) =>
 function toBody(d: Draft) {
   return {
     trigger_key: d.trigger_key.trim() || null,
+    trigger_label: d.trigger_label.trim() || null,
     event_name: d.event_name.trim() || null,
     test_event_name: d.test_event_name.trim() || null,
     payload_fields: parseList(d.payload_fields),
@@ -118,6 +126,7 @@ function toBody(d: Draft) {
     webhook_secrets: parseList(d.webhook_secrets),
     test_webhook_secret: d.test_webhook_secret.trim() || null,
     test_webhook_url: d.test_webhook_url.trim() || null,
+    prod_webhook_url: d.prod_webhook_url.trim() || null,
     payload_template: d.payload_template.trim() || null,
     notes: d.notes.trim() || null,
   };
@@ -313,6 +322,7 @@ export function SlugForm({
   const [filled, setFilled] = useState(0);
   const [confirmTemplate, setConfirmTemplate] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const [confirmProdSample, setConfirmProdSample] = useState(false);
   const set = (patch: Partial<Draft>) => setDraft((prev) => ({ ...prev, ...patch }));
 
   const precheck = useMutation({
@@ -371,6 +381,23 @@ export function SlugForm({
     },
   });
 
+  /* Fires one contract-shaped payload at the SAVED entry's webhook — seeds
+     the Customer.io composer's Trigger data sample so trigger.* references
+     validate. Uses the saved URL, not the draft: save first. The server
+     re-checks the prod campaign's live state and 409s unless draft/stopped;
+     force is the explicit override offered after that refusal. */
+  const sample = useMutation({
+    mutationFn: ({ target, force }: { target: 'test' | 'prod'; force?: boolean }) =>
+      api.post<SampleResult>(
+        `/api/slugs/${encodeURIComponent(existingSlug ?? draft.slug.trim())}/sample` +
+          `?target=${target}${force ? '&force=true' : ''}`
+      ),
+  });
+
+  /* The prod trigger's live state from the on-open precheck — dialog copy
+     only; the server re-verifies at send time. */
+  const prodState = precheck.data?.campaigns.find((c) => c.role === 'prod_trigger')?.state;
+
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (draft.slug.trim()) save.mutate(draft);
@@ -410,6 +437,15 @@ export function SlugForm({
             onChange={(e) => set({ trigger_key: e.target.value })}
           />
         </div>
+        <div className="grid gap-2">
+          <Label htmlFor="reg-trigger-label">Trigger display name</Label>
+          <Input
+            id="reg-trigger-label"
+            placeholder="what the portal shows instead of the key — rename freely"
+            value={draft.trigger_label}
+            onChange={(e) => set({ trigger_label: e.target.value })}
+          />
+        </div>
         {/* Test on the left, prod on the right — the tester drives the test
             pair; the prod side is reference. */}
         <div className="grid gap-2">
@@ -432,18 +468,57 @@ export function SlugForm({
         </div>
         <div className="grid gap-2 sm:col-span-2">
           <Label htmlFor="reg-test-url">Test webhook URL</Label>
-          <Input
-            id="reg-test-url"
-            className="max-w-full font-mono text-xs"
-            placeholder="https://api.customer.io/v1/webhook/…"
-            value={draft.test_webhook_url}
-            onChange={(e) => set({ test_webhook_url: e.target.value })}
-          />
+          <div className="flex items-center gap-2">
+            <Input
+              id="reg-test-url"
+              className="max-w-full font-mono text-xs"
+              placeholder="https://api.customer.io/v1/webhook/…"
+              value={draft.test_webhook_url}
+              onChange={(e) => set({ test_webhook_url: e.target.value })}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={!draft.test_webhook_url.trim() || sample.isPending}
+              onClick={() => sample.mutate({ target: 'test' })}
+            >
+              Send sample
+            </Button>
+          </div>
           <p className="text-xs text-muted-foreground">
             Paste it from the twin's [1/2] trigger settings — Customer.io doesn't expose webhook
             URLs via API. Required before the runner can fire this campaign; visible to signed-in
-            portal users (internal tool, by design). The live campaign's URL stays with the trigger
-            hub and is never entered here.
+            portal users (internal tool, by design).
+          </p>
+        </div>
+        <div className="grid gap-2 sm:col-span-2">
+          <Label htmlFor="reg-prod-url">Prod webhook URL</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="reg-prod-url"
+              className="max-w-full font-mono text-xs"
+              placeholder="https://api.customer.io/v1/webhook/…"
+              value={draft.prod_webhook_url}
+              onChange={(e) => set({ prod_webhook_url: e.target.value })}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              disabled={!draft.prod_webhook_url.trim() || sample.isPending}
+              onClick={() => setConfirmProdSample(true)}
+            >
+              Send sample
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            The live [1/2] campaign's inbound webhook — used only for composer sample payloads (Send
+            sample seeds the Trigger data panel so trigger.* references validate). The trigger hub
+            keeps its own copy in Secret Manager; the runner never fires this URL. Send sample uses
+            the saved URL, so save the entry first.
           </p>
         </div>
         <div className="grid gap-2">
@@ -572,6 +647,50 @@ export function SlugForm({
           destructive
           onConfirm={() => remove.mutate(existingSlug)}
         />
+      )}
+      <ConfirmDialog
+        open={confirmProdSample}
+        onOpenChange={setConfirmProdSample}
+        title="Send a sample payload to the PROD webhook?"
+        description={
+          prodState && ['draft', 'stopped', 'paused'].includes(prodState)
+            ? `The prod campaign is currently ${prodState} — Customer.io stores the payload as Trigger data and runs nothing. The server re-checks the live state before sending.`
+            : prodState
+              ? `The prod campaign is currently ${prodState.toUpperCase()} — the sample identity (scenario-000@qa.sdfc.dev) would enter the live workflow, so the server will refuse this send unless forced.`
+              : 'The prod campaign state could not be read — the server checks it live and only sends while the campaign is draft or stopped.'
+        }
+        confirmLabel="Send sample"
+        onConfirm={() => sample.mutate({ target: 'prod' })}
+      />
+
+      {sample.isError && (
+        <Alert variant="destructive">
+          <AlertTitle>Sample not sent</AlertTitle>
+          <AlertDescription>{(sample.error as Error).message}</AlertDescription>
+          {(sample.error as Error).message.includes('force') && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2 w-fit"
+              disabled={sample.isPending}
+              onClick={() => sample.mutate({ target: 'prod', force: true })}
+            >
+              Send anyway — I understand it enters the live workflow
+            </Button>
+          )}
+        </Alert>
+      )}
+      {sample.isSuccess && (
+        <Alert>
+          <AlertTitle>
+            Sample delivered to the {sample.data.target} webhook (HTTP {sample.data.status_code})
+          </AlertTitle>
+          <AlertDescription>
+            Re-open the campaign's composer and pick the newest sample — trigger.* references now
+            validate against the contract payload for {sample.data.identity}.
+          </AlertDescription>
+        </Alert>
       )}
 
       {(save.isError || remove.isError) && (

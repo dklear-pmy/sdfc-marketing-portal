@@ -82,6 +82,9 @@ export interface ValidationReport {
 export interface SlugEntry {
   slug: string;
   trigger_key: string | null;
+  /* user-editable display name for the trigger; trigger_key stays the stable
+     internal identity (hub state rows, env vars) */
+  trigger_label: string | null;
   event_name: string | null;
   test_event_name: string | null;
   payload_fields: string[];
@@ -90,11 +93,27 @@ export interface SlugEntry {
   webhook_secrets: string[];
   test_webhook_secret: string | null;
   test_webhook_url: string | null;
+  /* the live [1/2] campaign's inbound webhook — composer sample payloads
+     only; the runner never fires it */
+  prod_webhook_url: string | null;
   payload_template: string | null;
   notes: string | null;
   updated_at: string | null;
   updated_by: string | null;
   runnable?: boolean;
+}
+
+/* Result of POST /api/slugs/{slug}/sample — one contract-shaped payload
+   fired at the test or prod inbound webhook to seed the composer's Trigger
+   data sample. */
+export interface SampleResult {
+  target: 'test' | 'prod';
+  status_code: number;
+  ok: boolean;
+  identity: string;
+  /* the prod campaign's live state at send time (prod target only) */
+  state: string | null;
+  payload: Record<string, unknown>;
 }
 
 export interface SlugListResponse {
@@ -284,6 +303,68 @@ export interface FanListPage {
   total: number;
   limit: number;
   offset: number;
+}
+
+/* One cio-trigger-hub fire attempt for a campaign's trigger — the
+   "affected customers" row. payload_json is the exact JSON the campaign's
+   inbound webhook received. */
+export interface AffectedCustomerRow {
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  status: 'sent' | 'failed' | 'suppressed' | 'baseline' | string;
+  status_code: number | null;
+  error: string | null;
+  fired_at: string;
+  dedup_key: string;
+  /* null on bootstrap rows (baseline/suppressed) — those never fired, so
+     there was no webhook payload to record */
+  payload_json: string | null;
+}
+
+export interface AffectedCustomersPage {
+  /* null = slug registered but no trigger key mapped yet */
+  trigger_key: string | null;
+  /* the registry's editable display name for the trigger, if set */
+  trigger_label: string | null;
+  rows: AffectedCustomerRow[];
+  total: number;
+  limit: number;
+  offset: number;
+  statuses: string[];
+}
+
+/* One customer the trigger hub WOULD select on its next run — the live
+   warehouse preview (vw_campaign_would_fire: candidate SQL minus everyone
+   already in the fire log). payload_json is the JSON the webhook would
+   receive. */
+export interface WouldFireRow {
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  /* the triggering moment (e.g. TB activity time); null for triggers whose
+     logic has no event timestamp (attribute-state diffs like single-game) */
+  event_at: string | null;
+  dedup_key: string;
+  payload_json: string | null;
+}
+
+export interface WouldFirePage {
+  /* null = slug registered but no trigger key mapped yet */
+  trigger_key: string | null;
+  /* the registry's editable display name for the trigger, if set */
+  trigger_label: string | null;
+  rows: WouldFireRow[];
+  total: number;
+  limit: number;
+  offset: number;
+  /* the trigger's max_per_run circuit breaker; total > cap means the hub
+     would skip-and-alert instead of sending. null for unknown triggers */
+  cap: number | null;
+  /* mirror of the trigger's enabled flag in the hub. false = the preview
+     shows drafted/placeholder logic the hub won't execute yet; null for
+     unknown triggers */
+  enabled: boolean | null;
 }
 
 export interface LedgerStatus {

@@ -36,6 +36,8 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { UnderlineTabs } from '@/components/ui/underline-tabs';
+import { AffectedCustomersTab } from '@/components/AffectedCustomers';
+import { WouldFireTab } from '@/components/WouldFire';
 import {
   Table,
   TableBody,
@@ -56,6 +58,8 @@ export const CAMPAIGN_TABS = [
   { key: 'registration', label: 'Registration' },
   { key: 'variables', label: 'Variables' },
   { key: 'wiring', label: 'Wiring check' },
+  { key: 'preview', label: 'Would fire' },
+  { key: 'affected', label: 'Have fired' },
   { key: 'runs', label: 'Test runs' },
 ] as const;
 export type CampaignTab = (typeof CAMPAIGN_TABS)[number]['key'];
@@ -187,6 +191,8 @@ export default function CampaignDrilldown({
       )}
       {tab === 'variables' && <SlugVariablesPanel slug={slug} />}
       {tab === 'wiring' && <WiringTab slug={slug} />}
+      {tab === 'preview' && <WouldFireTab slug={slug} />}
+      {tab === 'affected' && <AffectedCustomersTab slug={slug} />}
       {tab === 'runs' && (
         <>
           <ActiveRunsBoard slug={slug} activeRunId={activeRunId} onSelect={onSelectRun} />

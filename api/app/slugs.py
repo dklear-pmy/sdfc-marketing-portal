@@ -78,6 +78,7 @@ def _row_to_entry(r: dict) -> dict:
     entry = {
         "slug": r["slug"],
         "trigger_key": r.get("trigger_key"),
+        "trigger_label": r.get("trigger_label"),
         "event_name": r.get("event_name"),
         "test_event_name": r.get("test_event_name"),
         "payload_fields": json.loads(r.get("payload_fields_json") or "[]"),
@@ -86,6 +87,7 @@ def _row_to_entry(r: dict) -> dict:
         "webhook_secrets": json.loads(r.get("webhook_secrets_json") or "[]"),
         "test_webhook_secret": r.get("test_webhook_secret"),
         "test_webhook_url": r.get("test_webhook_url"),
+        "prod_webhook_url": r.get("prod_webhook_url"),
         "payload_template": r.get("payload_template"),
         "notes": r.get("notes"),
         "updated_at": r.get("updated_at"),
@@ -133,25 +135,28 @@ def upsert_slug(slug: str, fields: dict, actor: str | None) -> dict:
     q = f"""
     MERGE `{_TABLE}` t USING (SELECT @slug AS slug) s ON t.slug = s.slug
     WHEN MATCHED THEN UPDATE SET
-      trigger_key = @trigger_key, event_name = @event_name,
+      trigger_key = @trigger_key, trigger_label = @trigger_label, event_name = @event_name,
       test_event_name = @test_event_name, payload_fields_json = @payload_fields,
       person_attributes_json = @person_attributes, filter_fields_json = @filter_fields,
       webhook_secrets_json = @webhook_secrets,
       test_webhook_secret = @test_webhook_secret, test_webhook_url = @test_webhook_url,
+      prod_webhook_url = @prod_webhook_url,
       payload_template = @payload_template,
       notes = @notes, updated_at = CURRENT_TIMESTAMP(), updated_by = @actor
     WHEN NOT MATCHED THEN INSERT
-      (slug, trigger_key, event_name, test_event_name, payload_fields_json,
+      (slug, trigger_key, trigger_label, event_name, test_event_name, payload_fields_json,
        person_attributes_json, filter_fields_json, webhook_secrets_json, test_webhook_secret,
-       test_webhook_url, payload_template, notes, created_at, created_by, updated_at, updated_by)
-    VALUES (@slug, @trigger_key, @event_name, @test_event_name, @payload_fields,
+       test_webhook_url, prod_webhook_url, payload_template, notes, created_at, created_by,
+       updated_at, updated_by)
+    VALUES (@slug, @trigger_key, @trigger_label, @event_name, @test_event_name, @payload_fields,
             @person_attributes, @filter_fields, @webhook_secrets, @test_webhook_secret,
-            @test_webhook_url, @payload_template, @notes, CURRENT_TIMESTAMP(), @actor,
-            CURRENT_TIMESTAMP(), @actor)
+            @test_webhook_url, @prod_webhook_url, @payload_template, @notes, CURRENT_TIMESTAMP(),
+            @actor, CURRENT_TIMESTAMP(), @actor)
     """
     params = [
         bigquery.ScalarQueryParameter("slug", "STRING", slug),
         bigquery.ScalarQueryParameter("trigger_key", "STRING", fields.get("trigger_key")),
+        bigquery.ScalarQueryParameter("trigger_label", "STRING", fields.get("trigger_label")),
         bigquery.ScalarQueryParameter("event_name", "STRING", fields.get("event_name")),
         bigquery.ScalarQueryParameter("test_event_name", "STRING", fields.get("test_event_name")),
         bigquery.ScalarQueryParameter("payload_fields", "STRING", json.dumps(fields.get("payload_fields") or [])),
@@ -160,6 +165,7 @@ def upsert_slug(slug: str, fields: dict, actor: str | None) -> dict:
         bigquery.ScalarQueryParameter("webhook_secrets", "STRING", json.dumps(fields.get("webhook_secrets") or [])),
         bigquery.ScalarQueryParameter("test_webhook_secret", "STRING", fields.get("test_webhook_secret")),
         bigquery.ScalarQueryParameter("test_webhook_url", "STRING", fields.get("test_webhook_url")),
+        bigquery.ScalarQueryParameter("prod_webhook_url", "STRING", fields.get("prod_webhook_url")),
         bigquery.ScalarQueryParameter("payload_template", "STRING", fields.get("payload_template")),
         bigquery.ScalarQueryParameter("notes", "STRING", fields.get("notes")),
         bigquery.ScalarQueryParameter("actor", "STRING", actor),
@@ -192,6 +198,11 @@ def validate_entry(fields: dict) -> list[str]:
         v = fields.get(key)
         if v and not rx.match(v):
             errors.append(f"{label} '{v}' has an unexpected format")
+    # Display name is free text by design (the whole point is renameability);
+    # only a sanity length cap.
+    display = fields.get("trigger_label")
+    if display and len(display) > 80:
+        errors.append("Trigger display name is longer than 80 characters")
     for key, label in (
         ("payload_fields", "Payload field"),
         ("person_attributes", "Person attribute"),
@@ -204,11 +215,12 @@ def validate_entry(fields: dict) -> list[str]:
         problem = secret_ref_problem(v) if v else None
         if problem:
             errors.append(problem)
-    url = fields.get("test_webhook_url")
-    if url:
-        problem = webhook_url_problem(url)
-        if problem:
-            errors.append(problem)
+    for url_key in ("test_webhook_url", "prod_webhook_url"):
+        url = fields.get(url_key)
+        if url:
+            problem = webhook_url_problem(url)
+            if problem:
+                errors.append(problem)
     template = fields.get("payload_template")
     if template:
         errors += payloads.template_problems(template)

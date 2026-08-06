@@ -64,11 +64,28 @@ def _recipient_is_email(action: dict) -> bool:
     )
 
 
+# JS-mode Send Event bodies ('editor': 'js') carry source like
+#   return { "order_id": trigger.order_id, ... };
+# — capture each event-data key that forwards a trigger field. Static values
+# in the JS are invisible here by design: the contract comparison cares about
+# which trigger fields ride through to the journey event.
+_JS_EVENT_KEY = re.compile(r"[\"']?([A-Za-z0-9_.-]+)[\"']?\s*:\s*trigger\.([A-Za-z0-9_]+)")
+
+
 def _event_mapping_fields(actions: list[dict]) -> list[str] | None:
     for a in actions:
         if a.get("type") == "create_event":
+            body = a.get("body") or ""
+            if a.get("editor") == "js":
+                seen: set[str] = set()
+                fields = []
+                for key, _src in _JS_EVENT_KEY.findall(body):
+                    if key not in seen:
+                        seen.add(key)
+                        fields.append(key)
+                return fields or None
             try:
-                return [m["name"] for m in json.loads(a.get("body") or "[]")]
+                return [m["name"] for m in json.loads(body or "[]")]
             except (json.JSONDecodeError, KeyError, TypeError):
                 return None
     return None
