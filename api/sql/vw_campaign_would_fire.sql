@@ -4,6 +4,12 @@
 -- candidate CTE here must match its hub query. DRIFT WARNING: update
 -- together with triggers.py and affected.py TRIGGER_CAPS/TRIGGER_ENABLED.
 -- Deploy: bq query --use_legacy_sql=false < api/sql/vw_campaign_would_fire.sql
+--
+-- ACL: BQ views run with the CALLER's permissions (marketing-portal-sa).
+-- A branch that reads a NEW dataset 403s the portal tab until this view is
+-- added as an AUTHORIZED VIEW on that dataset (bq show --format=prettyjson
+-- <dataset>, append the view to `access`, bq update --source). Done
+-- 2026-08-07 for salesforce_silver (supporters branch).
 CREATE OR REPLACE VIEW `sdfc-udp-dev.customerio_state.vw_campaign_would_fire` AS
 WITH acts AS (
   SELECT
