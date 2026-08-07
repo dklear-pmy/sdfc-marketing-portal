@@ -9,7 +9,11 @@
 -- A branch that reads a NEW dataset 403s the portal tab until this view is
 -- added as an AUTHORIZED VIEW on that dataset (bq show --format=prettyjson
 -- <dataset>, append the view to `access`, bq update --source). Done
--- 2026-08-07 for salesforce_silver (supporters branch).
+-- 2026-08-07 for salesforce_silver (supporters branch) AND shopify_silver
+-- (the Aug-6 shopify branch had silently broken the tab — neither grant
+-- existed). Coverage now: tradablebits_bronze, customerio_gold,
+-- customerio_state via direct SA access; tradablebits_silver,
+-- salesforce_silver, shopify_silver via this authorized view.
 CREATE OR REPLACE VIEW `sdfc-udp-dev.customerio_state.vw_campaign_would_fire` AS
 WITH acts AS (
   SELECT
