@@ -38,6 +38,7 @@ TRIGGER_CAPS = {
     "welcome_tickets_single_game": 500,
     "welcome_shopify": 200,
     "welcome_tickets_membership": 25,
+    "welcome_tickets_supporters": 25,
 }
 
 # Mirror of each trigger's `enabled` flag in triggers.py (same drift
@@ -48,7 +49,8 @@ TRIGGER_ENABLED = {
     "tb_signup": True,
     "welcome_tickets_single_game": True,
     "welcome_shopify": False,  # draft SQL in the view; WHERE FALSE in the hub
-    "welcome_tickets_membership": False,  # lives on the legacy poller until cutover
+    "welcome_tickets_membership": False,  # reserved for the general STM journey re-spec
+    "welcome_tickets_supporters": True,  # SUPP deals — CIO relay pair 60/61
 }
 
 
