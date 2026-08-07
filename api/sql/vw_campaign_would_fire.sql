@@ -174,9 +174,16 @@ supporters_cand AS (
     AND o.record_type_id = '012UR000001cuNBYAY'
     AND o.group_c = 'General Season Tickets'
     AND o.close_date >= DATE_SUB(CURRENT_DATE('UTC'), INTERVAL 1 DAY)
+  -- No-email accounts are held, not fired (mirrors the hub guard): a fire
+  -- would burn the exactly-once key on an event Send Event can never
+  -- deliver. Dedup prefers a contact row that has an email.
   QUALIFY ROW_NUMBER() OVER (
-    PARTITION BY o.id ORDER BY o.system_modstamp DESC
+    PARTITION BY o.id
+    ORDER BY COALESCE(NULLIF(a.person_email, 'None'),
+                      NULLIF(c.email, 'None')) IS NOT NULL DESC,
+             o.system_modstamp DESC
   ) = 1
+    AND email IS NOT NULL
 )
 
 
