@@ -11,9 +11,11 @@
 -- <dataset>, append the view to `access`, bq update --source). Done
 -- 2026-08-07 for salesforce_silver (supporters branch) AND shopify_silver
 -- (the Aug-6 shopify branch had silently broken the tab — neither grant
--- existed). Coverage now: tradablebits_bronze, customerio_gold,
+-- existed), and again 2026-08-07 for ticketmaster_silver (supporters
+-- event-date branch). Coverage now: tradablebits_bronze, customerio_gold,
 -- customerio_state via direct SA access; tradablebits_silver,
--- salesforce_silver, shopify_silver via this authorized view.
+-- salesforce_silver, shopify_silver, ticketmaster_silver via this
+-- authorized view.
 CREATE OR REPLACE VIEW `sdfc-udp-dev.customerio_state.vw_campaign_would_fire` AS
 WITH acts AS (
   SELECT
@@ -154,7 +156,9 @@ supporters_cand AS (
     rep.name                                                    AS rep_name,
     rep.email                                                   AS rep_email,
     rep.phone                                                   AS rep_phone,
-    rep.name                                                    AS account_owner
+    rep.name                                                    AS account_owner,
+    nm.ticketing_event_date                                     AS ticketing_event_date,
+    nm.ticketing_event_name                                     AS ticketing_event_name
   FROM `sdfc-udp-dev.salesforce_silver.opportunity` o
   JOIN `sdfc-udp-dev.salesforce_silver.account` a
     ON a.id = o.account_id
@@ -168,6 +172,35 @@ supporters_cand AS (
     WHERE name NOT IN ('KORE Service', 'KORE Admin',
                        'Leap Marketing', 'Vozzi Integration')
   ) rep ON rep.id = a.owner_id
+  -- Next home match (mirrors the hub): real fixtures only — shells (Member
+  -- Lounge/Extra Time/Hospitality/parking/plan shells with placeholder
+  -- dates) and "vs TBD" contingencies excluded by long-name pattern; the
+  -- un-suffixed main event code (shortest name) wins. LEFT JOIN ON TRUE so
+  -- an empty off-season calendar nulls the field, not the candidates.
+  LEFT JOIN (
+    SELECT event_epoch AS ticketing_event_date,
+           event_name_long AS ticketing_event_name
+    FROM (
+      SELECT
+        UNIX_SECONDS(TIMESTAMP(DATETIME(event_date,
+          COALESCE(SAFE.PARSE_TIME('%H:%M:%S', event_time),
+                   TIME '00:00:00')),
+          'America/Los_Angeles'))  AS event_epoch,
+        event_name,
+        event_name_long
+      FROM `sdfc-udp-dev.ticketmaster_silver.dim_event_calendar`
+      WHERE is_match_event = TRUE
+        AND event_status = 'A'
+        AND event_date >= CURRENT_DATE('America/Los_Angeles')
+        AND REGEXP_CONTAINS(event_name_long, r'(?i)san diego fc vs')
+        AND NOT REGEXP_CONTAINS(event_name_long,
+            r'(?i)hospitality|member lounge|extra time|lanyard|parking|friendly|\btest\b|\btbd\b')
+    )
+    WHERE event_epoch > UNIX_SECONDS(CURRENT_TIMESTAMP())
+    QUALIFY ROW_NUMBER() OVER (
+      ORDER BY event_epoch, LENGTH(event_name)
+    ) = 1
+  ) nm ON TRUE
   WHERE o.is_closed = TRUE
     AND o.is_won = TRUE
     AND UPPER(o.name) LIKE '%SUPP%'
@@ -280,7 +313,8 @@ SELECT
     cand.opportunity_name, cand.stage_name, cand.is_closed, cand.is_won,
     cand.product, cand.amount, cand.seat_block, cand.number_of_seats,
     cand.ticket_price, cand.close_date, cand.rep_name, cand.rep_email,
-    cand.rep_phone, cand.account_owner
+    cand.rep_phone, cand.account_owner, cand.ticketing_event_date,
+    cand.ticketing_event_name
   ))
 FROM supporters_cand cand
 LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
