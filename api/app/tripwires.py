@@ -31,6 +31,12 @@ Checks by kind (each isolated — a thrown check records WARN, never aborts):
 Workspace-level check (recorded under email='_workspace'):
   pmy_test_lint   — no non-PMY-TEST campaign triggers on a pmy_test_* event
 
+Alerts are reserved for the system not operating — the canary and the
+delivery/suppression checks above. Configuration findings (CONFIG_CHECKS, e.g.
+pmy_test_lint) are recorded and surfaced on the Tripwires page, but never
+emailed: nothing is failing at runtime, so paging people hourly trains them to
+ignore the channel that should mean an outage.
+
 Registry + results live in `customerio_state.tripwires` / `tripwire_checks`
 (portal-sa is dataset WRITER). Provisioning fires a slug's TEST webhook, the
 same proven path the harness runner uses. Deleting is always soft — a
@@ -433,6 +439,29 @@ def _check_quiet(messages: list[dict], max_quiet_days: int | None) -> dict | Non
     return {"check_name": "quiet", "status": "PASS", "detail": f"Last send {days:.1f}d ago (threshold {max_quiet_days}d)"}
 
 
+# ---- alert class ----
+# An email means "the system is not operating" — the canary stopped getting
+# through, a real send went missing, an unsubscribe wasn't honored. A campaign
+# wired wrong is a different animal: nothing is broken at runtime, someone has
+# work to do, and it belongs on the Tripwires page where they'll see it in
+# context. Config findings are still recorded and still turn the workspace
+# card red; they just never page anyone. Add future lint-style checks here.
+CONFIG_CHECKS = frozenset({"pmy_test_lint"})
+
+
+def is_config_finding(row: dict) -> bool:
+    return row.get("check_name") in CONFIG_CHECKS
+
+
+def alertable(results: list[dict]) -> list[dict]:
+    """The failures that are allowed to page someone: runtime failures only.
+
+    A config finding is still a FAIL in the record and still reddens its card;
+    it just isn't an outage, so it never reaches the emailer.
+    """
+    return [r for r in results if r["status"] == "FAIL" and not is_config_finding(r)]
+
+
 def _check_workspace_lint(cio: CioClient) -> dict:
     campaigns = cio.campaigns()
     offenders = [
@@ -649,13 +678,17 @@ def run_checks(source: str) -> dict:
     _record(results, source)
     failing = sum(1 for r in results if r["status"] == "FAIL")
     warning = sum(1 for r in results if r["status"] == "WARN")
-    alert = _alerting([r for r in results if r["status"] == "FAIL"])
+    config = [r for r in results if r["status"] == "FAIL" and is_config_finding(r)]
+    alert = _alerting(alertable(results))
 
     return {
         "checked_at": _now().isoformat(),
         "checks": len(results),
         "fail": failing,
         "warn": warning,
+        # Of the failures above, how many are config findings — recorded and
+        # shown in the portal, deliberately not emailed.
+        "config_findings": len(config),
         "alert": alert,
         "results": results,
     }

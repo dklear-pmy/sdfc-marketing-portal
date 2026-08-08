@@ -107,8 +107,14 @@ export default function Tripwires() {
 
   const data = state.data;
   const failing = data?.tripwires.filter((t) => t.overall === 'FAIL') ?? [];
-  const workspaceFailing = data?.workspace.overall === 'FAIL';
+  /* Workspace lint is a CONFIGURATION finding: something is wired wrong, but
+     nothing is failing at runtime. It never emails (see CONFIG_CHECKS in
+     tripwires.py) and never drives the red banner — that stays reserved for
+     the system not operating, so a red page always means an outage. */
+  const configFindings = data?.workspace.checks.filter((c) => c.status === 'FAIL') ?? [];
+  const workspaceFailing = configFindings.length > 0;
   const canaryFailing = data?.canary?.overall === 'FAIL';
+  const systemFailing = canaryFailing || failing.length > 0;
   const guards = data?.tripwires.filter((t) => t.kind?.startsWith('guard')) ?? [];
   const campaigns = data?.tripwires.filter((t) => !t.kind || t.kind === 'campaign') ?? [];
 
@@ -148,24 +154,37 @@ export default function Tripwires() {
 
       {data && (
         <>
-          {failing.length > 0 || workspaceFailing || canaryFailing ? (
+          {systemFailing ? (
             <Alert variant="destructive">
               <AlertTitle>
                 {canaryFailing
                   ? 'Monitoring itself is not healthy'
-                  : failing.length > 0
-                    ? `${failing.length} tripwire${failing.length > 1 ? 's' : ''} failing`
-                    : 'Workspace lint failing'}
+                  : `${failing.length} tripwire${failing.length > 1 ? 's' : ''} failing`}
               </AlertTitle>
               <AlertDescription>
                 {[
                   canaryFailing &&
                     'The synthetic tripwire is failing — treat every other result here as unverified until it clears.',
                   failing.length > 0 && failing.map((t) => t.label).join(', '),
-                  workspaceFailing && 'PMY-TEST lint violation',
+                  workspaceFailing &&
+                    `Also ${configFindings.length} configuration finding${configFindings.length > 1 ? 's' : ''} on the Workspace card below (not alerted).`,
                 ]
                   .filter(Boolean)
                   .join(' · ')}
+              </AlertDescription>
+            </Alert>
+          ) : workspaceFailing ? (
+            <Alert>
+              <AlertTitle>
+                Sending is healthy — {configFindings.length} configuration finding
+                {configFindings.length > 1 ? 's' : ''}
+              </AlertTitle>
+              <AlertDescription>
+                A campaign is wired wrong, but nothing is failing at runtime, so no alert was sent —
+                alert emails are reserved for the canary and the delivery checks. See Workspace
+                below for what needs fixing.
+                {data.last_run_at &&
+                  ` Last checked ${relativeFrom(data.last_run_at)} (${formatPacific(data.last_run_at)}).`}
               </AlertDescription>
             </Alert>
           ) : (
@@ -235,7 +254,8 @@ export default function Tripwires() {
                 </div>
                 <CardDescription>
                   Checks on the Customer.io workspace itself — currently: no live campaign can ever
-                  fire on a test-only trigger.
+                  fire on a test-only trigger. Configuration findings surface here only; they never
+                  send alert emails, which stay reserved for the system not operating.
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-2">

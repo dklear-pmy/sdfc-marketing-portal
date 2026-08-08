@@ -96,9 +96,37 @@ def main() -> int:
 
     failures += test_resub_guard()
     failures += test_opposite_guards()
+    failures += test_alert_class()
 
     print("FAILED" if failures else "all canary check paths behave correctly")
     return 1 if failures else 0
+
+
+def test_alert_class() -> list:
+    """Alerts mean the system is down. A miswired campaign is real, recorded,
+    and shown in the portal — but it must never reach the emailer, or the
+    channel that should mean an outage becomes background noise."""
+    failures = []
+    lint_fail = {"email": "_workspace", "check_name": "pmy_test_lint", "status": "FAIL"}
+    canary_fail = {"email": "_canary", "check_name": "canary_send", "status": "FAIL"}
+    transport_fail = {"email": "a@qa.sdfc.dev", "check_name": "transport", "status": "FAIL"}
+    passing = {"email": "_workspace", "check_name": "pmy_test_lint", "status": "PASS"}
+
+    if T.alertable([lint_fail]):
+        failures.append("alert class: a config finding alone must not page anyone")
+    if [r["check_name"] for r in T.alertable([lint_fail, canary_fail, transport_fail])] != [
+        "canary_send",
+        "transport",
+    ]:
+        failures.append("alert class: runtime failures must still page, config filtered out")
+    if T.alertable([passing]):
+        failures.append("alert class: passing rows are never alertable")
+    if not T.is_config_finding(lint_fail) or T.is_config_finding(canary_fail):
+        failures.append("alert class: is_config_finding misclassifies")
+
+    for f in failures:
+        print(f"FAIL  {f}")
+    return failures
 
 
 RAW_WITH_UNSUB = (
