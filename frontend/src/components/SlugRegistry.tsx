@@ -446,6 +446,11 @@ export function SlugForm({
             value={draft.trigger_key}
             onChange={(e) => set({ trigger_key: e.target.value })}
           />
+          <p className="text-xs text-muted-foreground">
+            The triggers.py key of the production trigger that feeds this campaign — hub identity,
+            deliberately not the campaign's name. It stays stable when a campaign pair is recreated
+            under a new slug.
+          </p>
         </div>
         <div className="grid gap-2">
           <Label htmlFor="reg-trigger-label">Trigger display name</Label>
