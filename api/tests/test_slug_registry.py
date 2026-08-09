@@ -133,6 +133,17 @@ errs = validate_entry({"event_name": "pmy_test_shop"})
 assert any("must not use" in e for e in errs), errs
 errs = validate_entry({"event_name": "same", "test_event_name": "same"})
 assert errs, "identical prod/test events must be rejected"
+
+# --- key dating convention: dated slug ⇒ trigger key carries the same date ---
+errs = validate_entry({"trigger_key": "welcome_shopify"}, slug="Welcome-Retail-Shopify-260715")
+assert any("_260715" in e for e in errs), errs
+assert validate_entry({"trigger_key": "welcome_shopify_260715"}, slug="Welcome-Retail-Shopify-260715") == []
+# Wrong date is as bad as no date.
+errs = validate_entry({"trigger_key": "welcome_shopify_260807"}, slug="Welcome-Retail-Shopify-260715")
+assert any("_260715" in e for e in errs), errs
+# Undated legacy slugs are exempt; so is a row with no trigger key.
+assert validate_entry({"trigger_key": "welcome_tickets_single_game"}, slug="Welcome-Tickets-Single-Game") == []
+assert validate_entry({}, slug="Welcome-Retail-Shopify-260715") == []
 errs = validate_entry({"payload_fields": ["ok_field", "bad field!"]})
 assert any("bad field!" in e for e in errs), errs
 errs = validate_entry({"test_webhook_secret": "no spaces allowed"})

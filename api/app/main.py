@@ -187,7 +187,7 @@ def slugs_upsert(
     fields = body.model_dump()
     if body.notes and len(body.notes) > 2000:
         raise HTTPException(status_code=400, detail="Notes too long")
-    errors = slugs.validate_entry(fields)
+    errors = slugs.validate_entry(fields, slug=slug)
     if errors:
         raise HTTPException(status_code=400, detail="; ".join(errors))
     return slugs.upsert_slug(_valid_slug(slug), fields, actor=principal.email)

@@ -209,9 +209,19 @@ def delete_slug(slug: str) -> bool:
     return bool(job.num_dml_affected_rows)
 
 
-def validate_entry(fields: dict) -> list[str]:
+def validate_entry(fields: dict, slug: str | None = None) -> list[str]:
     """Shape errors for an upsert body; empty list when clean."""
     errors: list[str] = []
+    # Key dating convention (2026-08-09): a campaign slug that carries a date
+    # suffix must have a trigger key carrying the SAME date, so the key names
+    # the campaign generation it fires. Undated legacy slugs are exempt.
+    if slug and fields.get("trigger_key"):
+        m = re.search(r"-(\d{6})$", slug.strip())
+        if m and not fields["trigger_key"].endswith(f"_{m.group(1)}"):
+            errors.append(
+                f"Trigger key '{fields['trigger_key']}' must end with the campaign's "
+                f"date suffix _{m.group(1)} (dated pair ⇒ dated key)"
+            )
     for key, rx, label in (
         ("event_name", EVENT_RE, "Prod trigger event"),
         ("test_event_name", EVENT_RE, "Test trigger event"),
