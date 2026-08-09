@@ -127,7 +127,7 @@ shopify_cand AS (
     AND o.order_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 72 HOUR)
 ),
 supporters_cand AS (
-  -- welcome_tickets_supporters: MIRROR of the hub trigger (triggers.py).
+  -- welcome_tickets_supporters_260807: MIRROR of the hub trigger (triggers.py).
   -- Client spec 2026-08-07: closed/won + name contains SUPP + Record Type =
   -- Ticket Sales (012UR000001cuNBYAY) + Group = General Season Tickets +
   -- close date within 24h. rep_* = Account OWNER's User record.
@@ -298,10 +298,10 @@ FROM (SELECT 1) WHERE FALSE
 
 UNION ALL
 
--- welcome_tickets_supporters: STM-Supporter-New-Member-Welcome-Journey-260807
+-- welcome_tickets_supporters_260807: STM-Supporter-New-Member-Welcome-Journey-260807
 -- (CIO relay pair 60/61).
 SELECT
-  'welcome_tickets_supporters',
+  'welcome_tickets_supporters_260807',
   cand.dedup_key,
   cand.email,
   cand.first_name,
@@ -318,7 +318,7 @@ SELECT
   ))
 FROM supporters_cand cand
 LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
-  ON s.trigger = 'welcome_tickets_supporters'
+  ON s.trigger = 'welcome_tickets_supporters_260807'
  AND s.dedup_key = cand.dedup_key
  AND s.status IN ('sent', 'suppressed', 'baseline')
 WHERE s.dedup_key IS NULL
