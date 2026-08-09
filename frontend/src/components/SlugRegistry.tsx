@@ -11,7 +11,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useUrlFilters } from '@/lib/urlState';
-import { humanizeSlug, relativeFrom, statusLabel } from '@/lib/format';
+import { humanizeSlug, prettyPayload, relativeFrom, statusLabel } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -103,7 +103,8 @@ export function toDraft(e: SlugEntry): Draft {
     test_webhook_secret: e.test_webhook_secret ?? '',
     test_webhook_url: e.test_webhook_url ?? '',
     prod_webhook_url: e.prod_webhook_url ?? '',
-    payload_template: e.payload_template ?? '',
+    /* Older entries were saved single-line; always present JSON legibly. */
+    payload_template: e.payload_template ? prettyPayload(e.payload_template) : '',
     notes: e.notes ?? '',
   };
 }
@@ -364,8 +365,17 @@ export function SlugForm({
   }, []);
 
   const save = useMutation({
-    mutationFn: (d: Draft) =>
-      api.put<SlugEntry>(`/api/slugs/${encodeURIComponent(d.slug.trim())}`, toBody(d)),
+    mutationFn: (d: Draft) => {
+      /* Notes are edited in the drilldown header, not this form — send the
+         freshest saved note so this form's opening-time snapshot can't
+         clobber a newer edit. Falls back to the draft for new entries. */
+      const cached = queryClient
+        .getQueryData<SlugListResponse>(['slugs'])
+        ?.slugs.find((s) => s.slug === (existingSlug ?? d.slug.trim()));
+      const body = toBody(d);
+      if (cached) body.notes = cached.notes;
+      return api.put<SlugEntry>(`/api/slugs/${encodeURIComponent(d.slug.trim())}`, body);
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['slugs'] });
       onCommitted();
@@ -417,7 +427,7 @@ export function SlugForm({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="grid gap-2">
+        <div className="grid gap-2 sm:col-span-2">
           <Label htmlFor="reg-slug">Campaign slug</Label>
           <Input
             id="reg-slug"
@@ -446,80 +456,97 @@ export function SlugForm({
             onChange={(e) => set({ trigger_label: e.target.value })}
           />
         </div>
-        {/* Test on the left, prod on the right — the tester drives the test
-            pair; the prod side is reference. */}
-        <div className="grid gap-2">
-          <Label htmlFor="reg-test-event">Test trigger event (pmy_test_…)</Label>
-          <Input
-            id="reg-test-event"
-            placeholder="pmy_test_…"
-            value={draft.test_event_name}
-            onChange={(e) => set({ test_event_name: e.target.value })}
-          />
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="reg-event">Prod trigger event</Label>
-          <Input
-            id="reg-event"
-            placeholder="event the live journey listens on"
-            value={draft.event_name}
-            onChange={(e) => set({ event_name: e.target.value })}
-          />
-        </div>
-        <div className="grid gap-2 sm:col-span-2">
-          <Label htmlFor="reg-test-url">Test webhook URL</Label>
-          <div className="flex items-center gap-2">
-            <Input
-              id="reg-test-url"
-              className="max-w-full font-mono text-xs"
-              placeholder="https://api.customer.io/v1/webhook/…"
-              value={draft.test_webhook_url}
-              onChange={(e) => set({ test_webhook_url: e.target.value })}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              disabled={!draft.test_webhook_url.trim() || sample.isPending}
-              onClick={() => sample.mutate({ target: 'test' })}
-            >
-              Send sample
-            </Button>
+        {/* Test on the left, prod on the right — same fields on both sides so
+            the pair reads symmetrically; the tester drives the test half, the
+            prod half is reference. */}
+        <div className="grid content-start gap-3 rounded-lg border p-3">
+          <div>
+            <h4 className="text-sm font-medium">Test pair</h4>
+            <p className="text-xs text-muted-foreground">
+              The [PMY-TEST] twin campaigns — test runs fire this half.
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Paste it from the twin's [1/2] trigger settings — Customer.io doesn't expose webhook
-            URLs via API. Required before the runner can fire this campaign; visible to signed-in
-            portal users (internal tool, by design).
-          </p>
-        </div>
-        <div className="grid gap-2 sm:col-span-2">
-          <Label htmlFor="reg-prod-url">Prod webhook URL</Label>
-          <div className="flex items-center gap-2">
+          <div className="grid gap-2">
+            <Label htmlFor="reg-test-event">Trigger event (pmy_test_…)</Label>
             <Input
-              id="reg-prod-url"
-              className="max-w-full font-mono text-xs"
-              placeholder="https://api.customer.io/v1/webhook/…"
-              value={draft.prod_webhook_url}
-              onChange={(e) => set({ prod_webhook_url: e.target.value })}
+              id="reg-test-event"
+              placeholder="pmy_test_…"
+              value={draft.test_event_name}
+              onChange={(e) => set({ test_event_name: e.target.value })}
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="shrink-0"
-              disabled={!draft.prod_webhook_url.trim() || sample.isPending}
-              onClick={() => setConfirmProdSample(true)}
-            >
-              Send sample
-            </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
-            The live [1/2] campaign's inbound webhook — used only for composer sample payloads (Send
-            sample seeds the Trigger data panel so trigger.* references validate). The trigger hub
-            keeps its own copy in Secret Manager; the runner never fires this URL. Send sample uses
-            the saved URL, so save the entry first.
-          </p>
+          <div className="grid gap-2">
+            <Label htmlFor="reg-test-url">Webhook URL</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="reg-test-url"
+                className="max-w-full font-mono text-xs"
+                placeholder="https://api.customer.io/v1/webhook/…"
+                value={draft.test_webhook_url}
+                onChange={(e) => set({ test_webhook_url: e.target.value })}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                disabled={!draft.test_webhook_url.trim() || sample.isPending}
+                onClick={() => sample.mutate({ target: 'test' })}
+              >
+                Send sample
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Paste it from the twin's [1/2] trigger settings — Customer.io doesn't expose webhook
+              URLs via API. Required before the runner can fire this campaign; visible to signed-in
+              portal users (internal tool, by design).
+            </p>
+          </div>
+        </div>
+        <div className="grid content-start gap-3 rounded-lg border p-3">
+          <div>
+            <h4 className="text-sm font-medium">Prod pair</h4>
+            <p className="text-xs text-muted-foreground">
+              The live campaigns — reference only; the runner never fires this half.
+            </p>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="reg-event">Trigger event</Label>
+            <Input
+              id="reg-event"
+              placeholder="event the live journey listens on"
+              value={draft.event_name}
+              onChange={(e) => set({ event_name: e.target.value })}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="reg-prod-url">Webhook URL</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="reg-prod-url"
+                className="max-w-full font-mono text-xs"
+                placeholder="https://api.customer.io/v1/webhook/…"
+                value={draft.prod_webhook_url}
+                onChange={(e) => set({ prod_webhook_url: e.target.value })}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                disabled={!draft.prod_webhook_url.trim() || sample.isPending}
+                onClick={() => setConfirmProdSample(true)}
+              >
+                Send sample
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              The live [1/2] campaign's inbound webhook — used only for composer sample payloads
+              (Send sample seeds the Trigger data panel so trigger.* references validate). The
+              trigger hub keeps its own copy in Secret Manager. Send sample uses the saved URL, so
+              save the entry first.
+            </p>
+          </div>
         </div>
         <div className="grid gap-2">
           <Label htmlFor="reg-payload">Payload fields (one per line)</Label>
@@ -591,16 +618,6 @@ export function SlugForm({
             ))}
             .
           </p>
-        </div>
-        <div className="grid gap-2 sm:col-span-2">
-          <Label htmlFor="reg-notes">Notes</Label>
-          <Textarea
-            id="reg-notes"
-            rows={2}
-            className="max-w-full"
-            value={draft.notes}
-            onChange={(e) => set({ notes: e.target.value })}
-          />
         </div>
       </div>
 

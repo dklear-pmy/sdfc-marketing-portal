@@ -12,7 +12,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type WouldFirePage } from '@/lib/api';
 import { useUrlFilters } from '@/lib/urlState';
-import { formatPacific, relativeFrom } from '@/lib/format';
+import { formatPacific, prettyPayload, relativeFrom } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -27,7 +27,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
-import { prettyPayload } from '@/components/AffectedCustomers';
 
 const PAGE = 20;
 

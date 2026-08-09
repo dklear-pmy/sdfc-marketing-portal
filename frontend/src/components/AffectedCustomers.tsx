@@ -10,7 +10,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, type AffectedCustomersPage } from '@/lib/api';
 import { useUrlFilters } from '@/lib/urlState';
-import { formatPacific, relativeFrom } from '@/lib/format';
+import { formatPacific, prettyPayload, relativeFrom } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -37,14 +37,6 @@ const statusVariant = (status: string): 'default' | 'destructive' | 'secondary' 
   if (status === 'suppressed') return 'secondary';
   return 'outline'; // baseline + anything the hub grows later
 };
-
-export function prettyPayload(raw: string): string {
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2);
-  } catch {
-    return raw;
-  }
-}
 
 export function AffectedCustomersTab({ slug }: { slug: string }) {
   const [{ aq, astatus, aoffset }, setUrl] = useUrlFilters({ aq: '', astatus: '', aoffset: 0 });

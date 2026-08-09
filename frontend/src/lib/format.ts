@@ -90,3 +90,12 @@ export function humanizeAttr(name: string): string {
     )
     .join(' ');
 }
+
+/* Parse-and-reindent a stored JSON string for display; non-JSON passes through. */
+export function prettyPayload(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}
