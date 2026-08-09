@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createColumnHelper,
   flexRender,
@@ -15,6 +22,7 @@ import {
   type HarnessRun,
   type HarnessRunSummary,
   type PrecheckLevel,
+  type SlugEntry,
   type SlugListResponse,
   type SlugPrecheck,
   type ValidationReport,
@@ -32,6 +40,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -140,41 +149,28 @@ export default function CampaignDrilldown({
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              {/* Display typography stays on the name span only — pills must
-                  not inherit the large size or tight tracking. */}
-              <CardTitle className="flex flex-wrap items-center gap-3">
-                <span className="text-4xl font-medium tracking-tight">{humanizeSlug(slug)}</span>
-                {/* Badge runs 25% over its default (h-5/text-xs) to hold its
-                    own next to the display-size name. */}
-                {entry && (
-                  <Badge
-                    variant={entry.runnable ? 'default' : 'secondary'}
-                    className="h-[25px] px-2.5 text-[15px] tracking-normal"
-                  >
-                    {entry.runnable ? 'Runnable' : 'Not runnable'}
-                  </Badge>
-                )}
-              </CardTitle>
-              <CardDescription className="mt-1">
-                <code className="text-xs">{slug}</code>
-                {entry && (
-                  <>
-                    {' '}
-                    · test <code className="text-xs">{entry.test_event_name ?? '—'}</code> · prod{' '}
-                    <code className="text-xs">{entry.event_name ?? '—'}</code>
-                    {entry.updated_at ? ` · updated ${relativeFrom(entry.updated_at)}` : ''}
-                  </>
-                )}
-              </CardDescription>
-              {entry?.notes && <p className="mt-2 text-sm text-muted-foreground">{entry.notes}</p>}
-            </div>
+            {/* Display typography stays on the name span only — pills must
+                not inherit the large size or tight tracking. */}
+            <CardTitle className="flex flex-wrap items-center gap-3">
+              <span className="text-4xl font-medium tracking-tight">{humanizeSlug(slug)}</span>
+              {/* Badge runs 25% over its default (h-5/text-xs) to hold its
+                  own next to the display-size name. */}
+              {entry && (
+                <Badge
+                  variant={entry.runnable ? 'default' : 'secondary'}
+                  className="h-[25px] px-2.5 text-[15px] tracking-normal"
+                >
+                  {entry.runnable ? 'Runnable' : 'Not runnable'}
+                </Badge>
+              )}
+            </CardTitle>
             {canEdit && entry?.runnable && (
               <Button disabled={runPending} onClick={() => onRun(slug)}>
                 {runPending ? 'Starting…' : 'Run test'}
               </Button>
             )}
           </div>
+          <CampaignFacts slug={slug} entry={entry} canEdit={canEdit} />
         </CardHeader>
       </Card>
 
@@ -206,6 +202,142 @@ export default function CampaignDrilldown({
 
 /* --- Overview: the live precheck — do the four campaigns exist and is the
    twin safely wired — plus what a run would send. --- */
+/* Header facts as a label/value table, with the free-text note broken out
+   below it — the note is the one field an operator edits from here. */
+function CampaignFacts({
+  slug,
+  entry,
+  canEdit,
+}: {
+  slug: string;
+  entry: SlugEntry | undefined;
+  canEdit: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  const save = useMutation({
+    mutationFn: (notes: string) =>
+      api.patch<SlugEntry>(`/api/slugs/${encodeURIComponent(slug)}/notes`, {
+        notes: notes.trim() || null,
+      }),
+    onSuccess: () => {
+      setEditing(false);
+      void queryClient.invalidateQueries({ queryKey: ['slugs'] });
+    },
+  });
+
+  const facts: { label: string; value: ReactNode }[] = [
+    { label: 'Slug', value: <code className="text-xs">{slug}</code> },
+    {
+      label: 'Test event',
+      value: entry?.test_event_name ? (
+        <code className="text-xs">{entry.test_event_name}</code>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
+    },
+    {
+      label: 'Prod event',
+      value: entry?.event_name ? (
+        <code className="text-xs">{entry.event_name}</code>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
+    },
+    {
+      label: 'Last updated',
+      value: entry?.updated_at ? (
+        <>
+          {formatPacific(entry.updated_at)}{' '}
+          <span className="text-muted-foreground">({relativeFrom(entry.updated_at)})</span>
+          {entry.updated_by ? (
+            <span className="text-muted-foreground"> · {entry.updated_by}</span>
+          ) : null}
+        </>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
+    },
+  ];
+
+  return (
+    <div className="mt-4 grid gap-4">
+      <dl className="overflow-hidden rounded-lg border text-sm">
+        {facts.map((f) => (
+          <div
+            key={f.label}
+            className="grid gap-0.5 border-b px-3 py-2 last:border-b-0 sm:grid-cols-[11rem_1fr] sm:gap-4"
+          >
+            <dt className="font-medium text-muted-foreground">{f.label}</dt>
+            <dd className="break-all">{f.value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="grid gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-medium">Notes</h3>
+          {canEdit && !editing && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDraft(entry?.notes ?? '');
+                setEditing(true);
+              }}
+            >
+              {entry?.notes ? 'Edit notes' : 'Add notes'}
+            </Button>
+          )}
+        </div>
+
+        {editing ? (
+          <div className="grid gap-2">
+            <Textarea
+              autoFocus
+              rows={5}
+              value={draft}
+              maxLength={2000}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="What a teammate needs to know about this campaign — wiring, open questions, gotchas."
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" disabled={save.isPending} onClick={() => save.mutate(draft)}>
+                {save.isPending ? 'Saving…' : 'Save notes'}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={save.isPending}
+                onClick={() => setEditing(false)}
+              >
+                Cancel
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {draft.length}/2000 · free text, written by whoever last edited this campaign
+              </span>
+            </div>
+            {save.isError && (
+              <Alert variant="destructive">
+                <AlertTitle>Could not save notes</AlertTitle>
+                <AlertDescription>{(save.error as Error).message}</AlertDescription>
+              </Alert>
+            )}
+          </div>
+        ) : entry?.notes ? (
+          <p className="text-sm whitespace-pre-wrap text-muted-foreground">{entry.notes}</p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No notes yet{canEdit ? ' — add what a teammate would need to know.' : '.'}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OverviewTab({ slug }: { slug: string }) {
   const precheck = useQuery({
     queryKey: ['precheck', slug],

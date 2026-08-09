@@ -176,6 +176,28 @@ def upsert_slug(slug: str, fields: dict, actor: str | None) -> dict:
     return entry
 
 
+def update_notes(slug: str, notes: str | None, actor: str | None) -> dict | None:
+    """Notes-only write. Deliberately NOT upsert_slug: that one rewrites every
+    column, so a notes edit would carry a stale snapshot of the contract back
+    into the row. Returns None if the slug does not exist."""
+    job = bqstate.client().query(
+        f"""
+        UPDATE `{_TABLE}`
+        SET notes = @notes, updated_at = CURRENT_TIMESTAMP(), updated_by = @actor
+        WHERE slug = @slug
+        """,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("notes", "STRING", notes),
+                bigquery.ScalarQueryParameter("actor", "STRING", actor),
+                bigquery.ScalarQueryParameter("slug", "STRING", slug),
+            ]
+        ),
+    )
+    job.result()
+    return get_slug(slug) if job.num_dml_affected_rows else None
+
+
 def delete_slug(slug: str) -> bool:
     job = bqstate.client().query(
         f"DELETE FROM `{_TABLE}` WHERE slug = @slug",

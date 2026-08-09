@@ -44,7 +44,14 @@ class SlugUpsert(BaseModel):
     webhook_secrets: list[str] = []
     test_webhook_secret: str | None = None
     test_webhook_url: str | None = None
+    # Declared because the registry stores it and the editor sends it — an
+    # undeclared field is dropped by Pydantic and then written back as NULL.
+    prod_webhook_url: str | None = None
     payload_template: str | None = None
+    notes: str | None = None
+
+
+class NotesUpdate(BaseModel):
     notes: str | None = None
 
 
@@ -184,6 +191,19 @@ def slugs_upsert(
     if errors:
         raise HTTPException(status_code=400, detail="; ".join(errors))
     return slugs.upsert_slug(_valid_slug(slug), fields, actor=principal.email)
+
+
+@app.patch("/api/slugs/{slug}/notes")
+def slugs_update_notes(
+    slug: str, body: NotesUpdate, principal: Principal = require_access("marketing", "operator")
+) -> dict:
+    notes = (body.notes or "").strip() or None
+    if notes and len(notes) > 2000:
+        raise HTTPException(status_code=400, detail="Notes too long")
+    entry = slugs.update_notes(_valid_slug(slug), notes, actor=principal.email)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Campaign not registered")
+    return entry
 
 
 @app.delete("/api/slugs/{slug}")
