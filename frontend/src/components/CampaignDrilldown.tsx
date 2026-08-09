@@ -1,6 +1,8 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type ReactNode,
@@ -214,8 +216,18 @@ function CampaignFacts({
   canEdit: boolean;
 }) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  /* Grow the field to its content so the editor matches the rendered note. */
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft, editing]);
 
   const save = useMutation({
     mutationFn: (notes: string) =>
@@ -295,12 +307,16 @@ function CampaignFacts({
 
         {editing ? (
           <div className="grid gap-2">
+            {/* Full width and auto-grown so the editor occupies exactly the
+                space the saved note will — no 400px well, no inner scrollbar. */}
             <Textarea
+              ref={textareaRef}
               autoFocus
-              rows={5}
+              rows={2}
               value={draft}
               maxLength={2000}
               onChange={(e) => setDraft(e.target.value)}
+              className="max-w-none resize-none overflow-hidden text-sm"
               placeholder="What a teammate needs to know about this campaign — wiring, open questions, gotchas."
             />
             <div className="flex flex-wrap items-center gap-2">
@@ -308,17 +324,17 @@ function CampaignFacts({
                 {save.isPending ? 'Saving…' : 'Save notes'}
               </Button>
               <Button
-                variant="ghost"
+                variant="outline"
                 size="sm"
                 disabled={save.isPending}
                 onClick={() => setEditing(false)}
               >
                 Cancel
               </Button>
-              <span className="text-xs text-muted-foreground">
-                {draft.length}/2000 · free text, written by whoever last edited this campaign
-              </span>
             </div>
+            <p className="text-xs text-muted-foreground">
+              Saving as {user?.email ?? 'signed-in user'} · {draft.length}/2000
+            </p>
             {save.isError && (
               <Alert variant="destructive">
                 <AlertTitle>Could not save notes</AlertTitle>
