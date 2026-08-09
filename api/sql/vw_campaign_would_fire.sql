@@ -42,7 +42,7 @@ fans AS (
 attrs AS (
   SELECT email, has_season_plan FROM `sdfc-udp-dev.customerio_gold.fan_attributes_cio_sync`
 ),
-tb_signup_cand AS (
+tb_signup_260715_cand AS (
   SELECT
     CAST(a.activity_id AS STRING)                          AS dedup_key,
     f.email,
@@ -221,7 +221,7 @@ supporters_cand AS (
 
 
 SELECT
-  'tb_signup'   AS trigger,
+  'tb_signup_260715'   AS trigger,
   cand.dedup_key,
   cand.email,
   cand.first_name,
@@ -234,9 +234,9 @@ SELECT
     cand.fan_source, cand.phone_subscribed, cand.has_season_plan,
     cand.postal_code
   ))            AS payload_json
-FROM tb_signup_cand cand
+FROM tb_signup_260715_cand cand
 LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
-  ON s.trigger = 'tb_signup'
+  ON s.trigger = 'tb_signup_260715'
  AND s.dedup_key = cand.dedup_key
  AND s.status IN ('sent', 'suppressed', 'baseline')
 WHERE s.dedup_key IS NULL
@@ -263,11 +263,11 @@ WHERE s.dedup_key IS NULL
 
 UNION ALL
 
--- welcome_shopify: DRAFT logic (Automation Index entry criteria; still
+-- welcome_shopify_260715: DRAFT logic (Automation Index entry criteria; still
 -- WHERE FALSE / enabled=False in triggers.py — port + baseline before
 -- enabling; the portal marks this trigger "not enabled yet").
 SELECT
-  'welcome_shopify',
+  'welcome_shopify_260715',
   cand.dedup_key,
   cand.email,
   cand.first_name,
@@ -280,7 +280,7 @@ SELECT
   ))
 FROM shopify_cand cand
 LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
-  ON s.trigger = 'welcome_shopify'
+  ON s.trigger = 'welcome_shopify_260715'
  AND s.dedup_key = cand.dedup_key
  AND s.status IN ('sent', 'suppressed', 'baseline')
 WHERE s.dedup_key IS NULL

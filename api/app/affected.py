@@ -34,9 +34,9 @@ _PREVIEW_VIEW = f"{GCP_PROJECT}.customerio_state.vw_campaign_would_fire"
 # preview surfaces that so nobody arms a trigger into a breaker trip.
 # DRIFT WARNING: update together with triggers.py.
 TRIGGER_CAPS = {
-    "tb_signup": 2000,
+    "tb_signup_260715": 2000,
     "welcome_tickets_single_game": 500,
-    "welcome_shopify": 200,
+    "welcome_shopify_260715": 200,
     "welcome_tickets_membership": 25,
     "welcome_tickets_supporters_260807": 25,
 }
@@ -46,9 +46,9 @@ TRIGGER_CAPS = {
 # hub won't execute yet — the tab labels these "not enabled", so the list
 # reads as a demonstration of the selection logic, not a pending send.
 TRIGGER_ENABLED = {
-    "tb_signup": True,
+    "tb_signup_260715": True,
     "welcome_tickets_single_game": True,
-    "welcome_shopify": False,  # draft SQL in the view; WHERE FALSE in the hub
+    "welcome_shopify_260715": False,  # draft SQL in the view; WHERE FALSE in the hub
     "welcome_tickets_membership": False,  # reserved for the general STM journey re-spec
     "welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 60/61
 }
