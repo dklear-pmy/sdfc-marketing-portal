@@ -51,3 +51,5 @@ jobs:
       - run: python tests/test_payload_templates.py
       # Two-axis access: section resolution, level/section decisions, merge-only claims.
       - run: python tests/test_access_model.py
+      # Shadow-run guards: sink-only rewrite, SHADOW- identity keys, refusal paths.
+      - run: python tests/test_shadow_guards.py
