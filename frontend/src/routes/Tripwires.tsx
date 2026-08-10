@@ -63,20 +63,36 @@ function overallBadge(overall: string) {
   return <Badge variant="outline">{overall === 'UNCHECKED' ? 'Not checked yet' : overall}</Badge>;
 }
 
-function CheckRow({ check }: { check: TripwireCheckRow }) {
+function ChecksTable({ checks }: { checks: TripwireCheckRow[] }) {
+  if (checks.length === 0) {
+    return <p className="text-sm text-muted-foreground">Not checked yet.</p>;
+  }
   return (
-    <div className="flex items-start gap-2 text-sm">
-      <Badge variant={statusVariant[check.status]} className="mt-0.5 shrink-0">
-        {check.status}
-      </Badge>
-      <div className="min-w-0">
-        <span className="font-medium">{checkLabel[check.check_name] ?? check.check_name}</span>
-        {check.detail && (
-          <span className="block truncate text-muted-foreground" title={check.detail}>
-            {check.detail}
-          </span>
-        )}
-      </div>
+    <div className="overflow-x-auto rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-20">Status</TableHead>
+            <TableHead className="w-52">Check</TableHead>
+            <TableHead>Detail</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {checks.map((c) => (
+            <TableRow key={c.check_name}>
+              <TableCell className="align-top">
+                <Badge variant={statusVariant[c.status]}>{c.status}</Badge>
+              </TableCell>
+              <TableCell className="whitespace-normal text-sm font-medium">
+                {checkLabel[c.check_name] ?? c.check_name}
+              </TableCell>
+              <TableCell className="whitespace-normal text-sm text-muted-foreground">
+                {c.detail || '—'}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -238,13 +254,8 @@ export default function Tripwires() {
                     page can be trusted.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="grid gap-2 sm:grid-cols-3">
-                  {data.canary.checks.length === 0 && (
-                    <p className="text-sm text-muted-foreground">Not checked yet.</p>
-                  )}
-                  {data.canary.checks.map((c) => (
-                    <CheckRow key={c.check_name} check={c} />
-                  ))}
+                <CardContent className="grid gap-2">
+                  <ChecksTable checks={data.canary.checks} />
                 </CardContent>
               </Card>
             )}
@@ -267,12 +278,7 @@ export default function Tripwires() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="grid gap-2">
-                {data.workspace.checks.length === 0 && (
-                  <p className="text-sm text-muted-foreground">Not checked yet.</p>
-                )}
-                {data.workspace.checks.map((c) => (
-                  <CheckRow key={c.check_name} check={c} />
-                ))}
+                <ChecksTable checks={data.workspace.checks} />
               </CardContent>
             </Card>
             {campaigns.map((t) => (
@@ -414,12 +420,7 @@ function GuardsCard({ guards, canEdit }: { guards: Tripwire[]; canEdit: boolean 
                 </a>
                 {g.guard_pending && <Badge variant="outline">opt-out pending</Badge>}
               </div>
-              {g.checks.map((c) => (
-                <CheckRow key={c.check_name} check={c} />
-              ))}
-              {g.checks.length === 0 && (
-                <p className="text-sm text-muted-foreground">Not checked yet.</p>
-              )}
+              <ChecksTable checks={g.checks} />
               {canEdit && !sub && flagBroken && (
                 <div>
                   <Button
@@ -495,12 +496,7 @@ function TripwireCard({ tripwire: t, canEdit }: { tripwire: Tripwire; canEdit: b
           </div>
         ) : (
           <>
-            {t.checks.map((c) => (
-              <CheckRow key={c.check_name} check={c} />
-            ))}
-            {t.checks.length === 0 && (
-              <p className="text-sm text-muted-foreground">Not checked yet.</p>
-            )}
+            <ChecksTable checks={t.checks} />
             {t.overall === 'PASS' && (
               <Button
                 variant="outline"

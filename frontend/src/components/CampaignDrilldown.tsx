@@ -23,7 +23,6 @@ import {
   type CheckStatus,
   type HarnessRun,
   type HarnessRunSummary,
-  type PrecheckLevel,
   type ShadowCandidate,
   type SlugEntry,
   type SlugListResponse,
@@ -91,12 +90,6 @@ const checkVariant: Record<CheckStatus, 'default' | 'destructive' | 'secondary' 
   fail: 'destructive',
   warn: 'secondary',
   skip: 'outline',
-};
-
-const findingVariant: Record<PrecheckLevel, 'destructive' | 'secondary' | 'outline'> = {
-  fail: 'destructive',
-  warn: 'secondary',
-  info: 'outline',
 };
 
 const pairLabel: Record<string, string> = {
@@ -181,7 +174,7 @@ export default function CampaignDrilldown({
 
       <UnderlineTabs tabs={CAMPAIGN_TABS} value={tab} onChange={onTab} />
 
-      {tab === 'overview' && <OverviewTab slug={slug} />}
+      {tab === 'overview' && <OverviewTab slug={slug} onOpenWiring={() => onTab('wiring')} />}
       {tab === 'registration' && (
         <RegistrationTab
           slug={slug}
@@ -358,20 +351,36 @@ function CampaignFacts({
   );
 }
 
-function OverviewTab({ slug }: { slug: string }) {
+function OverviewTab({ slug, onOpenWiring }: { slug: string; onOpenWiring: () => void }) {
   const precheck = useQuery({
     queryKey: ['precheck', slug],
     queryFn: () => api.get<SlugPrecheck>(`/api/slugs/${encodeURIComponent(slug)}/precheck`),
   });
+  // Same key as WiringTab — one fetch feeds both the verdict here and the
+  // full table there.
+  const validation = useQuery({
+    queryKey: ['validate', slug],
+    queryFn: () => api.get<ValidationReport>(`/api/harness/validate/${encodeURIComponent(slug)}`),
+  });
   const report = precheck.data;
+  const summary = validation.data?.summary;
+  const verdict = summary
+    ? summary.fail > 0
+      ? `${summary.fail} check${summary.fail === 1 ? '' : 's'} failing${
+          summary.warn > 0 ? ` · ${summary.warn} warning${summary.warn === 1 ? '' : 's'}` : ''
+        }`
+      : summary.warn > 0
+        ? `Nothing failing · ${summary.warn} warning${summary.warn === 1 ? '' : 's'}`
+        : 'All wiring checks pass'
+    : null;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Overview</CardTitle>
         <CardDescription>
-          Live check against Customer.io — campaign presence, states and convention findings.
-          Fix-it-in-one-click offers live on the Registration tab's check.
+          Campaign presence at a glance and the payload the runner will send. Full findings live
+          on the Wiring check tab; fix-it-in-one-click offers on the Registration tab's check.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -406,16 +415,33 @@ function OverviewTab({ slug }: { slug: string }) {
                 ))}
               </div>
             )}
-            <ul className="grid gap-1.5">
-              {report.findings.map((f, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm">
-                  <Badge variant={findingVariant[f.level]} className="mt-0.5">
-                    {f.level}
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              {validation.isPending && (
+                <span className="text-muted-foreground">Running the wiring check…</span>
+              )}
+              {validation.isError && (
+                <span className="text-muted-foreground">Wiring check unavailable.</span>
+              )}
+              {summary && verdict && (
+                <>
+                  <Badge
+                    variant={
+                      summary.fail > 0 ? 'destructive' : summary.warn > 0 ? 'secondary' : 'default'
+                    }
+                  >
+                    {summary.fail > 0 ? 'fail' : summary.warn > 0 ? 'warn' : 'pass'}
                   </Badge>
-                  <span className="min-w-0 text-muted-foreground">{f.message}</span>
-                </li>
-              ))}
-            </ul>
+                  <span>{verdict}</span>
+                </>
+              )}
+              <button
+                type="button"
+                className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                onClick={onOpenWiring}
+              >
+                Open the Wiring check
+              </button>
+            </div>
             {report.payload_preview && (
               <details className="text-sm">
                 <summary className="cursor-pointer text-muted-foreground select-none">
@@ -431,10 +457,13 @@ function OverviewTab({ slug }: { slug: string }) {
               variant="outline"
               size="sm"
               className="justify-self-start"
-              disabled={precheck.isFetching}
-              onClick={() => void precheck.refetch()}
+              disabled={precheck.isFetching || validation.isFetching}
+              onClick={() => {
+                void precheck.refetch();
+                void validation.refetch();
+              }}
             >
-              {precheck.isFetching ? 'Checking…' : 'Re-check'}
+              {precheck.isFetching || validation.isFetching ? 'Checking…' : 'Re-check'}
             </Button>
           </>
         )}
@@ -1067,6 +1096,173 @@ function RunHistory({
   );
 }
 
+/* Failure details arrive as one prefixed string ("render/payload checks
+   failed:" + one problem per line; legacy runs joined with '; '). Parsed here
+   so repetitive problems render as an aligned table instead of a text blob. */
+const RUN_PROBLEM_PREFIX: Record<string, string> = {
+  'render/payload checks failed': 'Render / payload checks failed',
+  'assertions failed': 'Assertions failed',
+  'payload check': 'Payload check',
+};
+
+function parseRunProblems(detail: string): { heading: string; problems: string[] } | null {
+  const m = detail.match(/^(render\/payload checks failed|assertions failed|payload check):\s*/);
+  if (!m) return null;
+  const rest = detail.slice(m[0].length);
+  const problems = (rest.includes('\n') ? rest.split('\n') : rest.split('; '))
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return { heading: RUN_PROBLEM_PREFIX[m[1]] ?? m[1], problems };
+}
+
+const PROBLEM_FIELD_PATTERNS = [
+  /payload field '([^']+)'/,
+  /emails reference (\w+)/,
+  /^(\w+)=\d+ \(<\d+\)/,
+  /\{\{\s*(?:trigger|customer|event)\.(\w+)/,
+];
+
+function problemField(problem: string): string | null {
+  for (const re of PROBLEM_FIELD_PATTERNS) {
+    const m = problem.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function RunProblems({ detail }: { detail: string }) {
+  const parsed = parseRunProblems(detail);
+  if (!parsed || parsed.problems.length < 2) {
+    return <p className="text-sm whitespace-pre-line">{detail}</p>;
+  }
+  return (
+    <div className="grid gap-2">
+      <p className="text-sm font-medium">
+        {parsed.heading} — {parsed.problems.length} problem{parsed.problems.length === 1 ? '' : 's'}
+      </p>
+      <div className="overflow-x-auto rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-40">Field</TableHead>
+              <TableHead>Problem</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {parsed.problems.map((p, i) => (
+              <TableRow key={i}>
+                <TableCell className="align-top font-mono text-xs">
+                  {problemField(p) ?? '—'}
+                </TableCell>
+                <TableCell className="whitespace-normal text-muted-foreground">{p}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
+
+/* "delivery 1 'Subject' arrived <iso>; engaged {'opens_found': 1, ...}" */
+function parseDelivery(
+  detail: string,
+): { n: string; subject: string; arrived: string; opens?: string; clicks?: string } | null {
+  const m = detail.match(/^delivery (\d+) '(.+)' arrived ([^;]+); engaged \{(.+)\}$/);
+  if (!m) return null;
+  return {
+    n: m[1],
+    subject: m[2],
+    arrived: m[3],
+    opens: m[4].match(/'opens_found': (\d+)/)?.[1],
+    clicks: m[4].match(/'clicks_found': (\d+)/)?.[1],
+  };
+}
+
+/* "Delay profile: trigger → 'A': 69s; 'A' → 'B': 6m 00s (>5m). 1 block(s) exceed 5 min — …" */
+function parseDelayProfile(
+  detail: string,
+): { legs: { from: string; to: string; delay: string }[]; note: string | null } | null {
+  const m = detail.match(/^Delay profile: ([\s\S]+)$/);
+  if (!m) return null;
+  let body = m[1];
+  let note: string | null = null;
+  const noteM = body.match(/\.\s+(\d+ block\(s\) exceed[\s\S]+)$/);
+  if (noteM) {
+    note = noteM[1];
+    body = body.slice(0, noteM.index);
+  }
+  body = body.replace(/\.\s*$/, '');
+  const unquote = (s: string) => s.trim().replace(/^'(.*)'$/, '$1');
+  const legs: { from: string; to: string; delay: string }[] = [];
+  for (const seg of body.split('; ')) {
+    const ci = seg.lastIndexOf(': ');
+    const path = ci === -1 ? '' : seg.slice(0, ci);
+    const ai = path.lastIndexOf(' → ');
+    if (ci === -1 || ai === -1) return null;
+    legs.push({ from: unquote(path.slice(0, ai)), to: unquote(path.slice(ai + 3)), delay: seg.slice(ci + 2) });
+  }
+  return legs.length > 0 ? { legs, note } : null;
+}
+
+/* Timeline details are stored as prose strings (BQ column); the known shapes
+   are parsed back into structure here, anything unrecognized stays as text. */
+function TimelineDetail({ detail }: { detail: string }) {
+  const problems = parseRunProblems(detail);
+  if (problems && problems.problems.length > 1) return <RunProblems detail={detail} />;
+
+  const delivery = parseDelivery(detail);
+  if (delivery) {
+    return (
+      <span>
+        <span className="font-medium text-foreground">{delivery.subject}</span>
+        <span className="block">
+          Delivery {delivery.n} · arrived {formatPacific(delivery.arrived)}
+          {delivery.opens !== undefined &&
+            ` · ${delivery.opens} open${delivery.opens === '1' ? '' : 's'}`}
+          {delivery.clicks !== undefined &&
+            ` · ${delivery.clicks} click${delivery.clicks === '1' ? '' : 's'}`}
+        </span>
+      </span>
+    );
+  }
+
+  const profile = parseDelayProfile(detail);
+  if (profile) {
+    return (
+      <div className="grid gap-2">
+        <div className="overflow-x-auto rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>From</TableHead>
+                <TableHead>To</TableHead>
+                <TableHead className="w-28">Delay</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {profile.legs.map((leg, i) => (
+                <TableRow key={i}>
+                  <TableCell className="whitespace-normal">{leg.from}</TableCell>
+                  <TableCell className="whitespace-normal">{leg.to}</TableCell>
+                  <TableCell
+                    className={cn('whitespace-nowrap', leg.delay.includes('(>5m)') && 'text-destructive')}
+                  >
+                    {leg.delay}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+        {profile.note && <span className="block">{profile.note}</span>}
+      </div>
+    );
+  }
+
+  return <>{detail}</>;
+}
+
 function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
   const { role } = useAuth();
   const canAdvance = role === 'operator' || role === 'admin';
@@ -1136,7 +1332,7 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
                 <span className="text-muted-foreground">advancing every 20s…</span>
               )}
             </div>
-            {current.detail && <p className="text-sm">{current.detail}</p>}
+            {current.detail && <RunProblems detail={current.detail} />}
             <Table>
               <TableHeader>
                 <TableRow>
@@ -1152,8 +1348,8 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
                       {formatPacific(t.ts)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{humanStage(t.stage)}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {t.detail}
+                    <TableCell className="text-sm whitespace-pre-line text-muted-foreground">
+                      <TimelineDetail detail={t.detail} />
                       {t.msg_id && (
                         <>
                           {' '}

@@ -766,35 +766,52 @@ export function SlugForm({
               </pre>
             </details>
           )}
-          <ul className="grid gap-1.5">
-            {report.findings.map((f, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm">
-                <Badge variant={findingVariant[f.level]} className="mt-0.5">
-                  {f.level}
-                </Badge>
-                <span className="min-w-0 text-muted-foreground">
-                  {f.message}
-                  {f.fix && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="xs"
-                      className="ml-2 align-middle"
-                      onClick={() => {
-                        /* Apply into the draft and re-check; Save persists it
-                           through the normal validated path. */
-                        const next = { ...draft, [f.fix!.field]: f.fix!.value };
-                        setDraft(next);
-                        precheck.mutate(next);
-                      }}
-                    >
-                      {f.fix.label}
-                    </Button>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
+          {report.findings.length > 0 && (
+            <div className="overflow-x-auto rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-20">Level</TableHead>
+                    <TableHead className="w-[45%]">Finding</TableHead>
+                    {report.findings.some((f) => f.fix) && (
+                      <TableHead className="w-[45%]">Fix</TableHead>
+                    )}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {report.findings.map((f, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="align-top">
+                        <Badge variant={findingVariant[f.level]}>{f.level}</Badge>
+                      </TableCell>
+                      <TableCell className="whitespace-normal text-muted-foreground">
+                        {f.message}
+                      </TableCell>
+                      {report.findings.some((x) => x.fix) && (
+                        <TableCell className="align-top">
+                          {f.fix && (
+                            <button
+                              type="button"
+                              className="text-left text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                              onClick={() => {
+                                /* Apply into the draft and re-check; Save persists it
+                                   through the normal validated path. */
+                                const next = { ...draft, [f.fix!.field]: f.fix!.value };
+                                setDraft(next);
+                                precheck.mutate(next);
+                              }}
+                            >
+                              {f.fix.label}
+                            </button>
+                          )}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </div>
       )}
     </form>

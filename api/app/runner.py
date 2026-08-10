@@ -527,7 +527,7 @@ def advance_run(run_id: str) -> dict:
                 "payload_verified",
                 payload_summary
                 if not payload_problems
-                else "payload check: " + "; ".join(payload_problems),
+                else "payload check:\n" + "\n".join(payload_problems),
             )
         elif event_act is not None:
             payload_summary = "journey event carries no data payload"
@@ -567,12 +567,14 @@ def advance_run(run_id: str) -> dict:
         elif deterministic and not metric_problems:
             # Content and payload-mapping bugs are deterministic — re-asserting
             # later cannot heal them, so fail now rather than waiting out the deadline.
-            detail = "render/payload checks failed: " + "; ".join(deterministic)
+            # One problem per line — the portal splits on newlines to build the
+            # problems table (legacy '; ' joins are still parsed there).
+            detail = "render/payload checks failed:\n" + "\n".join(deterministic)
             bqstate.update_run(
                 run_id, status="FAILED", stage="asserted", timeline=_tl(run, "asserted", detail), detail=detail
             )
         elif _elapsed_min(run) > EMAIL2_DEADLINE_MIN + 10:
-            detail = "assertions failed: " + "; ".join(problems)
+            detail = "assertions failed:\n" + "\n".join(problems)
             bqstate.update_run(
                 run_id, status="FAILED", stage="asserted", timeline=_tl(run, "asserted", detail), detail=detail
             )
@@ -602,7 +604,8 @@ def advance_all() -> dict:
     alert = None
     if went_bad:
         lines = "\n".join(
-            f"- {r['run_id']} ({r['slug']}, {r['identity']}): {r['status']} — {r.get('detail')}"
+            f"- {r['run_id']} ({r['slug']}, {r['identity']}): {r['status']} — "
+            f"{(r.get('detail') or '').replace(chr(10), '; ')}"
             for r in went_bad
         )
         alert = emailer.send_alert(

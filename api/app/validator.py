@@ -6,9 +6,11 @@ Checks (from repodocs/CIO_TEST_HARNESS_UI_PLAN.md in sdfc-udp):
   3. event-names        — test journey on pmy_test_*; prod journey clean; global lint
   4. identify-by-email  — both trigger halves key the person on the email field
   5. payload-mapping    — Send Event fields match the slug's payload contract
-  6. liquid-refs        — template refs resolvable from payload/person attributes
-  7. webhook-secret     — a test trigger webhook URL is registered (plain
-                          registry URL; legacy Secret Manager id still honored)
+  6. payload-template   — custom payload template parses and pins email to {identity}
+  7. liquid-refs        — template refs resolvable from payload/person attributes
+  8. journey-delays     — delay blocks measured from harness-run delivery gaps
+  9. webhook-secret     — a well-formed test trigger webhook URL is registered
+                          (plain registry URL; legacy Secret Manager id still honored)
 
 Known static blind spots (covered by the Phase-2 dynamic runner): the Send
 Event's emitted *event name* and journey timers/branches are not exposed by the
@@ -342,6 +344,17 @@ def validate_slug(slug: str) -> dict:
         "; ".join(map_notes) or f"All {len(expected_fields)} contract fields mapped on both pairs.",
     )
 
+    tmpl_raw = spec.get("payload_template")
+    if not spec:
+        tmpl_status, tmpl_detail = "skip", "slug not in registry"
+    elif not tmpl_raw:
+        tmpl_status, tmpl_detail = "pass", "no custom template — runner uses the signup default"
+    else:
+        tmpl_problems = payloads.template_problems(tmpl_raw)
+        tmpl_status = "fail" if tmpl_problems else "pass"
+        tmpl_detail = "; ".join(tmpl_problems) or "custom template valid; email pinned to {identity}"
+    _check(checks, "payload-template", "Payload template lint", tmpl_status, tmpl_detail)
+
     liq_status, liq_notes = "pass", []
     known_person = set(spec.get("person_attributes") or [])
     for pair, trig_role, journey_role in (
@@ -409,9 +422,16 @@ def validate_slug(slug: str) -> dict:
         checks, "journey-delays", "Journey delay blocks (≤5 min for smoke runs)", delay_status, delay_detail
     )
 
+    from .slugs import webhook_url_problem  # deferred — slugs and validator import each other
+
     sec_status, sec_notes = "pass", []
     if spec.get("test_webhook_url"):
-        sec_notes.append("twin trigger URL stored in the registry")
+        url_problem = webhook_url_problem(spec["test_webhook_url"])
+        if url_problem:
+            sec_status = "fail"
+            sec_notes.append(url_problem)
+        else:
+            sec_notes.append("twin trigger URL stored in the registry")
     elif spec.get("test_webhook_secret"):
         exists = secret_exists(spec["test_webhook_secret"])
         if exists is False:
