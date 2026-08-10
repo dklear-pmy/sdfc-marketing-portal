@@ -55,6 +55,23 @@ f = analyze(roles4(test_event="Shop-260715"), SPEC, {"sec-dev": True})
 assert "PRODUCTION event" in messages(f, "fail"), f
 assert TEST_EVENT_PREFIX + "Shop-260715" in messages(f, "fail"), "fix hint must name the target event"
 
+# --- dual-entry, mirrored: the PROD journey kept the twin's TEST event (a
+# prod clone made from the twin). Blame the prod side, and never suggest
+# double-prefixing the already-prefixed event. ---
+f = analyze(roles4(test_event="pmy_test_shop", prod_event="pmy_test_shop"), SPEC, {"sec-dev": True})
+fails = messages(f, "fail")
+assert "Prod journey listens on the TEST event" in fails, f
+assert "Rename the PROD journey's trigger" in fails, f
+assert "'Shop-260715'" in fails, "the registry prod event is the rename target"
+assert TEST_EVENT_PREFIX + TEST_EVENT_PREFIX not in fails, "must never mint pmy_test_pmy_test_…"
+# Without a registry prod event, fall back to stripping the prefix.
+f = analyze(
+    roles4(test_event="pmy_test_shop", prod_event="pmy_test_shop"),
+    SPEC | {"event_name": None},
+    {"sec-dev": True},
+)
+assert "'shop'" in messages(f, "fail"), f
+
 # --- wrong prefix on a distinct test event ---
 f = analyze(roles4(test_event="shop_test"), SPEC | {"test_event_name": None}, {"sec-dev": True})
 assert TEST_EVENT_PREFIX in messages(f, "fail"), f

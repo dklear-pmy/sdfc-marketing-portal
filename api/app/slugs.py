@@ -348,12 +348,26 @@ def analyze(
     test_ev = (clean.get("test_journey") or {}).get("event_name")
     prod_ev = (clean.get("prod_journey") or {}).get("event_name")
     if test_ev and prod_ev and test_ev == prod_ev:
-        add(
-            "fail",
-            f"Twin journey listens on the PRODUCTION event '{prod_ev}' — once both run, every real "
-            "purchase enters both journeys and fans get the series twice. Rename the twin's trigger "
-            f"(and its [1/2] Send Event) to '{TEST_EVENT_PREFIX}{prod_ev}'.",
-        )
+        # Both journeys on ONE event = dual entry. Which side is wrong depends
+        # on which way the clone went: a twin cloned from prod keeps the prod
+        # event (rename the twin); a prod journey cloned from the twin keeps
+        # the pmy_test_ event (rename the PROD side — prefixing the twin
+        # again would just mint pmy_test_pmy_test_…).
+        if prod_ev.startswith(TEST_EVENT_PREFIX):
+            expected_prod = spec.get("event_name") or prod_ev.removeprefix(TEST_EVENT_PREFIX)
+            add(
+                "fail",
+                f"Prod journey listens on the TEST event '{prod_ev}' — once it starts, every "
+                "harness test fire enters the production journey (and real events never will). "
+                f"Rename the PROD journey's trigger (and its [1/2] Send Event) to '{expected_prod}'.",
+            )
+        else:
+            add(
+                "fail",
+                f"Twin journey listens on the PRODUCTION event '{prod_ev}' — once both run, every real "
+                "purchase enters both journeys and fans get the series twice. Rename the twin's trigger "
+                f"(and its [1/2] Send Event) to '{TEST_EVENT_PREFIX}{prod_ev}'.",
+            )
     elif test_ev and not test_ev.startswith(TEST_EVENT_PREFIX):
         add("fail", f"Twin journey triggers on '{test_ev}' — test events must use the {TEST_EVENT_PREFIX} prefix")
     if "test_journey" in clean and not test_ev:
