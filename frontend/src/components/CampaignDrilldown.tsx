@@ -24,6 +24,7 @@ import {
   type HarnessRun,
   type HarnessRunSummary,
   type PrecheckLevel,
+  type ShadowCandidate,
   type SlugEntry,
   type SlugListResponse,
   type SlugPrecheck,
@@ -43,6 +44,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -193,6 +195,7 @@ export default function CampaignDrilldown({
       {tab === 'affected' && <AffectedCustomersTab slug={slug} />}
       {tab === 'runs' && (
         <>
+          <ShadowPanel slug={slug} entry={entry} canEdit={canEdit} />
           <ActiveRunsBoard slug={slug} activeRunId={activeRunId} onSelect={onSelectRun} />
           <RunHistory slug={slug} activeRunId={activeRunId} onSelect={onSelectRun} />
           {activeRunId && <RunDetail runId={activeRunId} onClose={() => onSelectRun(null)} />}
@@ -642,6 +645,157 @@ function StageProgress({ stage }: { stage: string }) {
   );
 }
 
+/* Real-data ("shadow") runs: fire the test twin with sanitized REAL events —
+   recipient rewritten to shadow.*@qa.sdfc.dev, every other address moved to
+   the sink domain, profile-identity ids SHADOW- prefixed so no real fan's
+   mail or CIO profile can be touched. */
+function ShadowPanel({
+  slug,
+  entry,
+  canEdit,
+}: {
+  slug: string;
+  entry: SlugEntry | undefined;
+  canEdit: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [confirmReplay, setConfirmReplay] = useState(false);
+  const [confirmArm, setConfirmArm] = useState(false);
+
+  const preview = useQuery({
+    queryKey: ['shadow-preview', slug],
+    queryFn: () =>
+      api.get<{ candidates: ShadowCandidate[]; already_run: number }>(
+        `/api/harness/replay/${encodeURIComponent(slug)}/preview?limit=10&history_days=180`
+      ),
+    enabled: !!entry?.trigger_key,
+  });
+
+  const replay = useMutation({
+    mutationFn: () =>
+      api.post<{ fired: number }>(`/api/harness/replay/${encodeURIComponent(slug)}`, {
+        limit: 10,
+        history_days: 180,
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['harness-runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['shadow-preview', slug] });
+    },
+  });
+
+  const arm = useMutation({
+    mutationFn: (armed: boolean) =>
+      api.post<SlugEntry>(`/api/slugs/${encodeURIComponent(slug)}/shadow`, { armed }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['slugs'] }),
+  });
+
+  if (!entry?.trigger_key) return null;
+  const fireable = (preview.data?.candidates ?? []).filter((c) => !c.already_run);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Real-data shadow runs</CardTitle>
+        <CardDescription>
+          Fires the test twin with the real events the production trigger would fire on. The
+          recipient becomes a shadow.*@qa.sdfc.dev sink address, every other email in the payload is
+          rewritten to the sink domain, and profile ids get a SHADOW- prefix — no mail or profile
+          write can reach a real fan. Each real event runs at most once.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        {preview.isError && (
+          <Alert variant="destructive">
+            <AlertDescription>{(preview.error as Error).message}</AlertDescription>
+          </Alert>
+        )}
+        {preview.data && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Event date</TableHead>
+                <TableHead>Person</TableHead>
+                <TableHead>Real email</TableHead>
+                <TableHead>Event key</TableHead>
+                <TableHead></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {preview.data.candidates.map((c) => (
+                <TableRow key={c.dedup_key}>
+                  <TableCell className="text-sm whitespace-nowrap">
+                    {c.event_at ? formatPacific(c.event_at) : '—'}
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}
+                  </TableCell>
+                  <TableCell>
+                    <code className="text-xs">{c.email ?? '—'}</code>
+                  </TableCell>
+                  <TableCell>
+                    <code className="text-xs">{c.dedup_key}</code>
+                  </TableCell>
+                  <TableCell>
+                    {c.already_run ? (
+                      <Badge variant="outline">Already run</Badge>
+                    ) : (
+                      <Badge variant="secondary">New</Badge>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+        {replay.isError && (
+          <Alert variant="destructive">
+            <AlertDescription>{(replay.error as Error).message}</AlertDescription>
+          </Alert>
+        )}
+        {canEdit && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              disabled={replay.isPending || fireable.length === 0}
+              onClick={() => setConfirmReplay(true)}
+            >
+              {replay.isPending
+                ? 'Firing…'
+                : `Replay ${fireable.length} real event${fireable.length === 1 ? '' : 's'}`}
+            </Button>
+            <Button
+              variant={entry.shadow_armed ? 'secondary' : 'outline'}
+              disabled={arm.isPending}
+              aria-pressed={entry.shadow_armed}
+              onClick={() => (entry.shadow_armed ? arm.mutate(false) : setConfirmArm(true))}
+            >
+              {entry.shadow_armed ? 'Auto-fire on new events: ON' : 'Auto-fire on new events: OFF'}
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Auto-fire checks for new qualifying events on the 10-minute tick, max 5 per tick.
+            </span>
+          </div>
+        )}
+      </CardContent>
+      <ConfirmDialog
+        open={confirmReplay}
+        onOpenChange={setConfirmReplay}
+        title={`Fire ${fireable.length} shadow run${fireable.length === 1 ? '' : 's'}?`}
+        description="Each selected real event fires the test twin once with its sanitized payload. All mail lands in the qa.sdfc.dev sink; real fans and their CIO profiles are untouched."
+        confirmLabel="Fire replay"
+        onConfirm={() => replay.mutate()}
+      />
+      <ConfirmDialog
+        open={confirmArm}
+        onOpenChange={setConfirmArm}
+        title="Auto-fire shadow runs on new events?"
+        description="Every new qualifying event will fire a sanitized shadow run within 10 minutes (max 5 per tick). Unattended failures email the alert recipients."
+        confirmLabel="Arm auto-fire"
+        onConfirm={() => arm.mutate(true)}
+      />
+    </Card>
+  );
+}
+
 function ActiveRunsBoard({
   slug,
   activeRunId,
@@ -744,9 +898,12 @@ function RunHistory({
       columnHelper.accessor('identity', {
         header: 'Identity',
         cell: (info) => (
-          <code className="text-xs" title={info.getValue()}>
-            {shortIdentity(info.getValue())}
-          </code>
+          <span className="inline-flex items-center gap-1.5">
+            <code className="text-xs" title={info.getValue()}>
+              {shortIdentity(info.getValue())}
+            </code>
+            {info.row.original.mode === 'shadow' && <Badge variant="outline">Shadow</Badge>}
+          </span>
         ),
       }),
       columnHelper.accessor('stage', {

@@ -59,13 +59,25 @@ def mint_identity(slug: str, run_id: str) -> str:
     return rows[0].email
 
 
-def create_run(slug: str, engagement_path: str, actor: str | None) -> str:
+def create_run(
+    slug: str,
+    engagement_path: str,
+    actor: str | None,
+    *,
+    mode: str = "synthetic",
+    identity: str | None = None,
+    source_key: str | None = None,
+) -> str:
+    """mode 'synthetic' mints a scenario-NNN identity; mode 'shadow' rows are
+    created with an explicit identity (derived from the real row + run id by
+    shadow.py) and carry the real event's dedup_key as source_key."""
     run_id = f"run-{_now():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:6]}"
-    identity = mint_identity(slug, run_id)
+    if identity is None:
+        identity = mint_identity(slug, run_id)
     q = f"""
     INSERT INTO `{_DATASET}.harness_runs`
-      (run_id, slug, identity, status, stage, engagement_path, started_by, started_at, updated_at, timeline_json)
-    VALUES (@run_id, @slug, @identity, 'RUNNING', 'created', @path, @actor, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), '[]')
+      (run_id, slug, identity, status, stage, engagement_path, started_by, started_at, updated_at, timeline_json, mode, source_key)
+    VALUES (@run_id, @slug, @identity, 'RUNNING', 'created', @path, @actor, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), '[]', @mode, @source_key)
     """
     client().query(
         q,
@@ -76,10 +88,36 @@ def create_run(slug: str, engagement_path: str, actor: str | None) -> str:
                 bigquery.ScalarQueryParameter("identity", "STRING", identity),
                 bigquery.ScalarQueryParameter("path", "STRING", engagement_path),
                 bigquery.ScalarQueryParameter("actor", "STRING", actor),
+                bigquery.ScalarQueryParameter("mode", "STRING", mode),
+                bigquery.ScalarQueryParameter("source_key", "STRING", source_key),
             ]
         ),
     ).result()
     return run_id
+
+
+def set_run_identity(run_id: str, identity: str) -> None:
+    client().query(
+        f"UPDATE `{_DATASET}.harness_runs` SET identity = @identity, updated_at = CURRENT_TIMESTAMP() WHERE run_id = @run_id",
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("identity", "STRING", identity),
+                bigquery.ScalarQueryParameter("run_id", "STRING", run_id),
+            ]
+        ),
+    ).result()
+
+
+def shadow_source_keys(slug: str) -> set[str]:
+    """dedup_keys of real events already shadow-run for this slug — the
+    replay/tick dedup so one real event never fires twice."""
+    rows = client().query(
+        f"SELECT DISTINCT source_key FROM `{_DATASET}.harness_runs` WHERE slug = @slug AND mode = 'shadow' AND source_key IS NOT NULL",
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("slug", "STRING", slug)]
+        ),
+    ).result()
+    return {r.source_key for r in rows}
 
 
 def get_run(run_id: str) -> dict | None:
@@ -117,7 +155,7 @@ def list_runs(q: str | None = None, status: str | None = None, limit: int = 50) 
         params.append(bigquery.ScalarQueryParameter("status", "STRING", status.upper()))
     rows = client().query(
         f"""
-        SELECT run_id, slug, identity, status, stage, detail, started_at, updated_at
+        SELECT run_id, slug, identity, status, stage, detail, started_at, updated_at, mode, source_key
         FROM `{_DATASET}.harness_runs`
         WHERE {' AND '.join(where)}
         ORDER BY started_at DESC

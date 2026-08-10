@@ -6,7 +6,8 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import admin, affected, bqstate, customers, emailer, ledger, payloads, runner, slugs, stadium, tripwires
+from . import admin, affected, bqstate, customers, emailer, ledger, payloads, runner, shadow, slugs, stadium, tripwires
+from . import config
 from .auth import Principal, require_access, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
 from .validator import validate_slug
@@ -258,7 +259,70 @@ def harness_advance_run(run_id: str, principal: Principal = require_access("mark
 
 @app.post("/api/harness/runs/tick", dependencies=[Depends(require_scheduler_oidc)])
 def harness_tick() -> dict:
-    return runner.advance_all()
+    result = runner.advance_all()
+    # Shadow-armed slugs: fire real-data runs for new live candidates.
+    result["shadow"] = shadow.shadow_tick()
+    return result
+
+
+class ReplayRequest(BaseModel):
+    limit: int = 10
+    history_days: int = 180
+
+
+@app.get("/api/harness/replay/{slug}/preview")
+def harness_replay_preview(
+    slug: str,
+    limit: int = 10,
+    history_days: int = 180,
+    principal: Principal = require_access("marketing"),
+) -> dict:
+    """The real events a replay WOULD fire on — shown before the button is
+    pressed, already-shadow-run events excluded."""
+    spec = config.slug_registry().get(_valid_slug(slug))
+    if not spec or not spec.get("trigger_key"):
+        raise HTTPException(status_code=404, detail="Campaign not registered with a trigger key")
+    limit = max(1, min(limit, 25))
+    history_days = max(1, min(history_days, 400))
+    already = bqstate.shadow_source_keys(slug)
+    rows = [
+        {**{k: c.get(k) for k in ("dedup_key", "email", "first_name", "last_name", "event_at")},
+         "already_run": str(c["dedup_key"]) in already}
+        for c in shadow.history_candidates(spec["trigger_key"], limit + len(already), history_days)
+    ]
+    return {"candidates": rows[: limit + len(already)], "already_run": len(already)}
+
+
+@app.post("/api/harness/replay/{slug}")
+def harness_replay(
+    slug: str,
+    body: ReplayRequest,
+    principal: Principal = require_access("marketing", "operator"),
+) -> dict:
+    limit = max(1, min(body.limit, 25))
+    history_days = max(1, min(body.history_days, 400))
+    try:
+        return shadow.replay(_valid_slug(slug), limit, history_days, actor=principal.email)
+    except shadow.ShadowGuardError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class ShadowArmRequest(BaseModel):
+    armed: bool
+
+
+@app.post("/api/slugs/{slug}/shadow")
+def slugs_shadow_arm(
+    slug: str,
+    body: ShadowArmRequest,
+    principal: Principal = require_access("marketing", "operator"),
+) -> dict:
+    entry = slugs.update_shadow_armed(_valid_slug(slug), body.armed, actor=principal.email)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Campaign not registered")
+    return entry
 
 
 _CIO_ID_RE = re.compile(r"[A-Za-z0-9_=-]{4,64}")

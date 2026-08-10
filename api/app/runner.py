@@ -309,7 +309,14 @@ def _run_event(acts: list[dict], expected_event: str | None) -> dict | None:
     return None
 
 
-def _render_problems(cio: CioClient, spec: dict, slug: str, identity: str, messages: list[dict]) -> list[str]:
+def _render_problems(
+    cio: CioClient,
+    spec: dict,
+    slug: str,
+    identity: str,
+    messages: list[dict],
+    sent_payload: dict | None = None,
+) -> list[str]:
     texts = {}
     for m in messages:
         subject = m.get("Subject") or ""
@@ -325,7 +332,10 @@ def _render_problems(cio: CioClient, spec: dict, slug: str, identity: str, messa
             refs = r["trigger"] | r["event"] | r["customer"]
     except Exception:  # noqa: BLE001 — value assertions are best-effort; the leftover-Liquid scan still ran
         refs = None
-    return _content_problems(texts, refs, _payload(spec, identity, ""))
+    # Value assertions must compare against what was actually SENT — for
+    # shadow runs that's a sanitized real row, not the synthetic template.
+    payload = sent_payload if sent_payload is not None else _payload(spec, identity, "")
+    return _content_problems(texts, refs, payload)
 
 
 def start_run(slug: str, actor: str | None) -> dict:
@@ -496,7 +506,9 @@ def advance_run(run_id: str) -> dict:
 
         render_note = ""
         try:
-            render_problems = _render_problems(cio, spec, run["slug"], identity, messages)
+            render_problems = _render_problems(
+                cio, spec, run["slug"], identity, messages, sent_payload=_sent_payload(run, spec)[0]
+            )
         except Exception as e:  # noqa: BLE001 — an unreachable sink must not crash the assert tick
             render_problems = []
             render_note = f" Render check could not run: {str(e)[:100]}."

@@ -97,6 +97,8 @@ export interface SlugEntry {
      only; the runner never fires it */
   prod_webhook_url: string | null;
   payload_template: string | null;
+  /* real-data shadow runs auto-fire on new live candidates when true */
+  shadow_armed: boolean;
   notes: string | null;
   updated_at: string | null;
   updated_by: string | null;
@@ -203,6 +205,18 @@ export interface HarnessRunSummary {
   detail: string | null;
   started_at: string;
   updated_at: string;
+  /* 'shadow' = fired on a sanitized REAL event row; absent/'synthetic' = template */
+  mode?: string | null;
+  source_key?: string | null;
+}
+
+export interface ShadowCandidate {
+  dedup_key: string;
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  event_at: string | null;
+  already_run: boolean;
 }
 
 export type AttrStatus = 'match' | 'differs' | 'pending' | 'cio_only' | 'empty';

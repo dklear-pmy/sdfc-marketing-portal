@@ -60,7 +60,12 @@ DEFAULT_TEMPLATE: dict = {
 
 
 def _token_values(identity: str) -> dict:
-    num = int(identity.split("-")[1].split("@")[0])
+    try:
+        num = int(identity.split("-")[1].split("@")[0])
+    except (IndexError, ValueError):
+        # Shadow-run identities (shadow.*@qa.sdfc.dev) carry no scenario
+        # number; template refills for them are diagnostic-only.
+        num = 0
     activity_id = 990000000 + num
     return {
         "identity": identity,

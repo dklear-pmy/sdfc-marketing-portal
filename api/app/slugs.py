@@ -89,6 +89,7 @@ def _row_to_entry(r: dict) -> dict:
         "test_webhook_url": r.get("test_webhook_url"),
         "prod_webhook_url": r.get("prod_webhook_url"),
         "payload_template": r.get("payload_template"),
+        "shadow_armed": bool(r.get("shadow_armed")),
         "notes": r.get("notes"),
         "updated_at": r.get("updated_at"),
         "updated_by": r.get("updated_by"),
@@ -174,6 +175,27 @@ def upsert_slug(slug: str, fields: dict, actor: str | None) -> dict:
     entry = get_slug(slug)
     assert entry is not None
     return entry
+
+
+def update_shadow_armed(slug: str, armed: bool, actor: str | None) -> dict | None:
+    """Shadow-arming is deliberately outside upsert_slug: like notes, it must
+    survive registration saves untouched (the MERGE never writes it)."""
+    job = bqstate.client().query(
+        f"""
+        UPDATE `{_TABLE}`
+        SET shadow_armed = @armed, updated_at = CURRENT_TIMESTAMP(), updated_by = @actor
+        WHERE slug = @slug
+        """,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("armed", "BOOL", armed),
+                bigquery.ScalarQueryParameter("actor", "STRING", actor),
+                bigquery.ScalarQueryParameter("slug", "STRING", slug),
+            ]
+        ),
+    )
+    job.result()
+    return get_slug(slug) if job.num_dml_affected_rows else None
 
 
 def update_notes(slug: str, notes: str | None, actor: str | None) -> dict | None:
