@@ -40,7 +40,7 @@ import {
   shortIdentity,
   statusLabel,
 } from '@/lib/format';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -61,6 +61,7 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { SlugForm, toDraft, type Draft } from '@/components/SlugRegistry';
+import { mailpitInboxUrl, mailpitMessageUrl } from '@/lib/mailpit';
 import SlugVariablesPanel from '@/components/SlugVariables';
 
 /* Tabs follow the testing workflow left to right: is everything there →
@@ -899,9 +900,17 @@ function RunHistory({
         header: 'Identity',
         cell: (info) => (
           <span className="inline-flex items-center gap-1.5">
-            <code className="text-xs" title={info.getValue()}>
-              {shortIdentity(info.getValue())}
-            </code>
+            <a
+              href={mailpitInboxUrl(info.getValue())}
+              target="_blank"
+              rel="noreferrer"
+              title={`${info.getValue()} — open in Mailpit`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <code className="text-xs underline-offset-2 hover:underline">
+                {shortIdentity(info.getValue())}
+              </code>
+            </a>
             {info.row.original.mode === 'shadow' && <Badge variant="outline">Shadow</Badge>}
           </span>
         ),
@@ -1092,9 +1101,21 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
                 : ''}
             </CardDescription>
           </div>
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Close
-          </Button>
+          <div className="flex items-center gap-2">
+            {current && (
+              <a
+                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                href={mailpitInboxUrl(current.identity)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open in Mailpit ↗
+              </a>
+            )}
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              Close
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-3">
@@ -1131,7 +1152,22 @@ function RunDetail({ runId, onClose }: { runId: string; onClose: () => void }) {
                       {formatPacific(t.ts)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">{humanStage(t.stage)}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{t.detail}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {t.detail}
+                      {t.msg_id && (
+                        <>
+                          {' '}
+                          <a
+                            className="whitespace-nowrap underline underline-offset-2 hover:text-foreground"
+                            href={mailpitMessageUrl(t.msg_id)}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            View email ↗
+                          </a>
+                        </>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

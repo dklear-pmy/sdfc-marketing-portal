@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { ROLE_LABELS, useAuth, type Section } from '@/lib/auth';
+import { MAILPIT_URL } from '@/lib/mailpit';
 import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
@@ -37,6 +38,7 @@ const paths = {
   ledger:
     'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01',
   map: 'M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7',
+  mail: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
 };
 
 const nav: { to: string; label: string; icon: string; section: Section }[] = [
@@ -95,6 +97,23 @@ function SidebarNav({ children }: { children?: ReactNode }) {
           {item.label}
         </NavLink>
       ))}
+      {/* The sink UI is its own IAP-gated app — an external jump, not a route. */}
+      {sections.includes('marketing') && (
+        <a
+          href={MAILPIT_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center border-l-2 border-transparent px-6 py-3 text-sm font-medium text-sdfc-chrome-shine/85 transition-colors hover:bg-sdfc-elevated hover:text-white"
+        >
+          <span className="mr-3">
+            <Icon d={paths.mail} />
+          </span>
+          Mail sink
+          <span className="ml-2 text-xs" aria-hidden>
+            ↗
+          </span>
+        </a>
+      )}
       {children}
     </nav>
   );

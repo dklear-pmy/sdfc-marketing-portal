@@ -11,6 +11,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { formatPacific, relativeFrom, shortIdentity } from '@/lib/format';
+import { mailpitInboxUrl } from '@/lib/mailpit';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -223,11 +224,18 @@ export default function Tripwires() {
                   </div>
                   <CardDescription>
                     An email we send ourselves every hour to{' '}
-                    <span className="font-mono text-xs">{data.canary.email}</span>. The accounts
-                    below can only catch a problem when a real campaign is sending; this one always
-                    has something to check, so it proves the send path, the test inbox and these
-                    checks are all working — and if it fails, nothing else on this page can be
-                    trusted.
+                    <a
+                      href={mailpitInboxUrl(data.canary.email)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-mono text-xs underline-offset-2 hover:underline"
+                    >
+                      {data.canary.email}
+                    </a>
+                    . The accounts below can only catch a problem when a real campaign is sending;
+                    this one always has something to check, so it proves the send path, the test
+                    inbox and these checks are all working — and if it fails, nothing else on this
+                    page can be trusted.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-2 sm:grid-cols-3">
@@ -395,7 +403,15 @@ function GuardsCard({ guards, canEdit }: { guards: Tripwire[]; canEdit: boolean 
                 <span className="text-sm font-medium">
                   {sub ? 'Must stay subscribed' : 'Must stay unsubscribed'}
                 </span>
-                <span className="font-mono text-xs text-muted-foreground">{g.email}</span>
+                <a
+                  href={mailpitInboxUrl(g.email)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Open this address in Mailpit"
+                  className="font-mono text-xs text-muted-foreground underline-offset-2 hover:underline"
+                >
+                  {g.email}
+                </a>
                 {g.guard_pending && <Badge variant="outline">opt-out pending</Badge>}
               </div>
               {g.checks.map((c) => (
@@ -553,7 +569,15 @@ function DeletedTripwiresCard({ deleted, canEdit }: { deleted: Tripwire[]; canEd
         {deleted.map((t) => (
           <div key={t.email} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
             <span className="font-medium">{t.label}</span>
-            <span className="font-mono text-xs text-muted-foreground">{t.email}</span>
+            <a
+              href={mailpitInboxUrl(t.email)}
+              target="_blank"
+              rel="noreferrer"
+              title="Open this address in Mailpit"
+              className="font-mono text-xs text-muted-foreground underline-offset-2 hover:underline"
+            >
+              {t.email}
+            </a>
             {t.deleted_at && (
               <span className="text-xs text-muted-foreground">
                 deleted {relativeFrom(t.deleted_at)}

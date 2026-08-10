@@ -194,6 +194,9 @@ export interface RunTimelineEntry {
   ts: string;
   stage: string;
   detail: string;
+  /* Mailpit message ID, present on delivery/engagement entries — deep-links
+     straight to the email in the sink UI. */
+  msg_id?: string;
 }
 
 export interface HarnessRunSummary {
