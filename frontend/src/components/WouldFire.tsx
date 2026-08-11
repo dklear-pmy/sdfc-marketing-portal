@@ -240,7 +240,7 @@ export function WouldFireTab({ slug }: { slug: string }) {
                         {openKey === key && r.payload_json && (
                           <TableRow>
                             <TableCell colSpan={3} className="bg-muted/40">
-                              <pre className="max-h-72 overflow-auto p-1 text-xs break-all whitespace-pre-wrap">
+                              <pre className="p-1 text-xs break-all whitespace-pre-wrap">
                                 {prettyPayload(r.payload_json)}
                               </pre>
                             </TableCell>
