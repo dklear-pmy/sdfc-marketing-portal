@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -30,18 +31,22 @@ import { cn } from '@/lib/utils';
 
 const PAGE = 20;
 
+const HISTORY_DAYS = 90;
+
 export function WouldFireTab({ slug }: { slug: string }) {
-  const [{ pq, poffset }, setUrl] = useUrlFilters({ pq: '', poffset: 0 });
+  const [{ pq, poffset, pwin }, setUrl] = useUrlFilters({ pq: '', poffset: 0, pwin: 'next' });
+  const win = pwin === 'history' ? 'history' : 'next';
   const [qInput, setQInput] = useState(pq);
   useEffect(() => setQInput(pq), [pq]);
   const [openKey, setOpenKey] = useState<string | null>(null);
 
   const list = useQuery({
-    queryKey: ['would-fire', slug, pq, poffset],
+    queryKey: ['would-fire', slug, pq, poffset, win],
     queryFn: () =>
       api.get<WouldFirePage>(
         `/api/slugs/${encodeURIComponent(slug)}/preview?limit=${PAGE}&offset=${poffset}` +
-          (pq ? `&q=${encodeURIComponent(pq)}` : '')
+          (pq ? `&q=${encodeURIComponent(pq)}` : '') +
+          (win === 'history' ? `&days=${HISTORY_DAYS}` : '')
       ),
     placeholderData: (prev) => prev,
     staleTime: 60_000,
@@ -50,16 +55,25 @@ export function WouldFireTab({ slug }: { slug: string }) {
   const page = list.data;
   const rows = page?.rows ?? [];
   const total = page?.total ?? 0;
-  const overCap = !pq && page?.cap != null && total > page.cap;
+  const overCap = win === 'next' && !pq && page?.cap != null && total > page.cap;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Would fire</CardTitle>
+        <CardTitle>Matching Customers</CardTitle>
         <CardDescription>
-          Everyone this campaign&apos;s trigger logic selects right now who hasn&apos;t already
-          fired — the exact people (and payloads) the hub would send to the inbound webhook when it
-          runs armed. Evaluated live against the warehouse.
+          {win === 'next'
+            ? "Everyone this campaign's trigger logic selects right now who hasn't already fired — " +
+              'the exact people (and payloads) the hub would send to the inbound webhook when it ' +
+              'runs armed. Evaluated live against the warehouse.'
+            : `Every event this campaign's trigger would have fired on in the last ${HISTORY_DAYS} days, ` +
+              'including ones already fired. Evaluated live against the warehouse.'}{' '}
+          <strong className="font-medium text-foreground">
+            These are real fans with real addresses
+          </strong>{' '}
+          — this list is preview-only and the portal never fires a production webhook. To exercise
+          these events safely, use the shadow runs on the Test runs tab: same events, recipients
+          rewritten to the sink.
           {page?.trigger_key && (
             <>
               {' '}
@@ -94,6 +108,27 @@ export function WouldFireTab({ slug }: { slug: string }) {
         )}
         {page && page.trigger_key && (
           <>
+            <Tabs
+              value={win}
+              onValueChange={(v) =>
+                setUrl({ pwin: v === 'history' ? 'history' : 'next', poffset: 0 })
+              }
+            >
+              <TabsList>
+                <TabsTrigger value="next">Next Run</TabsTrigger>
+                <TabsTrigger value="history">Last {HISTORY_DAYS} Days</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            {win === 'history' && page.history_available === false && (
+              <Alert>
+                <AlertTitle>No history view for this trigger yet</AlertTitle>
+                <AlertDescription>
+                  The history table function doesn&apos;t carry this trigger&apos;s branch — only
+                  the live next-run view is available. History exists for the SF membership triggers
+                  (supporters and premium).
+                </AlertDescription>
+              </Alert>
+            )}
             {page.enabled === false && (
               <Alert>
                 <AlertTitle>Trigger not enabled in the hub yet</AlertTitle>
@@ -138,7 +173,9 @@ export function WouldFireTab({ slug }: { slug: string }) {
               {!pq && !overCap && (
                 <span className="text-sm text-muted-foreground">
                   <span className="font-medium text-foreground">{total.toLocaleString()}</span>{' '}
-                  {total === 1 ? 'customer' : 'customers'} currently selected.
+                  {win === 'next'
+                    ? `${total === 1 ? 'customer' : 'customers'} currently selected.`
+                    : `matching ${total === 1 ? 'event' : 'events'} in the last ${HISTORY_DAYS} days.`}
                 </span>
               )}
             </div>

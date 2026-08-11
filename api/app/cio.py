@@ -1,10 +1,21 @@
 """Thin Customer.io App API client (read paths used by the validator)."""
 
+import os
+
 import requests
 
 from .config import cio_credentials
 
 _TIMEOUT = 20
+
+# The App API is workspace-scoped but never states which workspace; the id is
+# only needed for deep links into the fly.customer.io UI.
+CIO_WORKSPACE_ID = os.environ.get("CIO_WORKSPACE_ID", "206769")
+
+
+def campaign_url(campaign_id: int | str) -> str:
+    """Deep link to a campaign in the Customer.io app."""
+    return f"https://fly.customer.io/workspaces/{CIO_WORKSPACE_ID}/journeys/campaigns/{campaign_id}/overview"
 
 
 class CioClient:

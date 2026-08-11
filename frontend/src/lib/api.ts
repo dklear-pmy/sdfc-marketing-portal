@@ -56,12 +56,17 @@ export const api = {
 
 export type CheckStatus = 'pass' | 'fail' | 'warn' | 'skip';
 
+export type CheckScope = 'test' | 'prod' | 'workspace';
+
 export interface ValidationCheck {
   id: string;
   name: string;
   status: CheckStatus;
   detail: string;
+  scope: CheckScope;
 }
+
+export type StatusCounts = { pass: number; fail: number; warn: number; skip: number };
 
 export interface CampaignSummary {
   id: number;
@@ -69,6 +74,8 @@ export interface CampaignSummary {
   role: 'test_trigger' | 'test_journey' | 'prod_trigger' | 'prod_journey';
   state: string;
   event_name: string | null;
+  /* deep link into the fly.customer.io UI */
+  url?: string;
 }
 
 export interface ValidationReport {
@@ -76,11 +83,14 @@ export interface ValidationReport {
   generated_at: string;
   campaigns: CampaignSummary[];
   checks: ValidationCheck[];
-  summary: { pass: number; fail: number; warn: number; skip: number };
+  summary: StatusCounts;
+  scopes: Record<CheckScope, StatusCounts>;
 }
 
 export interface SlugEntry {
   slug: string;
+  /* editable everywhere-name; slug stays the stable key */
+  display_name: string | null;
   trigger_key: string | null;
   /* user-editable display name for the trigger; trigger_key stays the stable
      internal identity (hub state rows, env vars) */
@@ -134,6 +144,8 @@ export interface PrecheckFinding {
   /* A registry field/value the portal can apply in one click — only the
      registry side is ever offered; renames inside Customer.io stay manual. */
   fix?: { field: 'event_name' | 'test_event_name'; value: string; label: string };
+  /* Which pair the finding belongs to; absent when it spans both. */
+  side?: 'test' | 'prod';
 }
 
 export interface SlugPrecheck {
@@ -382,6 +394,11 @@ export interface WouldFirePage {
      shows drafted/placeholder logic the hub won't execute yet; null for
      unknown triggers */
   enabled: boolean | null;
+  /* history window in days when this page came from the history table
+     function; null/absent = the live next-run view */
+  days?: number | null;
+  /* whether tf_campaign_would_fire_history has a branch for this trigger */
+  history_available?: boolean;
 }
 
 export interface LedgerStatus {

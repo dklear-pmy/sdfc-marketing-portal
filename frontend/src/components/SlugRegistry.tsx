@@ -57,6 +57,7 @@ const runVariant: Record<HarnessRunSummary['status'], 'default' | 'destructive' 
    working until their URL is filled in. */
 export interface Draft {
   slug: string;
+  display_name: string;
   trigger_key: string;
   trigger_label: string;
   event_name: string;
@@ -74,6 +75,7 @@ export interface Draft {
 
 const EMPTY_DRAFT: Draft = {
   slug: '',
+  display_name: '',
   trigger_key: '',
   trigger_label: '',
   event_name: '',
@@ -92,6 +94,7 @@ const EMPTY_DRAFT: Draft = {
 export function toDraft(e: SlugEntry): Draft {
   return {
     slug: e.slug,
+    display_name: e.display_name ?? '',
     trigger_key: e.trigger_key ?? '',
     trigger_label: e.trigger_label ?? '',
     event_name: e.event_name ?? '',
@@ -117,6 +120,7 @@ const parseList = (s: string) =>
 
 function toBody(d: Draft) {
   return {
+    display_name: d.display_name.trim() || null,
     trigger_key: d.trigger_key.trim() || null,
     trigger_label: d.trigger_label.trim() || null,
     event_name: d.event_name.trim() || null,
@@ -163,7 +167,8 @@ export default function SlugRegistry({
     (e) =>
       !rq ||
       e.slug.toLowerCase().includes(rq.toLowerCase()) ||
-      humanizeSlug(e.slug).toLowerCase().includes(rq.toLowerCase())
+      humanizeSlug(e.slug).toLowerCase().includes(rq.toLowerCase()) ||
+      (e.display_name ?? '').toLowerCase().includes(rq.toLowerCase())
   );
 
   function openAdd() {
@@ -230,8 +235,7 @@ export default function SlugRegistry({
             <TableHeader>
               <TableRow>
                 <TableHead>Campaign</TableHead>
-                <TableHead>Test event</TableHead>
-                <TableHead>Prod event</TableHead>
+                <TableHead>Events</TableHead>
                 <TableHead>Runner</TableHead>
                 <TableHead>Last run</TableHead>
                 <TableHead>Updated</TableHead>
@@ -245,11 +249,23 @@ export default function SlugRegistry({
                   className={cn('cursor-pointer', e.slug === selected && 'bg-accent/50')}
                 >
                   <TableCell>
-                    <span className="font-medium whitespace-nowrap">{humanizeSlug(e.slug)}</span>
+                    <span className="font-medium whitespace-nowrap">
+                      {e.display_name || humanizeSlug(e.slug)}
+                    </span>
                     <code className="block text-xs text-muted-foreground">{e.slug}</code>
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{e.test_event_name ?? '—'}</TableCell>
-                  <TableCell className="font-mono text-xs">{e.event_name ?? '—'}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    <span className="grid grid-cols-[3rem_1fr] gap-x-1.5 gap-y-0.5">
+                      <span className="text-right font-sans font-medium text-muted-foreground">
+                        TEST:
+                      </span>
+                      <span className="whitespace-nowrap">{e.test_event_name ?? '—'}</span>
+                      <span className="text-right font-sans font-medium text-muted-foreground">
+                        PROD:
+                      </span>
+                      <span className="whitespace-nowrap">{e.event_name ?? '—'}</span>
+                    </span>
+                  </TableCell>
                   <TableCell>
                     <Badge variant={e.runnable ? 'default' : 'secondary'}>
                       {e.runnable ? 'Runnable' : 'Not runnable'}
@@ -260,7 +276,7 @@ export default function SlugRegistry({
                       const r = lastRun(e.slug);
                       if (!r) return <span className="text-sm text-muted-foreground">—</span>;
                       return (
-                        <span className="flex items-center gap-2">
+                        <span className="grid justify-items-start gap-0.5">
                           <Badge variant={runVariant[r.status]}>{statusLabel[r.status]}</Badge>
                           <span className="text-xs text-muted-foreground">
                             {relativeFrom(r.started_at)}
@@ -439,6 +455,19 @@ export function SlugForm({
           />
         </div>
         <div className="grid gap-2">
+          <Label htmlFor="reg-display-name">Display name</Label>
+          <Input
+            id="reg-display-name"
+            placeholder="e.g. STM New Member Welcome Journey 260807"
+            value={draft.display_name}
+            onChange={(e) => set({ display_name: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">
+            What the portal shows everywhere for this campaign — rename freely; the slug stays the
+            stable key. Blank falls back to the slug with hyphens as spaces.
+          </p>
+        </div>
+        <div className="grid gap-2">
           <Label htmlFor="reg-trigger-key">Trigger key (trigger hub)</Label>
           <Input
             id="reg-trigger-key"
@@ -504,7 +533,9 @@ export function SlugForm({
             <p className="text-xs text-muted-foreground">
               Paste it from the twin's [1/2] trigger settings — Customer.io doesn't expose webhook
               URLs via API. Required before the runner can fire this campaign; visible to signed-in
-              portal users (internal tool, by design).
+              portal users (internal tool, by design). The two URL fields look identical but must
+              never be crossed: this one receives test fires, the prod one receives real hub rows.
+              Identical values are refused on save.
             </p>
           </div>
         </div>
@@ -772,9 +803,10 @@ export function SlugForm({
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-20">Level</TableHead>
-                    <TableHead className="w-[45%]">Finding</TableHead>
+                    <TableHead className="w-16">Side</TableHead>
+                    <TableHead className="w-[42%]">Finding</TableHead>
                     {report.findings.some((f) => f.fix) && (
-                      <TableHead className="w-[45%]">Fix</TableHead>
+                      <TableHead className="w-[42%]">Fix</TableHead>
                     )}
                   </TableRow>
                 </TableHeader>
@@ -783,6 +815,13 @@ export function SlugForm({
                     <TableRow key={i}>
                       <TableCell className="align-top">
                         <Badge variant={findingVariant[f.level]}>{f.level}</Badge>
+                      </TableCell>
+                      <TableCell className="align-top">
+                        {f.side ? (
+                          <Badge variant="outline">{f.side === 'test' ? 'Test' : 'Prod'}</Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                       <TableCell className="whitespace-normal text-muted-foreground">
                         {f.message}

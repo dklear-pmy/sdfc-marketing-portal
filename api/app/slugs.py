@@ -77,6 +77,7 @@ _ROLE_LABELS = {
 def _row_to_entry(r: dict) -> dict:
     entry = {
         "slug": r["slug"],
+        "display_name": r.get("display_name"),
         "trigger_key": r.get("trigger_key"),
         "trigger_label": r.get("trigger_label"),
         "event_name": r.get("event_name"),
@@ -136,6 +137,7 @@ def upsert_slug(slug: str, fields: dict, actor: str | None) -> dict:
     q = f"""
     MERGE `{_TABLE}` t USING (SELECT @slug AS slug) s ON t.slug = s.slug
     WHEN MATCHED THEN UPDATE SET
+      display_name = @display_name,
       trigger_key = @trigger_key, trigger_label = @trigger_label, event_name = @event_name,
       test_event_name = @test_event_name, payload_fields_json = @payload_fields,
       person_attributes_json = @person_attributes, filter_fields_json = @filter_fields,
@@ -145,17 +147,20 @@ def upsert_slug(slug: str, fields: dict, actor: str | None) -> dict:
       payload_template = @payload_template,
       notes = @notes, updated_at = CURRENT_TIMESTAMP(), updated_by = @actor
     WHEN NOT MATCHED THEN INSERT
-      (slug, trigger_key, trigger_label, event_name, test_event_name, payload_fields_json,
+      (slug, display_name, trigger_key, trigger_label, event_name, test_event_name,
+       payload_fields_json,
        person_attributes_json, filter_fields_json, webhook_secrets_json, test_webhook_secret,
        test_webhook_url, prod_webhook_url, payload_template, notes, created_at, created_by,
        updated_at, updated_by)
-    VALUES (@slug, @trigger_key, @trigger_label, @event_name, @test_event_name, @payload_fields,
+    VALUES (@slug, @display_name, @trigger_key, @trigger_label, @event_name, @test_event_name,
+            @payload_fields,
             @person_attributes, @filter_fields, @webhook_secrets, @test_webhook_secret,
             @test_webhook_url, @prod_webhook_url, @payload_template, @notes, CURRENT_TIMESTAMP(),
             @actor, CURRENT_TIMESTAMP(), @actor)
     """
     params = [
         bigquery.ScalarQueryParameter("slug", "STRING", slug),
+        bigquery.ScalarQueryParameter("display_name", "STRING", fields.get("display_name")),
         bigquery.ScalarQueryParameter("trigger_key", "STRING", fields.get("trigger_key")),
         bigquery.ScalarQueryParameter("trigger_label", "STRING", fields.get("trigger_label")),
         bigquery.ScalarQueryParameter("event_name", "STRING", fields.get("event_name")),
@@ -252,11 +257,13 @@ def validate_entry(fields: dict, slug: str | None = None) -> list[str]:
         v = fields.get(key)
         if v and not rx.match(v):
             errors.append(f"{label} '{v}' has an unexpected format")
-    # Display name is free text by design (the whole point is renameability);
+    # Display names are free text by design (the whole point is renameability);
     # only a sanity length cap.
     display = fields.get("trigger_label")
     if display and len(display) > 80:
         errors.append("Trigger display name is longer than 80 characters")
+    if fields.get("display_name") and len(fields["display_name"]) > 80:
+        errors.append("Campaign display name is longer than 80 characters")
     for key, label in (
         ("payload_fields", "Payload field"),
         ("person_attributes", "Person attribute"),
@@ -275,6 +282,18 @@ def validate_entry(fields: dict, slug: str | None = None) -> list[str]:
             problem = webhook_url_problem(url)
             if problem:
                 errors.append(problem)
+    # The two URLs are indistinguishable by shape, so a paste mix-up is the one
+    # way a portal user can point a hub target at the wrong pair — the harness
+    # at prod, or the hub's unsanitized rows at the twin. Refuse the save.
+    if (
+        fields.get("test_webhook_url")
+        and fields.get("test_webhook_url") == fields.get("prod_webhook_url")
+    ):
+        errors.append(
+            "Test and prod webhook URLs are identical — each pair's trigger has its own "
+            "URL. One of these is pasted into the wrong field; sending real hub rows at "
+            "the twin (or harness fires at prod) is exactly the mix-up this blocks"
+        )
     template = fields.get("payload_template")
     if template:
         errors += payloads.template_problems(template)
@@ -328,19 +347,23 @@ def analyze(
     findings: list[dict] = []
     spec = spec or {}
 
-    def add(level: str, message: str, fix: dict | None = None) -> None:
+    def add(level: str, message: str, fix: dict | None = None, side: str | None = None) -> None:
+        # side: 'test' | 'prod' — which pair the finding belongs to, so the UI
+        # can show that a healthy twin isn't implicated by pre-launch prod issues.
         finding: dict = {"level": level, "message": message}
         if fix:
             finding["fix"] = fix
+        if side:
+            finding["side"] = side
         findings.append(finding)
 
     clean = {k: v for k, v in roles.items() if "duplicate" not in k}
     for role in ("test_trigger", "test_journey"):
         if role not in clean:
-            add("fail", f"No {_ROLE_LABELS[role]} campaign found — dupe the prod pair before testing")
+            add("fail", f"No {_ROLE_LABELS[role]} campaign found — dupe the prod pair before testing", side="test")
     for role in ("prod_trigger", "prod_journey"):
         if role not in clean:
-            add("warn", f"No {_ROLE_LABELS[role]} campaign found — check the naming convention")
+            add("warn", f"No {_ROLE_LABELS[role]} campaign found — check the naming convention", side="prod")
     dupes = [k for k in roles if "duplicate" in k]
     if dupes:
         add("warn", f"Multiple campaigns match the same role ({len(dupes)} duplicate(s)) — names are ambiguous")
@@ -360,6 +383,7 @@ def analyze(
                 f"Prod journey listens on the TEST event '{prod_ev}' — once it starts, every "
                 "harness test fire enters the production journey (and real events never will). "
                 f"Rename the PROD journey's trigger (and its [1/2] Send Event) to '{expected_prod}'.",
+                side="prod",
             )
         else:
             add(
@@ -367,11 +391,12 @@ def analyze(
                 f"Twin journey listens on the PRODUCTION event '{prod_ev}' — once both run, every real "
                 "purchase enters both journeys and fans get the series twice. Rename the twin's trigger "
                 f"(and its [1/2] Send Event) to '{TEST_EVENT_PREFIX}{prod_ev}'.",
+                side="test",
             )
     elif test_ev and not test_ev.startswith(TEST_EVENT_PREFIX):
-        add("fail", f"Twin journey triggers on '{test_ev}' — test events must use the {TEST_EVENT_PREFIX} prefix")
+        add("fail", f"Twin journey triggers on '{test_ev}' — test events must use the {TEST_EVENT_PREFIX} prefix", side="test")
     if "test_journey" in clean and not test_ev:
-        add("warn", "Twin journey exposes no trigger event — non-event trigger or API lag; verify in Customer.io")
+        add("warn", "Twin journey exposes no trigger event — non-event trigger or API lag; verify in Customer.io", side="test")
 
     convention = TEST_EVENT_PREFIX + slug if slug else None
     expected_test = spec.get("test_event_name")
@@ -389,12 +414,14 @@ def analyze(
                 f"twin's trigger AND its [1/2] Send Event in Customer.io to '{expected_test}', or "
                 "adopt the current Customer.io name below.",
                 fix=adopt,
+                side="test",
             )
         else:
             add(
                 "fail",
                 f"Twin journey triggers on '{test_ev}' but the registry says '{expected_test}'",
                 fix=adopt,
+                side="test",
             )
     elif convention and test_ev and expected_test == test_ev and test_ev != convention:
         add(
@@ -402,6 +429,7 @@ def analyze(
             f"This pair runs on legacy event name '{test_ev}'; the convention is '{convention}'. To "
             "adopt it, rename the twin's trigger and its [1/2] Send Event in Customer.io first — "
             "this check will then offer the matching registry update.",
+            side="test",
         )
     expected_prod = spec.get("event_name")
     if expected_prod and prod_ev and prod_ev != expected_prod:
@@ -413,6 +441,7 @@ def analyze(
                 "value": prod_ev,
                 "label": f"Use '{prod_ev}' (what production runs on)",
             },
+            side="prod",
         )
 
     payload_keys = set(payloads.effective_template(spec))
@@ -441,6 +470,7 @@ def analyze(
                 f" Point the action's recipient at 'email' in Customer.io (like the "
                 f"Welcome-General twin), or add '{field}' to this slug's payload template if "
                 f"the real trigger genuinely carries it.{hint}",
+                side="test" if role == "test_trigger" else "prod",
             )
 
     stopped = [
@@ -449,15 +479,23 @@ def analyze(
         if r in clean and clean[r].get("state") != "running"
     ]
     if stopped:
-        add("warn", f"Not running yet: {', '.join(stopped)} — start both twin halves before running tests")
+        add("warn", f"Not running yet: {', '.join(stopped)} — start both twin halves before running tests", side="test")
     if (clean.get("prod_journey") or {}).get("state") == "draft":
-        add("info", "Prod journey is still draft (campaign not launched) — normal before go-live")
+        add("info", "Prod journey is still draft (campaign not launched) — normal before go-live", side="prod")
 
     for sid, exists in secrets.items():
         if exists is False:
             add("fail", f"Secret Manager has no secret '{sid}' — create it with the webhook URL")
         elif exists is None:
             add("warn", f"Cannot verify secret '{sid}' (no permission)")
+
+    if spec.get("test_webhook_url") and spec.get("test_webhook_url") == spec.get("prod_webhook_url"):
+        add(
+            "fail",
+            "Test and prod webhook URLs are identical in the registry — one is pasted in the "
+            "wrong field. Until it's fixed, a harness run could fire the production journey, "
+            "or an armed hub target could send real unsanitized rows at the twin.",
+        )
 
     if not (spec.get("test_webhook_url") or spec.get("test_webhook_secret")):
         add("warn", "No test webhook URL registered — paste the twin's trigger URL so the runner can fire this campaign")
@@ -668,6 +706,8 @@ def precheck(slug: str, overrides: dict | None = None) -> dict:
         bool(spec.get("test_webhook_secret"))
         and secrets.get(spec.get("test_webhook_secret")) is True
     )
+    from .cio import campaign_url
+
     campaigns = [
         {
             "role": role,
@@ -675,6 +715,7 @@ def precheck(slug: str, overrides: dict | None = None) -> dict:
             "name": c["name"],
             "state": c.get("state"),
             "event_name": c.get("event_name"),
+            "url": campaign_url(c["id"]),
         }
         for role, c in roles.items()
         if "duplicate" not in role

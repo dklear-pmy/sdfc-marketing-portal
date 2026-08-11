@@ -20,7 +20,9 @@ import {
 } from '@tanstack/react-table';
 import {
   api,
+  type CheckScope,
   type CheckStatus,
+  type StatusCounts,
   type HarnessRun,
   type HarnessRunSummary,
   type ShadowCandidate,
@@ -30,7 +32,7 @@ import {
   type ValidationReport,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { useUrlFilters } from '@/lib/urlState';
+import { oneOf, useUrlFilters } from '@/lib/urlState';
 import {
   formatPacific,
   humanizeSlug,
@@ -48,7 +50,6 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { UnderlineTabs } from '@/components/ui/underline-tabs';
-import { AffectedCustomersTab } from '@/components/AffectedCustomers';
 import { WouldFireTab } from '@/components/WouldFire';
 import {
   Table,
@@ -60,7 +61,7 @@ import {
 } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { SlugForm, toDraft, type Draft } from '@/components/SlugRegistry';
-import { mailpitInboxUrl, mailpitMessageUrl } from '@/lib/mailpit';
+import { MAILPIT_URL, mailpitInboxUrl, mailpitMessageUrl } from '@/lib/mailpit';
 import SlugVariablesPanel from '@/components/SlugVariables';
 
 /* Tabs follow the testing workflow left to right: is everything there →
@@ -71,12 +72,20 @@ export const CAMPAIGN_TABS = [
   { key: 'registration', label: 'Registration' },
   { key: 'variables', label: 'Variables' },
   { key: 'wiring', label: 'Wiring check' },
-  { key: 'preview', label: 'Would fire' },
-  { key: 'affected', label: 'Have fired' },
+  { key: 'preview', label: 'Matching Customers' },
   { key: 'runs', label: 'Test runs' },
 ] as const;
 export type CampaignTab = (typeof CAMPAIGN_TABS)[number]['key'];
 export const CAMPAIGN_TAB_KEYS: readonly CampaignTab[] = CAMPAIGN_TABS.map((t) => t.key);
+
+/* The drilldown runs in one of two modes — the twin/testing system or the
+   live/production system. Each mode shows only its own tabs; the shared tabs
+   (Overview, Registration, Variables, Wiring check) scope their content. */
+export type CampaignMode = 'test' | 'prod';
+const MODE_TABS: Record<CampaignMode, readonly CampaignTab[]> = {
+  test: ['overview', 'registration', 'variables', 'wiring', 'preview', 'runs'],
+  prod: ['overview', 'registration', 'variables', 'wiring', 'preview'],
+};
 
 const runStatusVariant: Record<HarnessRun['status'], 'default' | 'destructive' | 'secondary'> = {
   RUNNING: 'secondary',
@@ -130,6 +139,15 @@ export default function CampaignDrilldown({
   const { role } = useAuth();
   const canEdit = role === 'operator' || role === 'admin';
 
+  const [{ cmode }, setModeUrl] = useUrlFilters({ cmode: 'test' });
+  const mode = oneOf<CampaignMode>(cmode, ['test', 'prod'], 'test');
+  const visibleTabs = CAMPAIGN_TABS.filter((t) => MODE_TABS[mode].includes(t.key));
+  /* A tab that belongs to the other mode (e.g. Test runs while in Prod) falls
+     back to Overview rather than rendering blank. */
+  useEffect(() => {
+    if (!MODE_TABS[mode].includes(tab)) onTab('overview');
+  }, [mode, tab, onTab]);
+
   const listQuery = useQuery({
     queryKey: ['slugs'],
     queryFn: () => api.get<SlugListResponse>('/api/slugs'),
@@ -150,7 +168,9 @@ export default function CampaignDrilldown({
             {/* Display typography stays on the name span only — pills must
                 not inherit the large size or tight tracking. */}
             <CardTitle className="flex flex-wrap items-center gap-3">
-              <span className="text-4xl font-medium tracking-tight">{humanizeSlug(slug)}</span>
+              <span className="text-4xl font-medium tracking-tight">
+                {entry?.display_name || humanizeSlug(slug)}
+              </span>
               {/* Badge runs 25% over its default (h-5/text-xs) to hold its
                   own next to the display-size name. */}
               {entry && (
@@ -162,7 +182,7 @@ export default function CampaignDrilldown({
                 </Badge>
               )}
             </CardTitle>
-            {canEdit && entry?.runnable && (
+            {canEdit && entry?.runnable && mode === 'test' && (
               <Button disabled={runPending} onClick={() => onRun(slug)}>
                 {runPending ? 'Starting…' : 'Run test'}
               </Button>
@@ -172,9 +192,27 @@ export default function CampaignDrilldown({
         </CardHeader>
       </Card>
 
-      <UnderlineTabs tabs={CAMPAIGN_TABS} value={tab} onChange={onTab} />
+      <div className="grid gap-1.5">
+        <Tabs value={mode} onValueChange={(v) => setModeUrl({ cmode: v })}>
+          <TabsList className="h-11">
+            <TabsTrigger value="test" className="px-5 text-base">
+              Testing Mode
+            </TabsTrigger>
+            <TabsTrigger value="prod" className="px-5 text-base">
+              Production Mode
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <p className="text-sm text-muted-foreground">
+          {mode === 'test'
+            ? 'The [PMY-TEST] twin pair and the testing harness — synthetic and shadow runs, all mail into the sink.'
+            : 'The live pair and its warehouse trigger — real campaigns reaching real fans.'}
+        </p>
+      </div>
 
-      {tab === 'overview' && <OverviewTab slug={slug} onOpenWiring={() => onTab('wiring')} />}
+      <UnderlineTabs tabs={visibleTabs} value={tab} onChange={onTab} />
+
+      {tab === 'overview' && <OverviewTab slug={slug} mode={mode} onTab={onTab} />}
       {tab === 'registration' && (
         <RegistrationTab
           slug={slug}
@@ -184,9 +222,8 @@ export default function CampaignDrilldown({
         />
       )}
       {tab === 'variables' && <SlugVariablesPanel slug={slug} />}
-      {tab === 'wiring' && <WiringTab slug={slug} />}
+      {tab === 'wiring' && <WiringTab slug={slug} mode={mode} />}
       {tab === 'preview' && <WouldFireTab slug={slug} />}
-      {tab === 'affected' && <AffectedCustomersTab slug={slug} />}
       {tab === 'runs' && (
         <>
           <ShadowPanel slug={slug} entry={entry} canEdit={canEdit} />
@@ -217,6 +254,14 @@ function CampaignFacts({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Same key as OverviewTab — the campaign ids/links come along free when the
+  // Overview has already checked Customer.io.
+  const precheck = useQuery({
+    queryKey: ['precheck', slug],
+    queryFn: () => api.get<SlugPrecheck>(`/api/slugs/${encodeURIComponent(slug)}/precheck`),
+  });
+  const automations = precheck.data?.campaigns ?? [];
 
   /* Grow the field to its content so the editor matches the rendered note. */
   useLayoutEffect(() => {
@@ -254,6 +299,36 @@ function CampaignFacts({
       ) : (
         <span className="text-muted-foreground">—</span>
       ),
+    },
+    {
+      label: 'Automations',
+      value:
+        automations.length > 0 ? (
+          <span className="flex flex-wrap gap-x-4 gap-y-1">
+            {automations.map((c) =>
+              c.url ? (
+                <a
+                  key={c.role}
+                  href={c.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={c.name}
+                  className="whitespace-nowrap underline underline-offset-2 hover:text-foreground"
+                >
+                  {pairLabel[c.role] ?? c.role} · #{c.id} ↗
+                </a>
+              ) : (
+                <span key={c.role} className="whitespace-nowrap" title={c.name}>
+                  {pairLabel[c.role] ?? c.role} · #{c.id}
+                </span>
+              )
+            )}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">
+            {precheck.isPending ? 'Checking Customer.io…' : '—'}
+          </span>
+        ),
     },
     {
       label: 'Last updated',
@@ -351,7 +426,102 @@ function CampaignFacts({
   );
 }
 
-function OverviewTab({ slug, onOpenWiring }: { slug: string; onOpenWiring: () => void }) {
+/* The testing workflow, in order, each step linking to the tab where it
+   happens — the campaign-level companion to the tab order itself. */
+function TestingSteps({ onTab }: { onTab: (tab: CampaignTab) => void }) {
+  const linkClass = 'font-medium underline underline-offset-2 hover:text-foreground';
+  const steps: { label: string; tab?: CampaignTab; href?: string; body: string }[] = [
+    {
+      label: 'Registration',
+      tab: 'registration',
+      body:
+        'Create the twin pair in Customer.io first — duplicate both production campaigns, add ' +
+        '[PMY-TEST] to their titles, and rename the trigger event to a pmy_test_ name (both are ' +
+        'enforced: fires are refused without them). Then register the pair here: events, the ' +
+        "twin's webhook URL, the payload template. The built-in check auto-fills what it can " +
+        'and offers one-click fixes.',
+    },
+    {
+      label: 'Wiring check',
+      tab: 'wiring',
+      body:
+        'The full live check against Customer.io — presence, states, event names, recipient ' +
+        'resolution, payload mapping, template lint, Liquid references, delay profile, webhook ' +
+        'URL. Clear every fail before firing anything.',
+    },
+    {
+      label: 'Variables',
+      tab: 'variables',
+      body:
+        'Field-by-field matrix of what the runner sends vs what Customer.io maps vs what the ' +
+        'emails reference. If the Send Event mapping has gaps, copy the generated snippet into ' +
+        'the twin.',
+    },
+    {
+      label: 'Run test',
+      tab: 'runs',
+      body:
+        'Fire a synthetic scenario-* identity with the Run test button at the top of this page. ' +
+        'The run advances itself and verifies delivery, engagement, rendering, and the payload ' +
+        'the journey received.',
+    },
+    {
+      label: 'Shadow runs',
+      tab: 'runs',
+      body:
+        'Replay real past events through the twin with recipients rewritten to the sink, or arm ' +
+        'auto-fire for new events — real data, no real fan or profile touched.',
+    },
+    {
+      label: 'Mail sink',
+      href: MAILPIT_URL,
+      body:
+        'Every delivered email lands in Mailpit — run details and timelines link straight to ' +
+        'each message.',
+    },
+  ];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>How to test this campaign</CardTitle>
+        <CardDescription>
+          The steps in order — each links to the tab where it happens.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ol className="grid gap-3 text-sm">
+          {steps.map((s, i) => (
+            <li key={s.label} className="grid grid-cols-[1.5rem_1fr] gap-2">
+              <span className="font-semibold text-muted-foreground">{i + 1}.</span>
+              <span>
+                {s.tab ? (
+                  <button type="button" className={linkClass} onClick={() => onTab(s.tab!)}>
+                    {s.label}
+                  </button>
+                ) : (
+                  <a className={linkClass} href={s.href} target="_blank" rel="noreferrer">
+                    {s.label} ↗
+                  </a>
+                )}{' '}
+                — <span className="text-muted-foreground">{s.body}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
+      </CardContent>
+    </Card>
+  );
+}
+
+function OverviewTab({
+  slug,
+  mode,
+  onTab,
+}: {
+  slug: string;
+  mode: CampaignMode;
+  onTab: (tab: CampaignTab) => void;
+}) {
   const precheck = useQuery({
     queryKey: ['precheck', slug],
     queryFn: () => api.get<SlugPrecheck>(`/api/slugs/${encodeURIComponent(slug)}/precheck`),
@@ -363,110 +533,215 @@ function OverviewTab({ slug, onOpenWiring }: { slug: string; onOpenWiring: () =>
     queryFn: () => api.get<ValidationReport>(`/api/harness/validate/${encodeURIComponent(slug)}`),
   });
   const report = precheck.data;
-  const summary = validation.data?.summary;
-  const verdict = summary
-    ? summary.fail > 0
-      ? `${summary.fail} check${summary.fail === 1 ? '' : 's'} failing${
-          summary.warn > 0 ? ` · ${summary.warn} warning${summary.warn === 1 ? '' : 's'}` : ''
-        }`
-      : summary.warn > 0
-        ? `Nothing failing · ${summary.warn} warning${summary.warn === 1 ? '' : 's'}`
-        : 'All wiring checks pass'
-    : null;
+  const scopes = validation.data?.scopes;
+  const sideCampaigns = (report?.campaigns ?? []).filter((c) => c.role.startsWith(mode));
 
+  return (
+    <div className="grid gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Overview</CardTitle>
+          <CardDescription>
+            {mode === 'test'
+              ? 'The twin pair at a glance and the payload the runner will send. Full findings ' +
+                "live on the Wiring check tab; fix-it-in-one-click offers on the Registration tab's check."
+              : 'The live pair at a glance. Full findings live on the Wiring check tab.'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          {precheck.isPending && (
+            <p className="text-sm text-muted-foreground">Checking Customer.io…</p>
+          )}
+          {precheck.isError && (
+            <Alert variant="destructive">
+              <AlertTitle>Precheck failed</AlertTitle>
+              <AlertDescription>{(precheck.error as Error).message}</AlertDescription>
+            </Alert>
+          )}
+          {report && (
+            <>
+              <p className="text-sm font-medium">
+                {sideCampaigns.length} of 2 {mode === 'test' ? 'twin' : 'live'} campaigns found
+                {report.registered ? '' : ' · slug not registered yet'}
+              </p>
+              {sideCampaigns.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {sideCampaigns.map((c) => {
+                    const chip = (
+                      <>
+                        {pairLabel[c.role] ?? c.role} · #{c.id}
+                        <Badge variant={c.state === 'running' ? 'default' : 'secondary'}>
+                          {c.state}
+                        </Badge>
+                      </>
+                    );
+                    const chipClass =
+                      'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs';
+                    return c.url ? (
+                      <a
+                        key={c.role}
+                        href={c.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`${c.name} — open in Customer.io`}
+                        className={cn(chipClass, 'hover:bg-muted/60')}
+                      >
+                        {chip} <span aria-hidden>↗</span>
+                      </a>
+                    ) : (
+                      <span key={c.role} className={chipClass} title={c.name}>
+                        {chip}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                {validation.isPending && (
+                  <span className="text-muted-foreground">Running the wiring check…</span>
+                )}
+                {validation.isError && (
+                  <span className="text-muted-foreground">Wiring check unavailable.</span>
+                )}
+                {scopes && mode === 'test' && (
+                  <>
+                    <Badge
+                      variant={
+                        scopes.test.fail > 0
+                          ? 'destructive'
+                          : scopes.test.warn > 0
+                            ? 'secondary'
+                            : 'default'
+                      }
+                    >
+                      {scopes.test.fail > 0 ? 'fail' : scopes.test.warn > 0 ? 'warn' : 'pass'}
+                    </Badge>
+                    <span>
+                      {scopes.test.fail > 0
+                        ? `${scopes.test.fail} failing`
+                        : scopes.test.warn > 0
+                          ? `Ready to test · ${scopes.test.warn} warning${scopes.test.warn === 1 ? '' : 's'}`
+                          : 'Ready to test'}
+                    </span>
+                  </>
+                )}
+                {scopes && mode === 'prod' && (
+                  <>
+                    <Badge
+                      variant={
+                        scopes.prod.fail + scopes.workspace.fail > 0
+                          ? 'destructive'
+                          : scopes.prod.warn > 0
+                            ? 'secondary'
+                            : 'default'
+                      }
+                    >
+                      {scopes.prod.fail + scopes.workspace.fail > 0
+                        ? 'fail'
+                        : scopes.prod.warn > 0
+                          ? 'warn'
+                          : 'pass'}
+                    </Badge>
+                    <span>
+                      {scopes.prod.fail + scopes.workspace.fail > 0
+                        ? `${scopes.prod.fail + scopes.workspace.fail} to fix before launch`
+                        : scopes.prod.warn > 0
+                          ? `Not launched yet · ${scopes.prod.warn} warning${scopes.prod.warn === 1 ? '' : 's'}`
+                          : 'Ready to launch'}
+                    </span>
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                  onClick={() => onTab('wiring')}
+                >
+                  Open the Wiring check
+                </button>
+              </div>
+              {mode === 'test' && report.payload_preview && (
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-muted-foreground select-none">
+                    Payload the runner will send —{' '}
+                    {report.payload_is_custom ? 'this campaign’s template' : 'signup default'}
+                  </summary>
+                  <pre className="mt-2 overflow-x-auto rounded-md border bg-muted/40 p-2 font-mono text-xs">
+                    {JSON.stringify(report.payload_preview, null, 2)}
+                  </pre>
+                </details>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="justify-self-start"
+                disabled={precheck.isFetching || validation.isFetching}
+                onClick={() => {
+                  void precheck.refetch();
+                  void validation.refetch();
+                }}
+              >
+                {precheck.isFetching || validation.isFetching ? 'Checking…' : 'Re-check'}
+              </Button>
+            </>
+          )}
+        </CardContent>
+      </Card>
+      {mode === 'test' ? <TestingSteps onTab={onTab} /> : <LaunchSteps onTab={onTab} />}
+    </div>
+  );
+}
+
+/* Prod-mode companion to TestingSteps: the road from a validated twin to an
+   armed production trigger. */
+function LaunchSteps({ onTab }: { onTab: (tab: CampaignTab) => void }) {
+  const linkClass = 'font-medium underline underline-offset-2 hover:text-foreground';
+  const steps: { label: string; tab?: CampaignTab; body: string }[] = [
+    {
+      label: 'Wiring check',
+      tab: 'wiring',
+      body:
+        'Clear every prod-side fail: the live journey must listen on the production event ' +
+        '(never a pmy_test_ one), identify people by email, and map the full payload contract.',
+    },
+    {
+      label: 'Registration',
+      tab: 'registration',
+      body:
+        "Store the live trigger's webhook URL (never the twin's — identical values are " +
+        'refused) so sample sends and hub arming can use it.',
+    },
+    {
+      label: 'Matching Customers',
+      tab: 'preview',
+      body:
+        'Preview exactly who the warehouse trigger selects right now and with what payload. ' +
+        'Over-cap counts here mean the trigger needs a re-baseline before arming. Once live, ' +
+        'delivery history lives in the Customer.io interface.',
+    },
+  ];
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Overview</CardTitle>
+        <CardTitle>How to take this campaign live</CardTitle>
         <CardDescription>
-          Campaign presence at a glance and the payload the runner will send. Full findings live
-          on the Wiring check tab; fix-it-in-one-click offers on the Registration tab's check.
+          The steps in order — each links to the tab where it happens. Arming the trigger hub itself
+          stays a deliberate infrastructure change outside the portal.
         </CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-4">
-        {precheck.isPending && (
-          <p className="text-sm text-muted-foreground">Checking Customer.io…</p>
-        )}
-        {precheck.isError && (
-          <Alert variant="destructive">
-            <AlertTitle>Precheck failed</AlertTitle>
-            <AlertDescription>{(precheck.error as Error).message}</AlertDescription>
-          </Alert>
-        )}
-        {report && (
-          <>
-            <p className="text-sm font-medium">
-              {report.campaigns.length} of 4 campaigns found
-              {report.registered ? '' : ' · slug not registered yet'}
-            </p>
-            {report.campaigns.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {report.campaigns.map((c) => (
-                  <span
-                    key={c.role}
-                    className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs"
-                    title={c.name}
-                  >
-                    {pairLabel[c.role] ?? c.role} · #{c.id}
-                    <Badge variant={c.state === 'running' ? 'default' : 'secondary'}>
-                      {c.state}
-                    </Badge>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              {validation.isPending && (
-                <span className="text-muted-foreground">Running the wiring check…</span>
-              )}
-              {validation.isError && (
-                <span className="text-muted-foreground">Wiring check unavailable.</span>
-              )}
-              {summary && verdict && (
-                <>
-                  <Badge
-                    variant={
-                      summary.fail > 0 ? 'destructive' : summary.warn > 0 ? 'secondary' : 'default'
-                    }
-                  >
-                    {summary.fail > 0 ? 'fail' : summary.warn > 0 ? 'warn' : 'pass'}
-                  </Badge>
-                  <span>{verdict}</span>
-                </>
-              )}
-              <button
-                type="button"
-                className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                onClick={onOpenWiring}
-              >
-                Open the Wiring check
-              </button>
-            </div>
-            {report.payload_preview && (
-              <details className="text-sm">
-                <summary className="cursor-pointer text-muted-foreground select-none">
-                  Payload the runner will send —{' '}
-                  {report.payload_is_custom ? 'this campaign’s template' : 'signup default'}
-                </summary>
-                <pre className="mt-2 overflow-x-auto rounded-md border bg-muted/40 p-2 font-mono text-xs">
-                  {JSON.stringify(report.payload_preview, null, 2)}
-                </pre>
-              </details>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              className="justify-self-start"
-              disabled={precheck.isFetching || validation.isFetching}
-              onClick={() => {
-                void precheck.refetch();
-                void validation.refetch();
-              }}
-            >
-              {precheck.isFetching || validation.isFetching ? 'Checking…' : 'Re-check'}
-            </Button>
-          </>
-        )}
+      <CardContent>
+        <ol className="grid gap-3 text-sm">
+          {steps.map((s, i) => (
+            <li key={s.label} className="grid grid-cols-[1.5rem_1fr] gap-2">
+              <span className="font-semibold text-muted-foreground">{i + 1}.</span>
+              <span>
+                <button type="button" className={linkClass} onClick={() => onTab(s.tab!)}>
+                  {s.label}
+                </button>{' '}
+                — <span className="text-muted-foreground">{s.body}</span>
+              </span>
+            </li>
+          ))}
+        </ol>
       </CardContent>
     </Card>
   );
@@ -525,7 +800,7 @@ function RegistrationTab({
 }
 
 /* --- Wiring check: the full static validator, auto-run on open. --- */
-function WiringTab({ slug }: { slug: string }) {
+function WiringTab({ slug, mode }: { slug: string; mode?: CampaignMode }) {
   const validation = useQuery({
     queryKey: ['validate', slug],
     queryFn: () => api.get<ValidationReport>(`/api/harness/validate/${encodeURIComponent(slug)}`),
@@ -550,6 +825,7 @@ function WiringTab({ slug }: { slug: string }) {
       {report && (
         <ValidationReportView
           report={report}
+          mode={mode}
           onRevalidate={() => void validation.refetch()}
           revalidating={validation.isFetching}
         />
@@ -560,25 +836,40 @@ function WiringTab({ slug }: { slug: string }) {
 
 export function ValidationReportView({
   report,
+  mode,
   onRevalidate,
   revalidating,
 }: {
   report: ValidationReport;
+  /* When set, only that side's sections and campaigns render (workspace lint
+     rides with prod). Unset — e.g. the free-form validate card — shows all. */
+  mode?: CampaignMode;
   onRevalidate?: () => void;
   revalidating?: boolean;
 }) {
+  const scopeSet: CheckScope[] =
+    mode === 'test'
+      ? ['test']
+      : mode === 'prod'
+        ? ['prod', 'workspace']
+        : ['test', 'prod', 'workspace'];
+  const pairCampaigns = report.campaigns.filter((c) => !mode || c.role.startsWith(mode));
   return (
     <>
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <CardTitle>{humanizeSlug(report.slug)} — campaign pairs</CardTitle>
+              <CardTitle>
+                {humanizeSlug(report.slug)} —{' '}
+                {mode === 'test' ? 'twin pair' : mode === 'prod' ? 'live pair' : 'campaign pairs'}
+              </CardTitle>
               <CardDescription>
-                {report.summary.fail === 0
-                  ? 'All static checks passed.'
-                  : `${report.summary.fail} check(s) failing.`}{' '}
-                Generated {formatPacific(report.generated_at)}
+                {(!mode || mode === 'test') && scopeVerdict('Test pair', report.scopes?.test)}
+                {!mode && ' · '}
+                {(!mode || mode === 'prod') && scopeVerdict('Prod pair', report.scopes?.prod)}
+                {' · Generated '}
+                {formatPacific(report.generated_at)}
               </CardDescription>
             </div>
             {onRevalidate && (
@@ -600,17 +891,43 @@ export function ValidationReportView({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {report.campaigns.map((c) => (
+              {pairCampaigns.map((c) => (
                 <TableRow key={c.role}>
                   <TableCell className="whitespace-nowrap">{pairLabel[c.role] ?? c.role}</TableCell>
                   <TableCell>{c.id}</TableCell>
-                  <TableCell className="max-w-md truncate">{c.name}</TableCell>
+                  <TableCell className="max-w-md truncate">
+                    {c.url ? (
+                      <a
+                        href={c.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`${c.name} — open in Customer.io`}
+                        className="underline underline-offset-2 hover:text-foreground"
+                      >
+                        {c.name} ↗
+                      </a>
+                    ) : (
+                      c.name
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={c.state === 'running' ? 'default' : 'secondary'}>
                       {c.state}
                     </Badge>
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{c.event_name ?? '—'}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {c.event_name ??
+                      (c.role.endsWith('_trigger') ? (
+                        <span
+                          className="font-sans text-muted-foreground"
+                          title="Trigger halves are fired by webhook, not by an event. The event their Send Event action EMITS isn't exposed by the Customer.io API — every run verifies it dynamically by asserting the journey received the expected event."
+                        >
+                          webhook-fired
+                        </span>
+                      ) : (
+                        '—'
+                      ))}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -618,35 +935,87 @@ export function ValidationReportView({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Checks</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-24">Status</TableHead>
-                <TableHead>Check</TableHead>
-                <TableHead>Detail</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {report.checks.map((check) => (
-                <TableRow key={check.id}>
-                  <TableCell>
-                    <Badge variant={checkVariant[check.status]}>{check.status}</Badge>
-                  </TableCell>
-                  <TableCell className="font-medium whitespace-nowrap">{check.name}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{check.detail}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+      {SCOPE_SECTIONS.filter((s) => scopeSet.includes(s.scope)).map(({ scope, title, blurb }) => {
+        const rows = report.checks.filter((c) => (c.scope ?? 'test') === scope);
+        if (rows.length === 0) return null;
+        const counts = report.scopes?.[scope];
+        return (
+          <Card key={scope}>
+            <CardHeader>
+              <div className="flex flex-wrap items-center gap-2">
+                <CardTitle>{title}</CardTitle>
+                {counts && (
+                  <Badge
+                    variant={
+                      counts.fail > 0 ? 'destructive' : counts.warn > 0 ? 'secondary' : 'default'
+                    }
+                  >
+                    {counts.fail > 0
+                      ? `${counts.fail} failing`
+                      : counts.warn > 0
+                        ? `${counts.warn} warning${counts.warn === 1 ? '' : 's'}`
+                        : 'all pass'}
+                  </Badge>
+                )}
+              </div>
+              <CardDescription>{blurb}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-24">Status</TableHead>
+                    <TableHead>Check</TableHead>
+                    <TableHead>Detail</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((check) => (
+                    <TableRow key={check.id}>
+                      <TableCell>
+                        <Badge variant={checkVariant[check.status]}>{check.status}</Badge>
+                      </TableCell>
+                      <TableCell className="font-medium whitespace-nowrap">{check.name}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {check.detail}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        );
+      })}
     </>
   );
+}
+
+const SCOPE_SECTIONS: { scope: CheckScope; title: string; blurb: string }[] = [
+  {
+    scope: 'test',
+    title: 'Test pair',
+    blurb: 'Must be green before running tests — these gate the harness and shadow fires.',
+  },
+  {
+    scope: 'prod',
+    title: 'Prod pair — before launch',
+    blurb:
+      'Issues to resolve before the production campaign goes live. They never block testing ' +
+      'the twin.',
+  },
+  {
+    scope: 'workspace',
+    title: 'Workspace',
+    blurb: 'Cross-campaign lint on the whole Customer.io workspace.',
+  },
+];
+
+function scopeVerdict(label: string, counts?: StatusCounts): string {
+  if (!counts) return `${label}: —`;
+  if (counts.fail > 0) return `${label}: ${counts.fail} failing`;
+  if (counts.warn > 0) return `${label}: ${counts.warn} warning${counts.warn === 1 ? '' : 's'}`;
+  return `${label}: all pass`;
 }
 
 /* --- Test runs (campaign-scoped) --- */
@@ -730,7 +1099,12 @@ function ShadowPanel({
           Fires the test twin with the real events the production trigger would fire on. The
           recipient becomes a shadow.*@qa.sdfc.dev sink address, every other email in the payload is
           rewritten to the sink domain, and profile ids get a SHADOW- prefix — no mail or profile
-          write can reach a real fan. Each real event runs at most once.
+          write can reach a real fan. Each real event runs at most once.{' '}
+          <strong className="font-medium text-foreground">
+            This is the only safe way to test with real data:
+          </strong>{' '}
+          the trigger hub sends rows unsanitized on every target, including dev — pointed at the
+          twin, a real fan&apos;s address would get real mail from Customer.io.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -1166,7 +1540,7 @@ function RunProblems({ detail }: { detail: string }) {
 
 /* "delivery 1 'Subject' arrived <iso>; engaged {'opens_found': 1, ...}" */
 function parseDelivery(
-  detail: string,
+  detail: string
 ): { n: string; subject: string; arrived: string; opens?: string; clicks?: string } | null {
   const m = detail.match(/^delivery (\d+) '(.+)' arrived ([^;]+); engaged \{(.+)\}$/);
   if (!m) return null;
@@ -1181,7 +1555,7 @@ function parseDelivery(
 
 /* "Delay profile: trigger → 'A': 69s; 'A' → 'B': 6m 00s (>5m). 1 block(s) exceed 5 min — …" */
 function parseDelayProfile(
-  detail: string,
+  detail: string
 ): { legs: { from: string; to: string; delay: string }[]; note: string | null } | null {
   const m = detail.match(/^Delay profile: ([\s\S]+)$/);
   if (!m) return null;
@@ -1200,7 +1574,11 @@ function parseDelayProfile(
     const path = ci === -1 ? '' : seg.slice(0, ci);
     const ai = path.lastIndexOf(' → ');
     if (ci === -1 || ai === -1) return null;
-    legs.push({ from: unquote(path.slice(0, ai)), to: unquote(path.slice(ai + 3)), delay: seg.slice(ci + 2) });
+    legs.push({
+      from: unquote(path.slice(0, ai)),
+      to: unquote(path.slice(ai + 3)),
+      delay: seg.slice(ci + 2),
+    });
   }
   return legs.length > 0 ? { legs, note } : null;
 }
@@ -1246,7 +1624,10 @@ function TimelineDetail({ detail }: { detail: string }) {
                   <TableCell className="whitespace-normal">{leg.from}</TableCell>
                   <TableCell className="whitespace-normal">{leg.to}</TableCell>
                   <TableCell
-                    className={cn('whitespace-nowrap', leg.delay.includes('(>5m)') && 'text-destructive')}
+                    className={cn(
+                      'whitespace-nowrap',
+                      leg.delay.includes('(>5m)') && 'text-destructive'
+                    )}
                   >
                     {leg.delay}
                   </TableCell>

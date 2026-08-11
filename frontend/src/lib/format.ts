@@ -2,8 +2,9 @@
 // identities) stay available where tracking needs them.
 
 export function humanizeSlug(slug: string): string {
-  // "Welcome-General-260715" → "Welcome General" (trailing date code dropped)
-  return slug.replace(/-\d{6}$/, '').replace(/-/g, ' ');
+  // "Welcome-General-260715" → "Welcome General 260715" — the date stays: it
+  // names the campaign generation (Dean, 2026-08-11).
+  return slug.replace(/-/g, ' ');
 }
 
 export function shortIdentity(identity: string): string {

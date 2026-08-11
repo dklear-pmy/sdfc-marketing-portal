@@ -1,16 +1,13 @@
 """Static wiring validation for a campaign slug's CIO twin pairs.
 
-Checks (from repodocs/CIO_TEST_HARNESS_UI_PLAN.md in sdfc-udp):
-  1. pair-presence      — all four campaigns found by naming convention
-  2. states             — test pair running; prod journey draft surfaced
-  3. event-names        — test journey on pmy_test_*; prod journey clean; global lint
-  4. identify-by-email  — both trigger halves key the person on the email field
-  5. payload-mapping    — Send Event fields match the slug's payload contract
-  6. payload-template   — custom payload template parses and pins email to {identity}
-  7. liquid-refs        — template refs resolvable from payload/person attributes
-  8. journey-delays     — delay blocks measured from harness-run delivery gaps
-  9. webhook-secret     — a well-formed test trigger webhook URL is registered
-                          (plain registry URL; legacy Secret Manager id still honored)
+Checks are SCOPED (from repodocs/CIO_TEST_HARNESS_UI_PLAN.md in sdfc-udp):
+  test  — the twin pair; must be green before testing: presence, running,
+          pmy_test_ event, identify-by-email, Send Event mapping, payload
+          template lint, Liquid refs, measured journey delays, webhook URL
+  prod  — the live pair; issues to resolve before launch, never test
+          blockers: presence, state, event name, identify-by-email, Send
+          Event mapping (+ parity with the twin), Liquid refs, webhook URL
+  workspace — pmy-test-lint: no live campaign may run on a pmy_test_* event
 
 Known static blind spots (covered by the Phase-2 dynamic runner): the Send
 Event's emitted *event name* and journey timers/branches are not exposed by the
@@ -23,14 +20,22 @@ import re
 from datetime import datetime, timezone
 
 from . import payloads
-from .cio import CioClient
+from .cio import CioClient, campaign_url
 from .config import secret_exists, slug_registry
 
 _LIQUID_REF = re.compile(r"\{\{\s*(trigger|customer|event)\.([a-zA-Z0-9_.]+)")
 
 
-def _check(checks: list, check_id: str, name: str, status: str, detail: str) -> None:
-    checks.append({"id": check_id, "name": name, "status": status, "detail": detail})
+def _check(
+    checks: list, check_id: str, name: str, status: str, detail: str, scope: str = "test"
+) -> None:
+    """scope: 'test' (the twin pair — must be green before testing), 'prod'
+    (the live pair — issues to resolve before launch, not test blockers), or
+    'workspace' (cross-campaign lint). The UI groups by scope so a healthy
+    twin never reads as failing because prod hasn't launched yet."""
+    checks.append(
+        {"id": check_id, "name": name, "status": status, "detail": detail, "scope": scope}
+    )
 
 
 def _match_campaigns(campaigns: list[dict], slug: str) -> dict[str, dict]:
@@ -181,78 +186,99 @@ def validate_slug(slug: str) -> dict:
 
     roles = _match_campaigns(campaigns, slug)
     required = ["test_trigger", "test_journey", "prod_trigger", "prod_journey"]
-    missing = [r for r in required if r not in roles]
-    duplicates = [r for r in roles if "duplicate" in r]
 
-    if missing:
-        _check(
-            checks, "pair-presence", "All four campaigns present", "fail",
-            f"Missing: {', '.join(missing)}. Found {len(roles)} matching campaign(s) for '{slug}'.",
-        )
-    elif duplicates:
-        _check(
-            checks, "pair-presence", "All four campaigns present", "warn",
-            f"All roles found but duplicate names exist: {duplicates}",
-        )
-    else:
-        _check(
-            checks, "pair-presence", "All four campaigns present", "pass",
-            "Test + prod trigger/journey pairs all matched by naming convention.",
-        )
+    # --- presence, split by pair: missing twins block testing (fail); missing
+    # prod halves are pre-launch state (warn) ---
+    for side, side_roles in (("test", ("test_trigger", "test_journey")), ("prod", ("prod_trigger", "prod_journey"))):
+        missing = [r for r in side_roles if r not in roles]
+        dupes = [r for r in roles if "duplicate" in r and r.startswith(side)]
+        if missing:
+            _check(
+                checks, f"{side}-pair-presence",
+                "Twin pair present" if side == "test" else "Prod pair present",
+                "fail" if side == "test" else "warn",
+                f"Missing: {', '.join(missing)}."
+                + (" Dupe the prod pair into [PMY-TEST] twins before testing." if side == "test"
+                   else " Create before launch."),
+                scope=side,
+            )
+        elif dupes:
+            _check(
+                checks, f"{side}-pair-presence",
+                "Twin pair present" if side == "test" else "Prod pair present",
+                "warn", f"Roles found but duplicate names exist: {dupes}", scope=side,
+            )
+        else:
+            _check(
+                checks, f"{side}-pair-presence",
+                "Twin pair present" if side == "test" else "Prod pair present",
+                "pass", "Both halves matched by naming convention.", scope=side,
+            )
 
-    # --- states ---
-    state_notes = []
-    state_status = "pass"
-    for role in ("test_trigger", "test_journey"):
-        c = roles.get(role)
-        if c and c.get("state") != "running":
-            state_status = "fail"
-            state_notes.append(f"{role} is {c.get('state')} (must be running)")
+    # --- states, split by pair ---
+    t_notes = [
+        f"{role} is {roles[role].get('state')} (must be running)"
+        for role in ("test_trigger", "test_journey")
+        if roles.get(role) and roles[role].get("state") != "running"
+    ]
+    _check(
+        checks, "test-states", "Twin pair running",
+        "fail" if t_notes else "pass",
+        "; ".join(t_notes) or "Both twin halves running.", scope="test",
+    )
+    p_notes = []
     prod_journey = roles.get("prod_journey")
     if prod_journey and prod_journey.get("state") == "draft":
-        state_notes.append("prod journey is DRAFT (campaign not launched)")
-        if state_status == "pass":
-            state_status = "warn"
+        p_notes.append("prod journey is DRAFT (campaign not launched) — normal before go-live")
     prod_trigger = roles.get("prod_trigger")
     if prod_trigger and prod_trigger.get("state") != "running":
-        state_notes.append(f"prod trigger is {prod_trigger.get('state')}")
-        if state_status == "pass":
-            state_status = "warn"
+        p_notes.append(f"prod trigger is {prod_trigger.get('state')}")
     _check(
-        checks, "states", "Campaign states", state_status,
-        "; ".join(state_notes) or "Test pair running; prod pair running.",
+        checks, "prod-states", "Prod pair state",
+        "warn" if p_notes else "pass",
+        "; ".join(p_notes) or "Prod pair running.", scope="prod",
     )
 
-    # --- event names ---
+    # --- event names, split by pair ---
     expected_test_event = spec.get("test_event_name")
     expected_prod_event = spec.get("event_name")
-    ev_status, ev_notes = "pass", []
+    tev_status, tev_notes = "pass", []
     tj = roles.get("test_journey")
     if tj:
         ev = tj.get("event_name")
         if not ev:
-            ev_status = "warn"
-            ev_notes.append("test journey exposes no event_name (draft or non-event trigger?)")
+            tev_status = "warn"
+            tev_notes.append("test journey exposes no event_name (draft or non-event trigger?)")
         elif not ev.startswith("pmy_test_"):
-            ev_status = "fail"
-            ev_notes.append(f"test journey triggers on '{ev}' — must use pmy_test_ prefix")
+            tev_status = "fail"
+            tev_notes.append(f"test journey triggers on '{ev}' — must use pmy_test_ prefix")
         elif expected_test_event and ev != expected_test_event:
-            ev_status = "fail"
-            ev_notes.append(f"test journey on '{ev}', registry expects '{expected_test_event}'")
+            tev_status = "fail"
+            tev_notes.append(f"test journey on '{ev}', registry expects '{expected_test_event}'")
+    _check(
+        checks, "test-event-name", "Twin trigger event", tev_status,
+        "; ".join(tev_notes) or "Twin journey on the registered pmy_test_ event.", scope="test",
+    )
+    pev_status, pev_notes = "pass", []
     pj = roles.get("prod_journey")
     if pj:
         ev = pj.get("event_name")
         if ev is None:
-            ev_notes.append("prod journey event_name not visible while draft — verify after launch")
-            if ev_status == "pass":
-                ev_status = "warn"
+            pev_status = "warn"
+            pev_notes.append("prod journey event_name not visible while draft — verify after launch")
         elif ev.startswith("pmy_test_"):
-            ev_status = "fail"
-            ev_notes.append(f"PROD journey triggers on test event '{ev}'")
+            pev_status = "fail"
+            pev_notes.append(
+                f"PROD journey triggers on test event '{ev}' — rename before launch or every "
+                "harness fire enters production"
+            )
         elif expected_prod_event and ev != expected_prod_event:
-            ev_status = "fail"
-            ev_notes.append(f"prod journey on '{ev}', registry expects '{expected_prod_event}'")
-    _check(checks, "event-names", "Journey trigger event names", ev_status, "; ".join(ev_notes) or "Correct pmy_test_ split.")
+            pev_status = "fail"
+            pev_notes.append(f"prod journey on '{ev}', registry expects '{expected_prod_event}'")
+    _check(
+        checks, "prod-event-name", "Prod trigger event", pev_status,
+        "; ".join(pev_notes) or "Prod journey on the registered production event.", scope="prod",
+    )
 
     # --- global lint: no live campaign on pmy_test_* ---
     violations = [
@@ -265,6 +291,7 @@ def validate_slug(slug: str) -> dict:
         checks, "pmy-test-lint", "No live campaign on pmy_test_* events",
         "fail" if violations else "pass",
         "; ".join(violations) or "Workspace-wide scan clean.",
+        scope="workspace",
     )
 
     # --- action-level checks (need per-campaign actions) ---
@@ -274,12 +301,15 @@ def validate_slug(slug: str) -> dict:
         if c:
             actions_by_role[role] = cio.campaign_actions(c["id"])
 
-    id_status, id_notes = "pass", []
     payload_keys = set(payloads.effective_template(spec))
-    for role in ("test_trigger", "prod_trigger"):
+    for side, role in (("test", "test_trigger"), ("prod", "prod_trigger")):
         acts = actions_by_role.get(role)
+        title = ("Twin" if side == "test" else "Prod") + " trigger identifies by email"
         if acts is None:
+            _check(checks, f"{side}-identify", title, "skip",
+                   f"no {side} trigger campaign yet", scope=side)
             continue
+        id_status, id_notes = "pass", []
         for a in acts:
             if a.get("type") not in ("attribute_update", "create_event") or _recipient_is_email(a):
                 continue
@@ -293,56 +323,61 @@ def validate_slug(slug: str) -> dict:
                 if id_status == "pass":
                     id_status = "warn"
                 id_notes.append(
-                    f"{role}: {label} keys on '{field}' — works (the payload carries it) "
+                    f"{label} keys on '{field}' — works (the payload carries it) "
                     "but 'email' is the convention"
                 )
             else:
                 id_status = "fail"
                 id_notes.append(
-                    f"{role}: {label} resolves people by '{field}', which this slug's payload "
+                    f"{label} resolves people by '{field}', which this slug's payload "
                     "does not carry — the action silently resolves nobody"
                 )
-    _check(
-        checks, "identify-by-email", "Trigger halves identify by email", id_status,
-        "; ".join(id_notes) or "Create/Update Person and Send Event both key on trigger email.",
-    )
+        _check(
+            checks, f"{side}-identify", title, id_status,
+            "; ".join(id_notes) or "Create/Update Person and Send Event both key on trigger email.",
+            scope=side,
+        )
 
     expected_fields = set(spec.get("payload_fields") or [])
     mappings: dict[str, set[str]] = {}
-    map_status, map_notes = "pass", []
-    for role in ("test_trigger", "prod_trigger"):
+    for side, role in (("test", "test_trigger"), ("prod", "prod_trigger")):
         acts = actions_by_role.get(role)
+        title = ("Twin" if side == "test" else "Prod") + " Send Event mapping"
         if acts is None:
+            _check(checks, f"{side}-payload-mapping", title, "skip",
+                   f"no {side} trigger campaign yet", scope=side)
             continue
+        map_status, map_notes = "pass", []
         fields = _event_mapping_fields(acts)
         if fields is None:
             map_status = "fail"
-            map_notes.append(f"{role}: no Send Event action found")
-            continue
-        mappings[role] = set(fields)
-        if expected_fields:
-            missing_f = expected_fields - set(fields)
-            extra_f = set(fields) - expected_fields
-            if missing_f:
-                map_status = "fail"
-                map_notes.append(f"{role} missing payload fields: {sorted(missing_f)}")
-            if extra_f and map_status == "pass":
+            map_notes.append("no Send Event action found")
+        else:
+            mappings[role] = set(fields)
+            if expected_fields:
+                missing_f = expected_fields - set(fields)
+                extra_f = set(fields) - expected_fields
+                if missing_f:
+                    map_status = "fail"
+                    map_notes.append(f"missing payload fields: {sorted(missing_f)}")
+                if extra_f:
+                    if map_status == "pass":
+                        map_status = "warn"
+                    map_notes.append(f"extra fields: {sorted(extra_f)}")
+            else:
                 map_status = "warn"
-            if extra_f:
-                map_notes.append(f"{role} extra fields: {sorted(extra_f)}")
-    if not expected_fields:
-        map_notes.append("slug not in registry — field contract not enforced")
-        if map_status == "pass":
-            map_status = "warn"
-    if len(mappings) == 2 and mappings.get("test_trigger") != mappings.get("prod_trigger"):
-        if map_status == "pass":
-            map_status = "warn"
-        diff = mappings["test_trigger"] ^ mappings["prod_trigger"]
-        map_notes.append(f"test/prod Send Event mappings differ on: {sorted(diff)}")
-    _check(
-        checks, "payload-mapping", "Send Event payload mapping", map_status,
-        "; ".join(map_notes) or f"All {len(expected_fields)} contract fields mapped on both pairs.",
-    )
+                map_notes.append("slug not in registry — field contract not enforced")
+        # Pair parity rides on the prod side: the twin is the reference copy.
+        if side == "prod" and len(mappings) == 2 and mappings["test_trigger"] != mappings["prod_trigger"]:
+            if map_status == "pass":
+                map_status = "warn"
+            diff = mappings["test_trigger"] ^ mappings["prod_trigger"]
+            map_notes.append(f"differs from the twin's mapping on: {sorted(diff)}")
+        _check(
+            checks, f"{side}-payload-mapping", title, map_status,
+            "; ".join(map_notes) or f"All {len(expected_fields)} contract fields mapped.",
+            scope=side,
+        )
 
     tmpl_raw = spec.get("payload_template")
     if not spec:
@@ -353,17 +388,20 @@ def validate_slug(slug: str) -> dict:
         tmpl_problems = payloads.template_problems(tmpl_raw)
         tmpl_status = "fail" if tmpl_problems else "pass"
         tmpl_detail = "; ".join(tmpl_problems) or "custom template valid; email pinned to {identity}"
-    _check(checks, "payload-template", "Payload template lint", tmpl_status, tmpl_detail)
+    _check(checks, "payload-template", "Payload template lint", tmpl_status, tmpl_detail, scope="test")
 
-    liq_status, liq_notes = "pass", []
     known_person = set(spec.get("person_attributes") or [])
     for pair, trig_role, journey_role in (
         ("test", "test_trigger", "test_journey"),
         ("prod", "prod_trigger", "prod_journey"),
     ):
+        title = ("Twin" if pair == "test" else "Prod") + " email Liquid references"
         j_acts = actions_by_role.get(journey_role)
         if j_acts is None:
+            _check(checks, f"{pair}-liquid-refs", title, "skip",
+                   f"no {pair} journey campaign yet", scope=pair)
             continue
+        liq_status, liq_notes = "pass", []
         sites = _liquid_ref_sites(j_acts)
         refs = {scope: set(fields) for scope, fields in sites.items()}
         event_fields = mappings.get(trig_role, set())
@@ -378,7 +416,7 @@ def validate_slug(slug: str) -> dict:
             for field in sorted(gaps[scope]):
                 liq_status = "fail"
                 liq_notes.append(
-                    f"{pair}: {{{{{scope}.{field}}}}} in email {_used_in(scope, field)} has no source — "
+                    f"{{{{{scope}.{field}}}}} in email {_used_in(scope, field)} has no source — "
                     f"add '{field}' to the Send Event data mapping in \"{trigger_name}\" "
                     "(Workflow → Send Event action), or remove it from that email"
                 )
@@ -386,14 +424,15 @@ def validate_slug(slug: str) -> dict:
             if liq_status == "pass":
                 liq_status = "warn"
             liq_notes.append(
-                f"{pair}: {{{{customer.{field}}}}} in email {_used_in('customer', field)} is not set by "
+                f"{{{{customer.{field}}}}} in email {_used_in('customer', field)} is not set by "
                 f"\"{trigger_name}\" — set it in that campaign's Create/Update Person action, add it to "
                 "this slug's person attributes in the registry if a sync supplies it, or remove it from that email"
             )
-    _check(
-        checks, "liquid-refs", "Template Liquid references resolvable", liq_status,
-        "; ".join(liq_notes) or "All trigger.*/event.*/customer.* references covered.",
-    )
+        _check(
+            checks, f"{pair}-liquid-refs", title, liq_status,
+            "; ".join(liq_notes) or "All trigger.*/event.*/customer.* references covered.",
+            scope=pair,
+        )
 
     # Delay/window/branch blocks are invisible to the App API (actions expose
     # messages only), so delays are MEASURED from harness-run delivery gaps.
@@ -419,7 +458,8 @@ def validate_slug(slug: str) -> dict:
     except Exception as e:  # noqa: BLE001 — a state hiccup must not sink the whole validation
         delay_detail = f"delay measurement unavailable: {str(e)[:120]}"
     _check(
-        checks, "journey-delays", "Journey delay blocks (≤5 min for smoke runs)", delay_status, delay_detail
+        checks, "journey-delays", "Journey delay blocks (≤5 min for smoke runs)",
+        delay_status, delay_detail, scope="test",
     )
 
     from .slugs import webhook_url_problem  # deferred — slugs and validator import each other
@@ -430,6 +470,11 @@ def validate_slug(slug: str) -> dict:
         if url_problem:
             sec_status = "fail"
             sec_notes.append(url_problem)
+        elif spec.get("test_webhook_url") == spec.get("prod_webhook_url"):
+            sec_status = "fail"
+            sec_notes.append(
+                "identical to the prod webhook URL — one of the two is pasted in the wrong field"
+            )
         else:
             sec_notes.append("twin trigger URL stored in the registry")
     elif spec.get("test_webhook_secret"):
@@ -450,8 +495,26 @@ def validate_slug(slug: str) -> dict:
         sec_notes.append("slug not in registry")
     _check(
         checks, "webhook-secret", "Test trigger webhook URL", sec_status,
-        "; ".join(sec_notes),
+        "; ".join(sec_notes), scope="test",
     )
+
+    if not spec:
+        _check(checks, "prod-webhook-url", "Prod webhook URL", "skip",
+               "slug not in registry", scope="prod")
+    elif spec.get("prod_webhook_url"):
+        p_problem = webhook_url_problem(spec["prod_webhook_url"])
+        _check(
+            checks, "prod-webhook-url", "Prod webhook URL",
+            "fail" if p_problem else "pass",
+            p_problem or "live trigger URL stored — sample sends and hub arming can use it",
+            scope="prod",
+        )
+    else:
+        _check(
+            checks, "prod-webhook-url", "Prod webhook URL", "warn",
+            "not stored — needed for composer sample sends and for arming the trigger hub",
+            scope="prod",
+        )
 
     campaign_summaries = [
         {
@@ -460,17 +523,26 @@ def validate_slug(slug: str) -> dict:
             "role": role,
             "state": c.get("state"),
             "event_name": c.get("event_name"),
+            "url": campaign_url(c["id"]),
         }
         for role, c in roles.items()
         if "duplicate" not in role
     ]
     summary = {s: sum(1 for c in checks if c["status"] == s) for s in ("pass", "fail", "warn", "skip")}
+    scopes = {
+        scope: {
+            s: sum(1 for c in checks if c["scope"] == scope and c["status"] == s)
+            for s in ("pass", "fail", "warn", "skip")
+        }
+        for scope in ("test", "prod", "workspace")
+    }
     return {
         "slug": slug,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "campaigns": sorted(campaign_summaries, key=lambda c: c["role"]),
         "checks": checks,
         "summary": summary,
+        "scopes": scopes,
     }
 
 

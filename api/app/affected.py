@@ -27,6 +27,15 @@ from .slugs import get_slug
 
 _VIEW = f"{GCP_PROJECT}.customerio_state.vw_campaign_affected_customers"
 _PREVIEW_VIEW = f"{GCP_PROJECT}.customerio_state.vw_campaign_would_fire"
+_HISTORY_TF = f"{GCP_PROJECT}.customerio_state.tf_campaign_would_fire_history"
+
+# Triggers with a branch in the history table function. Extend together with
+# tf_campaign_would_fire_history.sql — a trigger absent here gets the live
+# view only, and the tab says history isn't built for it yet.
+HISTORY_TRIGGERS = {
+    "welcome_tickets_supporters_260807",
+    "welcome_tickets_premium_260807",
+}
 
 # Mirror of each trigger's max_per_run circuit breaker in the hub
 # (sdfc-platform cio_trigger_hub/triggers.py). A would-fire count above the
@@ -149,15 +158,18 @@ def would_fire_page(
     q: str | None,
     limit: int = 20,
     offset: int = 0,
+    days: int | None = None,
 ) -> dict | None:
-    """One page of would-fire-next-run rows for the slug's trigger.
+    """One page of would-fire rows for the slug's trigger.
 
-    Reads vw_campaign_would_fire — the hub's own deduped candidate SQL as a
-    view — so this is exactly the set (and payloads) the next hourly run
-    would POST. Live query against the warehouse: freshness is the sources',
-    not the hub's schedule. Same None / empty-page contract as
-    affected_page; `cap` is the trigger's circuit breaker for the over-cap
-    warning in the UI.
+    days=None reads vw_campaign_would_fire — the hub's own deduped candidate
+    SQL as a view — so this is exactly the set (and payloads) the next hourly
+    run would POST. days=N reads the history table function instead: every
+    event the trigger would have fired on in the trailing N days (no fire-log
+    dedup — already-fired events are the point of a history view). Both are
+    strictly display; nothing here can send a webhook. Live query against
+    the warehouse. Same None / empty-page contract as affected_page; `cap`
+    is the trigger's circuit breaker for the over-cap warning in the UI.
     """
     entry = get_slug(slug)
     if entry is None:
@@ -165,12 +177,16 @@ def would_fire_page(
     trigger_key = entry.get("trigger_key")
     cap = TRIGGER_CAPS.get(trigger_key)
     enabled = TRIGGER_ENABLED.get(trigger_key)
+    history_available = trigger_key in HISTORY_TRIGGERS
     empty = {"trigger_key": trigger_key,
              "trigger_label": entry.get("trigger_label"),
              "rows": [], "total": 0,
-             "limit": limit, "offset": offset, "cap": cap, "enabled": enabled}
-    if not trigger_key:
+             "limit": limit, "offset": offset, "cap": cap, "enabled": enabled,
+             "days": days, "history_available": history_available}
+    if not trigger_key or (days and not history_available):
         return empty
+
+    source = f"`{_PREVIEW_VIEW}`" if not days else f"`{_HISTORY_TF}`({int(days)})"
 
     where = ["trigger = @trigger"]
     params = [bigquery.ScalarQueryParameter("trigger", "STRING", trigger_key)]
@@ -191,7 +207,7 @@ def would_fire_page(
                 f"""
                 SELECT email, first_name, last_name, event_at, dedup_key,
                        payload_json
-                FROM `{_PREVIEW_VIEW}` WHERE {cond}
+                FROM {source} WHERE {cond}
                 ORDER BY event_at DESC NULLS LAST, dedup_key
                 LIMIT {int(limit)} OFFSET {int(offset)}
                 """,
@@ -204,7 +220,7 @@ def would_fire_page(
         return list(
             client()
             .query(
-                f"SELECT COUNT(*) AS n FROM `{_PREVIEW_VIEW}` WHERE {cond}",
+                f"SELECT COUNT(*) AS n FROM {source} WHERE {cond}",
                 job_config=bigquery.QueryJobConfig(query_parameters=params),
             )
             .result()
@@ -217,4 +233,5 @@ def would_fire_page(
     return {"trigger_key": trigger_key,
             "trigger_label": entry.get("trigger_label"),
             "rows": rows, "total": n,
-            "limit": limit, "offset": offset, "cap": cap, "enabled": enabled}
+            "limit": limit, "offset": offset, "cap": cap, "enabled": enabled,
+            "days": days, "history_available": history_available}

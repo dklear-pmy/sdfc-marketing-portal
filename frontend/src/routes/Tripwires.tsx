@@ -83,10 +83,10 @@ function ChecksTable({ checks }: { checks: TripwireCheckRow[] }) {
               <TableCell className="align-top">
                 <Badge variant={statusVariant[c.status]}>{c.status}</Badge>
               </TableCell>
-              <TableCell className="whitespace-normal text-sm font-medium">
+              <TableCell className="text-sm font-medium whitespace-normal">
                 {checkLabel[c.check_name] ?? c.check_name}
               </TableCell>
-              <TableCell className="whitespace-normal text-sm text-muted-foreground">
+              <TableCell className="text-sm whitespace-normal text-muted-foreground">
                 {c.detail || '—'}
               </TableCell>
             </TableRow>

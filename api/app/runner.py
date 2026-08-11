@@ -338,10 +338,66 @@ def _render_problems(
     return _content_problems(texts, refs, payload)
 
 
+def twin_fire_problems(slug: str, spec: dict, cio=None) -> list[str]:
+    """Hard preconditions before ANY fire at the twin webhook — synthetic or
+    shadow. The PMY-TEST title and pmy_test_ event prefix are guards, not
+    conventions: the twin pair must exist under [PMY-TEST] titles (role
+    matching only classifies a campaign as test when the title carries it),
+    the pair must run on a pmy_test_* event, and no live production campaign
+    may listen on that event (a fire would enter the production journey).
+    Unreadable Customer.io state is unsafe — fail closed."""
+    from .slugs import TEST_EVENT_PREFIX
+    from .validator import _match_campaigns
+
+    problems: list[str] = []
+    test_ev = spec.get("test_event_name") or ""
+    if not test_ev.startswith(TEST_EVENT_PREFIX):
+        problems.append(
+            f"registry test event '{test_ev or '(unset)'}' lacks the {TEST_EVENT_PREFIX} prefix"
+        )
+    try:
+        campaigns = (cio or CioClient()).campaigns()
+    except Exception as e:  # noqa: BLE001 — unverifiable twin state must block the fire
+        return problems + [
+            f"cannot read Customer.io to verify the twin pair — refusing to fire ({str(e)[:80]})"
+        ]
+    roles = _match_campaigns(campaigns, slug)
+    for role, label in (("test_trigger", "trigger [1/2]"), ("test_journey", "journey [2/2]")):
+        if role not in roles:
+            problems.append(
+                f"no [PMY-TEST] {label} campaign exists for this slug — a test pair must "
+                "carry PMY-TEST in the title"
+            )
+    twin_ev = (roles.get("test_journey") or {}).get("event_name")
+    if twin_ev and not twin_ev.startswith(TEST_EVENT_PREFIX):
+        problems.append(
+            f"twin journey listens on '{twin_ev}' — test pairs must run on "
+            f"{TEST_EVENT_PREFIX}* events"
+        )
+    watched = {e for e in (test_ev, twin_ev) if e and e.startswith(TEST_EVENT_PREFIX)}
+    leaks = [
+        f"#{c['id']} {c['name']}"
+        for c in campaigns
+        if c.get("event_name") in watched
+        and "PMY-TEST" not in (c.get("name") or "").upper()
+        and c.get("state") == "running"
+    ]
+    if leaks:
+        problems.append(
+            "live production campaign(s) listening on this pair's test event: "
+            + "; ".join(leaks)
+            + " — every test fire would enter the production journey"
+        )
+    return problems
+
+
 def start_run(slug: str, actor: str | None) -> dict:
     spec = slug_registry().get(slug)
     if not spec or not (spec.get("test_webhook_url") or spec.get("test_webhook_secret")):
         raise ValueError(f"slug '{slug}' has no test webhook URL in the registry")
+    guard = twin_fire_problems(slug, spec)
+    if guard:
+        raise ValueError("refusing to fire the twin: " + "; ".join(guard))
 
     run_id = bqstate.create_run(slug, "open_click_all", actor)
     run = bqstate.get_run(run_id)

@@ -35,6 +35,9 @@ def _valid_slug(slug: str) -> str:
 
 
 class SlugUpsert(BaseModel):
+    # Editable display name; the slug stays the stable key. Falls back to a
+    # prettified slug when unset.
+    display_name: str | None = None
     trigger_key: str | None = None
     trigger_label: str | None = None
     event_name: str | None = None
@@ -139,6 +142,7 @@ def slugs_preview(
     q: str | None = None,
     limit: int = 20,
     offset: int = 0,
+    days: int | None = None,
     principal: Principal = require_access("marketing"),
 ) -> dict:
     if q and len(q) > 200:
@@ -146,6 +150,7 @@ def slugs_preview(
     page = affected.would_fire_page(
         _valid_slug(slug),
         q,
+        days=max(1, min(days, 365)) if days else None,
         limit=max(1, min(limit, 100)),
         offset=max(0, min(offset, 100_000)),
     )

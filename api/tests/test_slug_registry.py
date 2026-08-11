@@ -166,6 +166,26 @@ assert any("bad field!" in e for e in errs), errs
 errs = validate_entry({"test_webhook_secret": "no spaces allowed"})
 assert errs, "secret ids with spaces must be rejected"
 
+# --- identical test/prod webhook URLs: the paste mix-up that points a hub
+# target at the wrong pair — refused on save, failed on precheck ---
+SAME_URL = "https://api.customer.io/v1/webhook/abc123"
+errs = validate_entry({"test_webhook_url": SAME_URL, "prod_webhook_url": SAME_URL})
+assert any("identical" in e for e in errs), errs
+assert validate_entry({"test_webhook_url": SAME_URL}) == []
+assert (
+    validate_entry(
+        {"test_webhook_url": SAME_URL, "prod_webhook_url": "https://api.customer.io/v1/webhook/def456"}
+    )
+    == []
+)
+f = analyze(
+    roles4(),
+    {"test_event_name": "pmy_test_shop", "event_name": "Shop-260715",
+     "test_webhook_url": SAME_URL, "prod_webhook_url": SAME_URL},
+    {},
+)
+assert "identical in the registry" in messages(f, "fail"), f
+
 # --- pasted webhook URLs: the 500 class — must become a readable explanation ---
 URL = "https://api.customer.io/v1/webhook/7598331b7897e66b"
 assert secret_ref_problem("cio-trigger-url-shopify-retail-dev") is None

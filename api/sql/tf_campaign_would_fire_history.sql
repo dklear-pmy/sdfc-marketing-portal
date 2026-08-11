@@ -1,24 +1,41 @@
 -- Parameterized HISTORY variant of vw_campaign_would_fire: the events a
--- trigger WOULD HAVE fired on in the trailing window. Used by the harness's
--- real-data ("shadow") replay runs. Differences from the live view, both
--- deliberate:
+-- trigger WOULD HAVE fired on in the trailing window. Two consumers, both
+-- strictly read-or-shadow — the portal never fires a production webhook:
+--   * the Matching Customers tab's "last N days" view (display only);
+--   * the harness's real-data ("shadow") replay runs (sanitized fires at the
+--     TEST twin only).
+-- Differences from the live view, both deliberate:
 --   * the recency window is the history_days parameter, not 24h;
 --   * NO dedup against cio_trigger_log — an event the hub already really
 --     fired on is exactly the kind of realistic row a replay wants.
 -- MIRROR MAINTENANCE: the candidate SQL below must stay in step with the
 -- matching branch of vw_campaign_would_fire.sql AND the hub's triggers.py.
--- Branches present: welcome_tickets_supporters_260807 (add others as their
--- campaign pairs reach real-data testing).
+-- Branches present: the shared SF membership CTE — supporters_260807 +
+-- premium_260807, discriminated by record type exactly like the live view.
+-- (tb_signup / single-game are attribute-state or high-volume event triggers;
+-- add them only with a real spec for what "history" means there.)
 
 CREATE OR REPLACE TABLE FUNCTION
   `sdfc-udp-dev.customerio_state.tf_campaign_would_fire_history`(history_days INT64)
 AS (
-WITH supporters_cand AS (
-  -- welcome_tickets_supporters_260807: MIRROR of the hub trigger (triggers.py).
-  -- Client spec 2026-08-07: closed/won + name contains SUPP + Record Type =
-  -- Ticket Sales (012UR000001cuNBYAY) + Group = General Season Tickets +
-  -- close date within 24h. rep_* = Account OWNER's User record.
+WITH membership_cand AS (
+  -- MIRROR of _sf_membership_welcome_query in triggers.py: both SF
+  -- membership triggers share one query implementation in the hub, so they
+  -- share one CTE here; matched_trigger discriminates (record types are
+  -- mutually exclusive, an opp can never match both).
+  --   welcome_tickets_supporters_260807 (spec 2026-08-07): SUPP marker +
+  --     Ticket Sales record type + General Season Tickets group.
+  --   welcome_tickets_premium_260807 (spec 2026-08-09): Premium Sales
+  --     record type + product 'Premium Season Membership'.
+  -- Common: closed/won + close date within history_days; rep_* = Account
+  -- OWNER's User record; no-email hold; per-opportunity dedup.
   SELECT
+    CASE
+      WHEN o.record_type_id = '012UR000001cuNBYAY'
+        THEN 'welcome_tickets_supporters_260807'
+      WHEN o.record_type_id = '012UR000001fAEAYA2'
+        THEN 'welcome_tickets_premium_260807'
+    END                                                         AS matched_trigger,
     o.id                                                        AS dedup_key,
     LOWER(TRIM(NULLIF(COALESCE(NULLIF(a.person_email, 'None'),
                                NULLIF(c.email, 'None')), '')))  AS email,
@@ -90,9 +107,14 @@ WITH supporters_cand AS (
   ) nm ON TRUE
   WHERE o.is_closed = TRUE
     AND o.is_won = TRUE
-    AND UPPER(o.name) LIKE '%SUPP%'
-    AND o.record_type_id = '012UR000001cuNBYAY'
-    AND o.group_c = 'General Season Tickets'
+    AND (
+      (UPPER(o.name) LIKE '%SUPP%'
+       AND o.record_type_id = '012UR000001cuNBYAY'
+       AND o.group_c = 'General Season Tickets')
+      OR
+      (o.record_type_id = '012UR000001fAEAYA2'
+       AND o.koreps2_product_c = 'Premium Season Membership')
+    )
     AND o.close_date >= DATE_SUB(CURRENT_DATE('UTC'), INTERVAL history_days DAY)
   -- No-email accounts are held, not fired (mirrors the hub guard): a fire
   -- would burn the exactly-once key on an event Send Event can never
@@ -106,7 +128,7 @@ WITH supporters_cand AS (
     AND email IS NOT NULL
 )
 SELECT
-  'welcome_tickets_supporters_260807' AS trigger,
+  cand.matched_trigger AS trigger,
   cand.dedup_key,
   cand.email,
   cand.first_name,
@@ -121,5 +143,6 @@ SELECT
     cand.rep_phone, cand.account_owner, cand.ticketing_event_date,
     cand.ticketing_event_name
   )) AS payload_json
-FROM supporters_cand cand
+FROM membership_cand cand
+WHERE cand.matched_trigger IS NOT NULL
 );

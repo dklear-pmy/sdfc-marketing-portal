@@ -157,11 +157,14 @@ def live_candidates(trigger_key: str) -> list[dict]:
 def start_real_run(slug: str, candidate: dict, actor: str | None) -> dict:
     """One shadow run: sanitize the real row, fire the TEST twin webhook,
     hand the run to the normal engagement/assert machinery."""
-    from .runner import _tl, _webhook_url  # late import — runner imports nothing from here
+    from .runner import _tl, _webhook_url, twin_fire_problems  # late import — runner imports nothing from here
 
     spec = slug_registry().get(slug)
     if not spec or not (spec.get("test_webhook_url") or spec.get("test_webhook_secret")):
         raise ValueError(f"slug '{slug}' has no test webhook URL in the registry")
+    guard = twin_fire_problems(slug, spec)
+    if guard:
+        raise ValueError("refusing to fire the twin: " + "; ".join(guard))
 
     raw = json.loads(candidate["payload_json"])
     source_key = str(candidate["dedup_key"])
@@ -244,6 +247,12 @@ def shadow_tick() -> list[dict]:
                 results.append({"slug": slug, "run_id": run["run_id"], "status": run["status"]})
             except ShadowGuardError as e:
                 results.append({"slug": slug, "error": str(e)})
+            except ValueError as e:
+                # The twin fire guard refused (e.g. prod journey live on the
+                # test event) — slug-level condition, so skip its remaining
+                # candidates; other slugs still tick.
+                results.append({"slug": slug, "error": str(e)})
+                break
         if len(fresh) > SHADOW_TICK_CAP:
             results.append(
                 {"slug": slug, "deferred": len(fresh) - SHADOW_TICK_CAP,

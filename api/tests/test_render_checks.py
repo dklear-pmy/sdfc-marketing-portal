@@ -170,8 +170,84 @@ def test_snippets() -> list[str]:
     return failures
 
 
+class _FakeCio:
+    def __init__(self, campaigns, raise_on_read=False):
+        self._campaigns = campaigns
+        self._raise = raise_on_read
+
+    def campaigns(self):
+        if self._raise:
+            raise RuntimeError("cio down")
+        return self._campaigns
+
+
+def test_twin_fire_guard() -> list:
+    """PMY-TEST title + pmy_test_ event are hard fire guards, not conventions."""
+    failures = []
+    spec = {"test_event_name": "pmy_test_Shop-260715"}
+    twins = [
+        {"id": 1, "name": "[PMY-TEST] [1/2] Shop-260715", "state": "running"},
+        {"id": 2, "name": "[PMY-TEST] [2/2] Shop-260715", "state": "running",
+         "event_name": "pmy_test_Shop-260715"},
+    ]
+
+    if R.twin_fire_problems("Shop-260715", spec, cio=_FakeCio(list(twins))):
+        failures.append("healthy twin pair must fire")
+
+    p = R.twin_fire_problems("Shop-260715", {"test_event_name": "Shop-260715"}, cio=_FakeCio(list(twins)))
+    if not any("prefix" in x for x in p):
+        failures.append(f"unprefixed registry test event must block: {p}")
+
+    # Twin pair without PMY-TEST titles never classifies as test → both roles missing.
+    bare = [
+        {"id": 1, "name": "[1/2] Shop-260715", "state": "running"},
+        {"id": 2, "name": "[2/2] Shop-260715", "state": "running", "event_name": "pmy_test_Shop-260715"},
+    ]
+    p = R.twin_fire_problems("Shop-260715", spec, cio=_FakeCio(bare))
+    if sum("PMY-TEST in the title" in x for x in p) != 2:
+        failures.append(f"missing PMY-TEST titles must block both halves: {p}")
+
+    # Twin journey drifted onto a non-test event.
+    drifted = [dict(twins[0]), {**twins[1], "event_name": "Shop-260715"}]
+    p = R.twin_fire_problems("Shop-260715", spec, cio=_FakeCio(drifted))
+    if not any("must run on" in x for x in p):
+        failures.append(f"twin on a prod event must block: {p}")
+
+    # A LIVE production campaign listening on the test event = every fire leaks.
+    leak = list(twins) + [
+        {"id": 9, "name": "[PROD] [2/2] Shop-260715", "state": "running",
+         "event_name": "pmy_test_Shop-260715"},
+    ]
+    p = R.twin_fire_problems("Shop-260715", spec, cio=_FakeCio(leak))
+    if not any("production journey" in x for x in p):
+        failures.append(f"live prod campaign on the test event must block: {p}")
+    # ...but a DRAFT prod campaign on the test event does not block fires
+    # (nothing can enter a draft journey); the wiring check still fails it.
+    draft_leak = list(twins) + [
+        {"id": 9, "name": "[PROD] [2/2] Shop-260715", "state": "draft",
+         "event_name": "pmy_test_Shop-260715"},
+    ]
+    if R.twin_fire_problems("Shop-260715", spec, cio=_FakeCio(draft_leak)):
+        failures.append("draft prod campaign on the test event must not block")
+
+    # Unreadable CIO state fails closed.
+    p = R.twin_fire_problems("Shop-260715", spec, cio=_FakeCio([], raise_on_read=True))
+    if not any("refusing to fire" in x for x in p):
+        failures.append(f"unreadable CIO must fail closed: {p}")
+
+    for f in failures:
+        print(f"FAIL  {f}")
+    return failures
+
+
 def main() -> int:
-    failures = test_static_refs() + test_runtime_content() + test_delay_profile() + test_snippets()
+    failures = (
+        test_static_refs()
+        + test_runtime_content()
+        + test_delay_profile()
+        + test_snippets()
+        + test_twin_fire_guard()
+    )
     print("FAILED" if failures else "static and runtime variable checks behave correctly")
     return 1 if failures else 0
 
