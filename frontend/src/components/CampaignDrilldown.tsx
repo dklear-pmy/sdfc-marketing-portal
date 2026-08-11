@@ -972,11 +972,13 @@ export function ValidationReportView({
                 <TableBody>
                   {rows.map((check) => (
                     <TableRow key={check.id}>
-                      <TableCell>
+                      <TableCell className="align-top">
                         <Badge variant={checkVariant[check.status]}>{check.status}</Badge>
                       </TableCell>
-                      <TableCell className="font-medium whitespace-nowrap">{check.name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
+                      <TableCell className="align-top font-medium whitespace-nowrap">
+                        {check.name}
+                      </TableCell>
+                      <TableCell className="align-top text-sm break-words whitespace-normal text-muted-foreground">
                         {check.detail}
                       </TableCell>
                     </TableRow>
