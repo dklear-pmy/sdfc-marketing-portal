@@ -39,6 +39,7 @@ TRIGGER_CAPS = {
     "welcome_shopify_260715": 200,
     "welcome_tickets_membership": 25,
     "welcome_tickets_supporters_260807": 25,
+    "welcome_tickets_premium_260807": 25,
 }
 
 # Mirror of each trigger's `enabled` flag in triggers.py (same drift
@@ -51,6 +52,7 @@ TRIGGER_ENABLED = {
     "welcome_shopify_260715": False,  # draft SQL in the view; WHERE FALSE in the hub
     "welcome_tickets_membership": False,  # reserved for the general STM journey re-spec
     "welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 60/61
+    "welcome_tickets_premium_260807": True,  # Premium Season Membership — CIO relay pair 68/69
 }
 
 

@@ -126,12 +126,26 @@ shopify_cand AS (
     AND COALESCE(v.has_season_plan, FALSE) = FALSE
     AND o.order_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 72 HOUR)
 ),
-supporters_cand AS (
-  -- welcome_tickets_supporters_260807: MIRROR of the hub trigger (triggers.py).
-  -- Client spec 2026-08-07: closed/won + name contains SUPP + Record Type =
-  -- Ticket Sales (012UR000001cuNBYAY) + Group = General Season Tickets +
-  -- close date within 24h. rep_* = Account OWNER's User record.
+membership_cand AS (
+  -- MIRROR of _sf_membership_welcome_query in triggers.py: both SF
+  -- membership triggers share one query implementation in the hub, so they
+  -- share one CTE here; matched_trigger discriminates (record types are
+  -- mutually exclusive, an opp can never match both).
+  --   welcome_tickets_supporters_260807 (spec 2026-08-07): SUPP marker +
+  --     Ticket Sales record type + General Season Tickets group.
+  --   welcome_tickets_premium_260807 (spec 2026-08-09): Premium Sales
+  --     record type + product 'Premium Season Membership' (the sheet's
+  --     "Group = Premium Membership" — no such group_c exists); no name
+  --     marker (auto-generated names).
+  -- Common: closed/won + close date within 24h; rep_* = Account OWNER's
+  -- User record; no-email hold; per-opportunity dedup.
   SELECT
+    CASE
+      WHEN o.record_type_id = '012UR000001cuNBYAY'
+        THEN 'welcome_tickets_supporters_260807'
+      WHEN o.record_type_id = '012UR000001fAEAYA2'
+        THEN 'welcome_tickets_premium_260807'
+    END                                                         AS matched_trigger,
     o.id                                                        AS dedup_key,
     LOWER(TRIM(NULLIF(COALESCE(NULLIF(a.person_email, 'None'),
                                NULLIF(c.email, 'None')), '')))  AS email,
@@ -203,9 +217,14 @@ supporters_cand AS (
   ) nm ON TRUE
   WHERE o.is_closed = TRUE
     AND o.is_won = TRUE
-    AND UPPER(o.name) LIKE '%SUPP%'
-    AND o.record_type_id = '012UR000001cuNBYAY'
-    AND o.group_c = 'General Season Tickets'
+    AND (
+      (UPPER(o.name) LIKE '%SUPP%'
+       AND o.record_type_id = '012UR000001cuNBYAY'
+       AND o.group_c = 'General Season Tickets')
+      OR
+      (o.record_type_id = '012UR000001fAEAYA2'
+       AND o.koreps2_product_c = 'Premium Season Membership')
+    )
     AND o.close_date >= DATE_SUB(CURRENT_DATE('UTC'), INTERVAL 1 DAY)
   -- No-email accounts are held, not fired (mirrors the hub guard): a fire
   -- would burn the exactly-once key on an event Send Event can never
@@ -316,9 +335,38 @@ SELECT
     cand.rep_phone, cand.account_owner, cand.ticketing_event_date,
     cand.ticketing_event_name
   ))
-FROM supporters_cand cand
+FROM membership_cand cand
 LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
   ON s.trigger = 'welcome_tickets_supporters_260807'
  AND s.dedup_key = cand.dedup_key
  AND s.status IN ('sent', 'suppressed', 'baseline')
-WHERE s.dedup_key IS NULL
+WHERE cand.matched_trigger = 'welcome_tickets_supporters_260807'
+  AND s.dedup_key IS NULL
+
+UNION ALL
+
+-- welcome_tickets_premium_260807: STM-Premium-New-Member-Welcome-Journey-260807
+-- (CIO relay pair 68/69).
+SELECT
+  'welcome_tickets_premium_260807',
+  cand.dedup_key,
+  cand.email,
+  cand.first_name,
+  cand.last_name,
+  cand.event_at,
+  TO_JSON_STRING(STRUCT(
+    cand.dedup_key, cand.email, cand.first_name, cand.last_name,
+    cand.account_name, cand.account_id, cand.opportunity_id,
+    cand.opportunity_name, cand.stage_name, cand.is_closed, cand.is_won,
+    cand.product, cand.amount, cand.seat_block, cand.number_of_seats,
+    cand.ticket_price, cand.close_date, cand.rep_name, cand.rep_email,
+    cand.rep_phone, cand.account_owner, cand.ticketing_event_date,
+    cand.ticketing_event_name
+  ))
+FROM membership_cand cand
+LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
+  ON s.trigger = 'welcome_tickets_premium_260807'
+ AND s.dedup_key = cand.dedup_key
+ AND s.status IN ('sent', 'suppressed', 'baseline')
+WHERE cand.matched_trigger = 'welcome_tickets_premium_260807'
+  AND s.dedup_key IS NULL
