@@ -131,9 +131,9 @@ membership_cand AS (
   -- membership triggers share one query implementation in the hub, so they
   -- share one CTE here; matched_trigger discriminates (record types are
   -- mutually exclusive, an opp can never match both).
-  --   welcome_tickets_supporters_260807 (spec 2026-08-07): SUPP marker +
+  --   stm_welcome_tickets_supporters_260807 (spec 2026-08-07): SUPP marker +
   --     Ticket Sales record type + General Season Tickets group.
-  --   welcome_tickets_premium_260807 (spec 2026-08-09): Premium Sales
+  --   stm_welcome_tickets_premium_260807 (spec 2026-08-09): Premium Sales
   --     record type + product 'Premium Season Membership' (the sheet's
   --     "Group = Premium Membership" — no such group_c exists); no name
   --     marker (auto-generated names).
@@ -142,9 +142,9 @@ membership_cand AS (
   SELECT
     CASE
       WHEN o.record_type_id = '012UR000001cuNBYAY'
-        THEN 'welcome_tickets_supporters_260807'
+        THEN 'stm_welcome_tickets_supporters_260807'
       WHEN o.record_type_id = '012UR000001fAEAYA2'
-        THEN 'welcome_tickets_premium_260807'
+        THEN 'stm_welcome_tickets_premium_260807'
     END                                                         AS matched_trigger,
     o.id                                                        AS dedup_key,
     LOWER(TRIM(NULLIF(COALESCE(NULLIF(a.person_email, 'None'),
@@ -306,10 +306,10 @@ WHERE s.dedup_key IS NULL
 
 UNION ALL
 
--- welcome_tickets_membership: shadow placeholder; live logic still on the
+-- stm_welcome_tickets_260807: shadow placeholder; live logic still on the
 -- legacy cio_welcome_trigger poller until the webhook-path cutover.
 SELECT
-  'welcome_tickets_membership',
+  'stm_welcome_tickets_260807',
   CAST(NULL AS STRING), CAST(NULL AS STRING), CAST(NULL AS STRING),
   CAST(NULL AS STRING), CAST(NULL AS TIMESTAMP), CAST(NULL AS STRING)
 FROM (SELECT 1) WHERE FALSE
@@ -317,10 +317,10 @@ FROM (SELECT 1) WHERE FALSE
 
 UNION ALL
 
--- welcome_tickets_supporters_260807: STM-Supporter-New-Member-Welcome-Journey-260807
+-- stm_welcome_tickets_supporters_260807: STM-Supporter-New-Member-Welcome-Journey-260807
 -- (CIO relay pair 60/61).
 SELECT
-  'welcome_tickets_supporters_260807',
+  'stm_welcome_tickets_supporters_260807',
   cand.dedup_key,
   cand.email,
   cand.first_name,
@@ -337,18 +337,18 @@ SELECT
   ))
 FROM membership_cand cand
 LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
-  ON s.trigger = 'welcome_tickets_supporters_260807'
+  ON s.trigger = 'stm_welcome_tickets_supporters_260807'
  AND s.dedup_key = cand.dedup_key
  AND s.status IN ('sent', 'suppressed', 'baseline')
-WHERE cand.matched_trigger = 'welcome_tickets_supporters_260807'
+WHERE cand.matched_trigger = 'stm_welcome_tickets_supporters_260807'
   AND s.dedup_key IS NULL
 
 UNION ALL
 
--- welcome_tickets_premium_260807: STM-Premium-New-Member-Welcome-Journey-260807
+-- stm_welcome_tickets_premium_260807: STM-Premium-New-Member-Welcome-Journey-260807
 -- (CIO relay pair 68/69).
 SELECT
-  'welcome_tickets_premium_260807',
+  'stm_welcome_tickets_premium_260807',
   cand.dedup_key,
   cand.email,
   cand.first_name,
@@ -365,8 +365,8 @@ SELECT
   ))
 FROM membership_cand cand
 LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
-  ON s.trigger = 'welcome_tickets_premium_260807'
+  ON s.trigger = 'stm_welcome_tickets_premium_260807'
  AND s.dedup_key = cand.dedup_key
  AND s.status IN ('sent', 'suppressed', 'baseline')
-WHERE cand.matched_trigger = 'welcome_tickets_premium_260807'
+WHERE cand.matched_trigger = 'stm_welcome_tickets_premium_260807'
   AND s.dedup_key IS NULL

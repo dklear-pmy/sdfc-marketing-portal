@@ -23,18 +23,18 @@ WITH membership_cand AS (
   -- membership triggers share one query implementation in the hub, so they
   -- share one CTE here; matched_trigger discriminates (record types are
   -- mutually exclusive, an opp can never match both).
-  --   welcome_tickets_supporters_260807 (spec 2026-08-07): SUPP marker +
+  --   stm_welcome_tickets_supporters_260807 (spec 2026-08-07): SUPP marker +
   --     Ticket Sales record type + General Season Tickets group.
-  --   welcome_tickets_premium_260807 (spec 2026-08-09): Premium Sales
+  --   stm_welcome_tickets_premium_260807 (spec 2026-08-09): Premium Sales
   --     record type + product 'Premium Season Membership'.
   -- Common: closed/won + close date within history_days; rep_* = Account
   -- OWNER's User record; no-email hold; per-opportunity dedup.
   SELECT
     CASE
       WHEN o.record_type_id = '012UR000001cuNBYAY'
-        THEN 'welcome_tickets_supporters_260807'
+        THEN 'stm_welcome_tickets_supporters_260807'
       WHEN o.record_type_id = '012UR000001fAEAYA2'
-        THEN 'welcome_tickets_premium_260807'
+        THEN 'stm_welcome_tickets_premium_260807'
     END                                                         AS matched_trigger,
     o.id                                                        AS dedup_key,
     LOWER(TRIM(NULLIF(COALESCE(NULLIF(a.person_email, 'None'),
