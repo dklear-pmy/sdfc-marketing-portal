@@ -28,13 +28,14 @@ from .slugs import get_slug
 _VIEW = f"{GCP_PROJECT}.customerio_state.vw_campaign_affected_customers"
 _PREVIEW_VIEW = f"{GCP_PROJECT}.customerio_state.vw_campaign_would_fire"
 _HISTORY_TF = f"{GCP_PROJECT}.customerio_state.tf_campaign_would_fire_history"
+_REGISTRY = f"{GCP_PROJECT}.customerio_state.slug_registry"
 
 # Triggers with a branch in the history table function. Extend together with
 # tf_campaign_would_fire_history.sql — a trigger absent here gets the live
 # view only, and the tab says history isn't built for it yet.
 HISTORY_TRIGGERS = {
-    "welcome_tickets_supporters_260807",
-    "welcome_tickets_premium_260807",
+    "stm_welcome_tickets_supporters_260807",
+    "stm_welcome_tickets_premium_260807",
 }
 
 # Mirror of each trigger's max_per_run circuit breaker in the hub
@@ -46,9 +47,108 @@ TRIGGER_CAPS = {
     "tb_signup_260715": 2000,
     "welcome_tickets_single_game": 500,
     "welcome_shopify_260715": 200,
-    "welcome_tickets_membership": 25,
-    "welcome_tickets_supporters_260807": 25,
-    "welcome_tickets_premium_260807": 25,
+    "stm_welcome_tickets_260807": 25,
+    "stm_welcome_tickets_supporters_260807": 25,
+    "stm_welcome_tickets_premium_260807": 25,
+}
+
+# Bullet-list mirror of each trigger's selection SQL in triggers.py (same
+# drift warning — update together). Shown on the Triggers tab so a reader
+# can tell WHO a trigger selects without opening the hub repo: one predicate
+# or fact per bullet, real field names and values.
+TRIGGER_LOGIC = {
+    "tb_signup_260715": [
+        "Source: TradableBits bronze activities (last 3 day-partitions), deduped per activity_id",
+        "Join: silver tb_fans for email / name / postal_code (fan not yet synced → row drops, self-heals next run)",
+        "activity_ts ≥ now − 72 hours",
+        "campaign_title IS NOT NULL (titled forms only)",
+        "email present, not '' / 'none' / 'null'",
+        "Grain: one event per activity_id — CIO's event filters own the entry policy",
+    ],
+    "welcome_tickets_single_game": [
+        "Source: fan-attributes view, one row per email",
+        "ticket_seats_purchased > 0",
+        "matches_attended_lifetime = 0",
+        "has_season_plan = FALSE",
+        "Baseline diff: every historical purchaser was absorbed at bootstrap — a new row means the first purchase just landed",
+        "Grain: one fire per email",
+    ],
+    "welcome_shopify_260715": [
+        "WHERE FALSE — selects nothing",
+        "Awaiting client entry criteria (likely: first merch order, no ticket history)",
+    ],
+    "stm_welcome_tickets_supporters_260807": [
+        "Source: Salesforce opportunity, joined to account (owner rep) and contact (email fallback)",
+        "is_closed = TRUE AND is_won = TRUE",
+        "close_date ≥ CURRENT_DATE − 1 day (tightest 24h window on a DATE column)",
+        "UPPER(name) LIKE '%SUPP%'",
+        "record_type_id = Ticket Sales (012UR000001cuNBYAY)",
+        "group_c = 'General Season Tickets'",
+        "No-email rows held, not fired, until an email lands in SF or the window ages out",
+        "Grain: one fire per opportunity_id",
+    ],
+    "stm_welcome_tickets_premium_260807": [
+        "Source: Salesforce opportunity, joined to account (owner rep) and contact (email fallback)",
+        "is_closed = TRUE AND is_won = TRUE",
+        "close_date ≥ CURRENT_DATE − 1 day (tightest 24h window on a DATE column)",
+        "record_type_id = Premium Sales (012UR000001fAEAYA2)",
+        "koreps2_product_c = 'Premium Season Membership' — the spec's 'Premium Membership' group has no Salesforce analog (approved mapping)",
+        "No deal-name marker: Premium Sales names are auto-generated, a marker adds nothing",
+        "No-email rows held, not fired, until an email lands in SF or the window ages out",
+        "Grain: one fire per opportunity_id",
+    ],
+    "stm_welcome_tickets_260807": [
+        "WHERE FALSE — shadow placeholder, selects nothing",
+        "General STM closed/won still lives on the legacy cio_welcome_trigger poller (CIO pair #37/#38, unscheduled since Jul 6)",
+        "Reserved until the client re-spec; cutover ports the poller SQL (opportunity grain)",
+    ],
+}
+
+# The webhook payload each trigger POSTs — field per line, mirrored from the
+# SELECT list in triggers.py (same drift warning).
+_SF_MEMBERSHIP_PAYLOAD = [
+    "dedup_key — the opportunity id (exactly-once key)",
+    "email — Person Account person_email, else Contact email",
+    "first_name / last_name / account_name",
+    "account_id — SF 18-char id; the CIO Create/Update Person identifier the People sync converges on",
+    "opportunity_id / opportunity_name / stage_name",
+    "is_closed / is_won",
+    "product / amount / seat_block / number_of_seats / ticket_price",
+    "close_date — DATE as string",
+    "rep_name / rep_email / rep_phone / account_owner — the SF Account Owner's User record (not the legacy digideck fields)",
+    "ticketing_event_date — next real home match as unix epoch (feeds CIO's Wait Until); null in the off-season",
+    "ticketing_event_name",
+]
+TRIGGER_PAYLOAD = {
+    "tb_signup_260715": [
+        "dedup_key — the activity_id (exactly-once key)",
+        "email — from the fan profile",
+        "activity_id / campaign_title",
+        "signup_form_family — world_cup · stay_informed · etw · other",
+        "is_world_cup / is_new_fan_24h — fan created within 24h of the activity",
+        "fan_created_at / activity_at — ISO timestamps",
+        "first_name / last_name / postal_code",
+        "fan_source / phone_subscribed / has_season_plan",
+    ],
+    "welcome_tickets_single_game": [
+        "dedup_key — the email (exactly-once key)",
+        "email / first_name / last_name",
+        "tm_acct_id — Ticketmaster account id",
+        "ticket_seats_purchased / events_ticketed",
+    ],
+    "welcome_shopify_260715": [
+        "dedup_key — the email (exactly-once key)",
+        "email / first_name / last_name",
+        "shopify_amount_spent",
+    ],
+    "stm_welcome_tickets_supporters_260807": _SF_MEMBERSHIP_PAYLOAD,
+    "stm_welcome_tickets_premium_260807": _SF_MEMBERSHIP_PAYLOAD,
+    "stm_welcome_tickets_260807": [
+        "dedup_key — the sf_account_id",
+        "email / first_name / last_name",
+        "stm_product / stm_amount / close_date",
+        "Drafted only — WHERE FALSE means nothing ever POSTs",
+    ],
 }
 
 # Mirror of each trigger's `enabled` flag in triggers.py (same drift
@@ -56,13 +156,100 @@ TRIGGER_CAPS = {
 # hub won't execute yet — the tab labels these "not enabled", so the list
 # reads as a demonstration of the selection logic, not a pending send.
 TRIGGER_ENABLED = {
-    "tb_signup_260715": True,
-    "welcome_tickets_single_game": True,
+    "tb_signup_260715": False,  # switched off 2026-08-11 — hold until launch decision
+    "welcome_tickets_single_game": False,  # switched off 2026-08-11; re-baseline before re-enabling
     "welcome_shopify_260715": False,  # draft SQL in the view; WHERE FALSE in the hub
-    "welcome_tickets_membership": False,  # reserved for the general STM journey re-spec
-    "welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 60/61
-    "welcome_tickets_premium_260807": True,  # Premium Season Membership — CIO relay pair 68/69
+    "stm_welcome_tickets_260807": False,  # reserved for the general STM journey re-spec
+    "stm_welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 60/61
+    "stm_welcome_tickets_premium_260807": True,  # Premium Season Membership — CIO relay pair 68/69
 }
+
+
+def triggers_overview() -> dict:
+    """Every warehouse trigger the portal knows about, joined three ways.
+
+    A row per trigger key in the union of the hub mirrors (TRIGGER_CAPS /
+    TRIGGER_ENABLED) and the registry's trigger_key column, so both failure
+    modes are visible: a registry key the hub has never heard of (fires
+    nothing, ever) and a hub trigger no campaign is registered to (fires
+    into a webhook nobody is validating). Candidate counts come live from
+    the would-fire view; fire stats from the hub's fire log. Read-only.
+    """
+
+    def registry():
+        return [
+            dict(r)
+            for r in client()
+            .query(
+                f"""
+                SELECT slug, display_name, trigger_key, trigger_label
+                FROM `{_REGISTRY}` WHERE trigger_key IS NOT NULL
+                """
+            )
+            .result()
+        ]
+
+    def candidates():
+        return {
+            r.trigger: r.n
+            for r in client()
+            .query(f"SELECT trigger, COUNT(*) AS n FROM `{_PREVIEW_VIEW}` GROUP BY trigger")
+            .result()
+        }
+
+    def fires():
+        return {
+            r.trigger: r
+            for r in client()
+            .query(
+                f"""
+                SELECT trigger, COUNT(*) AS total,
+                       COUNTIF(status = 'sent') AS sent,
+                       COUNTIF(status = 'failed') AS failed,
+                       MAX(fired_at) AS last_fired_at
+                FROM `{_VIEW}` GROUP BY trigger
+                """
+            )
+            .result()
+        }
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_reg, f_cand, f_fires = ex.submit(registry), ex.submit(candidates), ex.submit(fires)
+        reg, cand, fire = f_reg.result(), f_cand.result(), f_fires.result()
+
+    by_key: dict[str, list[dict]] = {}
+    for r in reg:
+        by_key.setdefault(r["trigger_key"], []).append(r)
+
+    keys = sorted(set(TRIGGER_CAPS) | set(TRIGGER_ENABLED) | set(by_key))
+    rows = []
+    for key in keys:
+        entries = by_key.get(key, [])
+        f = fire.get(key)
+        rows.append(
+            {
+                "key": key,
+                "label": next((e["trigger_label"] for e in entries if e["trigger_label"]), None),
+                "in_hub": key in TRIGGER_CAPS or key in TRIGGER_ENABLED,
+                "enabled": TRIGGER_ENABLED.get(key),
+                "cap": TRIGGER_CAPS.get(key),
+                "logic": TRIGGER_LOGIC.get(key),
+                "payload": TRIGGER_PAYLOAD.get(key),
+                "has_history": key in HISTORY_TRIGGERS,
+                "campaigns": [
+                    {"slug": e["slug"], "display_name": e["display_name"]} for e in entries
+                ],
+                "candidates": cand.get(key, 0),
+                "fires_total": f.total if f else 0,
+                "fires_sent": f.sent if f else 0,
+                "fires_failed": f.failed if f else 0,
+                # absorbed = written to the log without a send attempt:
+                # suppressions, bootstrap baselines, poller-cutover history
+                "fires_absorbed": (f.total - f.sent - f.failed) if f else 0,
+                "last_fired_at": f.last_fired_at.isoformat() if f and f.last_fired_at else None,
+            }
+        )
+    return {"triggers": rows}
 
 
 def affected_page(
@@ -186,6 +373,22 @@ def would_fire_page(
     if not trigger_key or (days and not history_available):
         return empty
 
+    rows, n = _preview_rows(trigger_key, q, limit, offset, days)
+    return {"trigger_key": trigger_key,
+            "trigger_label": entry.get("trigger_label"),
+            "rows": rows, "total": n,
+            "limit": limit, "offset": offset, "cap": cap, "enabled": enabled,
+            "days": days, "history_available": history_available}
+
+
+def _preview_rows(
+    trigger_key: str,
+    q: str | None,
+    limit: int,
+    offset: int,
+    days: int | None,
+) -> tuple[list[dict], int]:
+    """(rows, total) from the would-fire view (days=None) or history TVF."""
     source = f"`{_PREVIEW_VIEW}`" if not days else f"`{_HISTORY_TF}`({int(days)})"
 
     where = ["trigger = @trigger"]
@@ -228,10 +431,32 @@ def would_fire_page(
 
     with ThreadPoolExecutor(max_workers=2) as ex:
         f_page, f_total = ex.submit(page), ex.submit(total)
-        rows, n = f_page.result(), f_total.result()
+        return f_page.result(), f_total.result()
 
+
+def trigger_preview_page(
+    trigger_key: str,
+    q: str | None,
+    limit: int = 20,
+    offset: int = 0,
+    days: int | None = None,
+) -> dict:
+    """Same preview as would_fire_page, addressed by trigger key directly.
+
+    The Triggers tab asks per trigger, not per campaign — a trigger with no
+    registered campaign is still previewable. days=None = the live next-run
+    selection; days=N = every event of the trailing N days from the history
+    TVF. Strictly display; nothing here can send a webhook.
+    """
+    cap = TRIGGER_CAPS.get(trigger_key)
+    enabled = TRIGGER_ENABLED.get(trigger_key)
+    history_available = trigger_key in HISTORY_TRIGGERS
+    if days and not history_available:
+        rows, n = [], 0
+    else:
+        rows, n = _preview_rows(trigger_key, q, limit, offset, days)
     return {"trigger_key": trigger_key,
-            "trigger_label": entry.get("trigger_label"),
+            "trigger_label": None,
             "rows": rows, "total": n,
             "limit": limit, "offset": offset, "cap": cap, "enabled": enabled,
             "days": days, "history_available": history_available}

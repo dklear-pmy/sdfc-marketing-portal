@@ -264,6 +264,10 @@ export default function SlugRegistry({
                         PROD:
                       </span>
                       <span className="whitespace-nowrap">{e.event_name ?? '—'}</span>
+                      <span className="text-right font-sans font-medium text-muted-foreground">
+                        TRIG:
+                      </span>
+                      <span className="whitespace-nowrap">{e.trigger_key ?? '—'}</span>
                     </span>
                   </TableCell>
                   <TableCell>

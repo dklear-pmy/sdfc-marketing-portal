@@ -26,8 +26,13 @@ function parse(raw: string, def: Primitive): Primitive {
  * over the same stale `searchParams` and the second would silently drop the
  * first — hence one patch, one write.
  *
- * Writes use `replace`, so dialling a filter in doesn't bury the previous page
- * under a dozen history entries.
+ * Writes use `replace` by default, so dialling a filter in doesn't bury the
+ * previous page under a dozen history entries. Keys named in `pushKeys` are
+ * the exception: those are navigation (a selection, a tab, a drilldown), and
+ * a patch that CHANGES one of them pushes a real history entry — that's what
+ * makes the browser back button walk back through the app instead of leaving
+ * it. Text inputs and paging must never be push keys, or every keystroke
+ * becomes a history entry.
  */
 /** A default of `false` or `0` would otherwise infer as the literal type, so
     the state could never be set to anything else. */
@@ -36,14 +41,22 @@ type Widen<T> = {
 };
 
 export function useUrlFilters<T extends Record<string, Primitive>>(
-  defaults: T
+  defaults: T,
+  pushKeys?: readonly Extract<keyof T, string>[]
 ): [Widen<T>, (patch: Partial<Widen<T>>) => void] {
   const [params, setParams] = useSearchParams();
 
   // Read through a ref so the setter identity doesn't depend on the caller
-  // passing a stable `defaults` object.
+  // passing a stable `defaults` object (same for `pushKeys`).
   const defaultsRef = useRef(defaults);
   defaultsRef.current = defaults;
+  const pushKeysRef = useRef(pushKeys);
+  pushKeysRef.current = pushKeys;
+  // The current params, for deciding push-vs-replace before the functional
+  // update runs. A ref, not the closure, so a memoized setter still sees
+  // the latest URL.
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
 
   const values = {} as Record<string, Primitive>;
   for (const key of Object.keys(defaults)) {
@@ -53,6 +66,14 @@ export function useUrlFilters<T extends Record<string, Primitive>>(
 
   const set = useCallback(
     (patch: Partial<Widen<T>>) => {
+      const push = (pushKeysRef.current ?? []).some((key) => {
+        const value = patch[key];
+        if (value === undefined) return false;
+        const raw = paramsRef.current.get(key);
+        const current =
+          raw === null ? defaultsRef.current[key] : parse(raw, defaultsRef.current[key]);
+        return value !== current;
+      });
       setParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -63,7 +84,7 @@ export function useUrlFilters<T extends Record<string, Primitive>>(
           }
           return next;
         },
-        { replace: true }
+        { replace: !push }
       );
     },
     [setParams]

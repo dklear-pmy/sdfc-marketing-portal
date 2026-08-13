@@ -106,7 +106,7 @@ const eventDetail = (e: LedgerEventRow) => ledgerEventDetail(e.activity, e.featu
 const TABS = ['events', 'statuses'] as const;
 
 export default function FanLedger() {
-  const [{ tab: rawTab }, setUrl] = useUrlFilters({ tab: 'events', offset: 0 });
+  const [{ tab: rawTab }, setUrl] = useUrlFilters({ tab: 'events', offset: 0 }, ['tab']);
   const tab = oneOf(rawTab, TABS, 'events');
   // Paging is shared between the tabs, so switching returns to page 1 rather
   // than landing on an offset the other tab may not have.

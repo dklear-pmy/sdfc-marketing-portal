@@ -139,7 +139,7 @@ export default function CampaignDrilldown({
   const { role } = useAuth();
   const canEdit = role === 'operator' || role === 'admin';
 
-  const [{ cmode }, setModeUrl] = useUrlFilters({ cmode: 'test' });
+  const [{ cmode }, setModeUrl] = useUrlFilters({ cmode: 'test' }, ['cmode']);
   const mode = oneOf<CampaignMode>(cmode, ['test', 'prod'], 'test');
   const visibleTabs = CAMPAIGN_TABS.filter((t) => MODE_TABS[mode].includes(t.key));
   /* A tab that belongs to the other mode (e.g. Test runs while in Prod) falls

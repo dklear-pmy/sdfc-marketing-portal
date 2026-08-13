@@ -70,6 +70,33 @@ def slugs_list(q: str | None = None, principal: Principal = require_access("mark
     }
 
 
+@app.get("/api/triggers")
+def triggers_list(principal: Principal = require_access("marketing")) -> dict:
+    return affected.triggers_overview()
+
+
+@app.get("/api/triggers/{key}/preview")
+def triggers_preview(
+    key: str,
+    q: str | None = None,
+    limit: int = 20,
+    offset: int = 0,
+    days: int | None = None,
+    principal: Principal = require_access("marketing"),
+) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]{1,80}", key):
+        raise HTTPException(status_code=400, detail="Bad trigger key")
+    if q and len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search too long")
+    return affected.trigger_preview_page(
+        key,
+        q,
+        days=max(1, min(days, 365)) if days else None,
+        limit=max(1, min(limit, 100)),
+        offset=max(0, min(offset, 100_000)),
+    )
+
+
 @app.get("/api/slugs/{slug}/precheck")
 def slugs_precheck(
     slug: str,

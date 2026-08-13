@@ -47,7 +47,7 @@ export default function Fans() {
   /* ?email=… is the deep link — from the Fan Ledger, from a teammate, or from
      picking a row in the browse list below. The URL is the single source of
      truth for which fan is open; the box holds an unsubmitted draft. */
-  const [url, setUrl] = useUrlFilters({ email: '' });
+  const [url, setUrl] = useUrlFilters({ email: '' }, ['email']);
   const submitted = url.email.trim().toLowerCase() || null;
   const [email, setEmail] = useState(url.email);
   useEffect(() => setEmail(url.email), [url.email]);
@@ -526,7 +526,7 @@ function AttributesCard({
   const hasAttention = comparison.some((c) => ['differs', 'pending'].includes(c.status));
   /* Empty means "pick for me" — a profile with nothing to review opens on All.
      An explicit ?atab= from a shared link always wins over that default. */
-  const [{ atab }, setUrl] = useUrlFilters({ atab: '' });
+  const [{ atab }, setUrl] = useUrlFilters({ atab: '' }, ['atab']);
   const tab = atab
     ? oneOf(
         atab,
@@ -830,7 +830,7 @@ function messageKind(m: CioMessage): string {
 const ACTIVITY_TABS = ['timeline', 'messages'] as const;
 
 function ActivityCard({ cioId }: { cioId: string }) {
-  const [{ ptab, aq }, setUrl] = useUrlFilters({ ptab: 'timeline', aq: '' });
+  const [{ ptab, aq }, setUrl] = useUrlFilters({ ptab: 'timeline', aq: '' }, ['ptab']);
   const tab = oneOf(ptab, ACTIVITY_TABS, 'timeline');
   const [page, setPage] = useState(0);
   const setTab = (v: string) => {

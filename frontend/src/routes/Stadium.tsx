@@ -126,14 +126,17 @@ export default function Stadium() {
      particular event/metric/window is a link you can paste to someone. The
      transient bits below (hover, picker open, the picker's own type-ahead)
      deliberately do not. */
-  const [url, setUrl] = useUrlFilters({
-    event: '',
-    metric: 'pct_sold',
-    normalize: true,
-    when: 'future',
-    from: '',
-    to: '',
-  });
+  const [url, setUrl] = useUrlFilters(
+    {
+      event: '',
+      metric: 'pct_sold',
+      normalize: true,
+      when: 'future',
+      from: '',
+      to: '',
+    },
+    ['event']
+  );
   const metric = oneOf(url.metric, METRICS, 'pct_sold');
   const when = oneOf(url.when, WHENS, 'future');
   const { normalize, from: dateFrom, to: dateTo } = url;

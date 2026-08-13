@@ -401,6 +401,34 @@ export interface WouldFirePage {
   history_available?: boolean;
 }
 
+/* One warehouse trigger on the Campaign Tester's Triggers tab: the hub
+   mirror (enabled/cap), the registry campaigns it feeds, a live candidate
+   count, and its fire-log stats. */
+export interface TriggerRow {
+  key: string;
+  label: string | null;
+  /* false = the registry names a trigger the hub has never heard of —
+     it will never fire */
+  in_hub: boolean;
+  enabled: boolean | null;
+  cap: number | null;
+  /* bullet-list mirror of the trigger's selection SQL in the hub —
+     one predicate or fact per entry */
+  logic: string[] | null;
+  /* the webhook payload contract — one field (or field group) per entry */
+  payload: string[] | null;
+  has_history: boolean;
+  campaigns: { slug: string; display_name: string | null }[];
+  candidates: number;
+  fires_total: number;
+  fires_sent: number;
+  fires_failed: number;
+  /* log rows written without a send attempt: suppressions, bootstrap
+     baselines, poller-cutover history */
+  fires_absorbed: number;
+  last_fired_at: string | null;
+}
+
 export interface LedgerStatus {
   email: string;
   status_domain: string;

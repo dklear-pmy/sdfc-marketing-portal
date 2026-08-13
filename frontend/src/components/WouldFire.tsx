@@ -34,7 +34,9 @@ const PAGE = 20;
 const HISTORY_DAYS = 90;
 
 export function WouldFireTab({ slug }: { slug: string }) {
-  const [{ pq, poffset, pwin }, setUrl] = useUrlFilters({ pq: '', poffset: 0, pwin: 'next' });
+  const [{ pq, poffset, pwin }, setUrl] = useUrlFilters({ pq: '', poffset: 0, pwin: 'next' }, [
+    'pwin',
+  ]);
   const win = pwin === 'history' ? 'history' : 'next';
   const [qInput, setQInput] = useState(pq);
   useEffect(() => setQInput(pq), [pq]);
