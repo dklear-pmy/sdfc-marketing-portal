@@ -18,6 +18,11 @@ def campaign_url(campaign_id: int | str) -> str:
     return f"https://fly.customer.io/workspaces/{CIO_WORKSPACE_ID}/journeys/campaigns/{campaign_id}/overview"
 
 
+def person_url(cio_id: str) -> str:
+    """Deep link to a person profile in the Customer.io app."""
+    return f"https://fly.customer.io/workspaces/{CIO_WORKSPACE_ID}/journeys/people/{cio_id}"
+
+
 class CioClient:
     def __init__(self):
         creds = cio_credentials()

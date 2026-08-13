@@ -59,6 +59,13 @@ class NotesUpdate(BaseModel):
     notes: str | None = None
 
 
+class SampleSendBody(BaseModel):
+    """Optional hand-edited demo payload; tokens like {identity} still fill
+    server-side, and every email-shaped value is re-checked as owned."""
+
+    payload: dict | None = None
+
+
 @app.get("/api/slugs")
 def slugs_list(q: str | None = None, principal: Principal = require_access("marketing")) -> dict:
     if q and len(q) > 120:
@@ -73,6 +80,61 @@ def slugs_list(q: str | None = None, principal: Principal = require_access("mark
 @app.get("/api/triggers")
 def triggers_list(principal: Principal = require_access("marketing")) -> dict:
     return affected.triggers_overview()
+
+
+class TriggerLabelUpdate(BaseModel):
+    label: str | None = None
+
+
+class TriggerKillUpdate(BaseModel):
+    killed: bool
+    reason: str | None = None
+
+
+@app.post("/api/triggers/{key}/kill")
+def triggers_set_kill(
+    key: str,
+    body: TriggerKillUpdate,
+    principal: Principal = require_access("marketing", "operator"),
+) -> dict:
+    """Emergency kill switch. Off-only on the hub side (a row can stop a
+    trigger, never start one), so killing is operator-level; LIFTING one
+    re-allows sends and is admin-only."""
+    if not re.fullmatch(r"[a-z0-9_]{1,80}", key):
+        raise HTTPException(status_code=400, detail="Bad trigger key")
+    if key != affected.KILL_ALL_KEY and key not in affected.TRIGGER_ENABLED:
+        raise HTTPException(status_code=404, detail="No such trigger in the hub")
+    if not body.killed and principal.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Lifting an emergency disable re-allows sends — admin only",
+        )
+    reason = (body.reason or "").strip()
+    if len(reason) > 300:
+        raise HTTPException(status_code=400, detail="Reason is longer than 300 characters")
+    affected.set_trigger_kill(key, body.killed, reason or None, actor=principal.email or "?")
+    return {"trigger_key": key, "killed": body.killed}
+
+
+@app.post("/api/triggers/{key}/label")
+def triggers_set_label(
+    key: str,
+    body: TriggerLabelUpdate,
+    principal: Principal = require_access("marketing", "operator"),
+) -> dict:
+    if not re.fullmatch(r"[a-z0-9_]{1,80}", key):
+        raise HTTPException(status_code=400, detail="Bad trigger key")
+    label = (body.label or "").strip()
+    if len(label) > 80:
+        raise HTTPException(status_code=400, detail="Display name is longer than 80 characters")
+    updated = affected.set_trigger_label(key, label or None, actor=principal.email)
+    if updated == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="No registered campaign carries this trigger key — the label lives on the "
+            "campaign registration, so register one first",
+        )
+    return {"trigger_key": key, "label": label or None, "updated": updated}
 
 
 @app.get("/api/triggers/{key}/preview")
@@ -191,17 +253,40 @@ def slugs_send_sample(
     slug: str,
     target: str = "test",
     force: bool = False,
+    recipient: str | None = None,
+    body: SampleSendBody | None = None,
     principal: Principal = require_access("marketing", "operator"),
 ) -> dict:
     if target not in ("test", "prod"):
         raise HTTPException(status_code=400, detail="target must be 'test' or 'prod'")
-    result = runner.send_sample(_valid_slug(slug), target, force=force)
+    if recipient and len(recipient) > 254:
+        raise HTTPException(status_code=400, detail="Recipient is too long")
+    payload_override = body.payload if body else None
+    if payload_override is not None and len(json.dumps(payload_override)) > 20_000:
+        raise HTTPException(status_code=400, detail="Edited payload is too large")
+    result = runner.send_sample(
+        _valid_slug(slug), target, force=force, recipient=recipient,
+        payload_override=payload_override,
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="Slug not registered")
     if result.get("blocked"):
         raise HTTPException(status_code=409, detail=result["error"])
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
+    # Sample sends are outward-facing (a real POST at a CIO webhook) — audit
+    # every one to stdout, which Cloud Run keeps in Cloud Logging.
+    print(json.dumps({
+        "audit": "sample_send",
+        "actor": principal.email,
+        "slug": slug,
+        "target": target,
+        "mode": result.get("mode"),
+        "identity": result.get("identity"),
+        "status_code": result.get("status_code"),
+        "forced": force,
+        "edited": payload_override is not None,
+    }))
     return result
 
 

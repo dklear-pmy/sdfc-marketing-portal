@@ -20,7 +20,7 @@ import requests
 from google.cloud import secretmanager
 
 from . import bqstate, mailpit, payloads
-from .cio import CioClient
+from .cio import CioClient, person_url
 from .config import GCP_PROJECT, PORTAL_BASE_URL, slug_registry
 from .slugs import get_slug
 
@@ -117,19 +117,50 @@ SAMPLE_IDENTITY = "scenario-000@qa.sdfc.dev"
 _SAMPLE_SAFE_STATES = {"draft", "stopped", "paused"}
 
 
-def send_sample(slug: str, target: str, force: bool = False) -> dict | None:
+# Recipients a prod flow-through send may address: domains the team owns
+# (any subdomain of either). Never a fan address — the [1/2] actions execute
+# for real, so the created/updated person must be ours.
+_OWNED_RECIPIENT_RE = re.compile(
+    r"^[a-z0-9._%+-]+@(?:[a-z0-9-]+\.)*(?:pmygroup\.com|sdfc\.dev)$", re.I
+)
+
+
+def send_sample(
+    slug: str,
+    target: str,
+    force: bool = False,
+    recipient: str | None = None,
+    payload_override: dict | None = None,
+) -> dict | None:
     """POST one contract-shaped payload at the slug's test or prod inbound
-    webhook, outside any run. Populates the campaign's Trigger data sample in
-    the Customer.io composer.
+    webhook, outside any run.
 
-    Prod sends are fail-closed: the prod trigger campaign's live state is
-    read from Customer.io first, and anything not provably draft/stopped is
-    {'blocked': True} unless force — a sample into a RUNNING campaign enters
-    the live workflow for SAMPLE_IDENTITY. Test sends skip the gate: firing
-    the twin is the harness's whole job.
+    Two prod modes, decided by the prod [1/2] trigger's LIVE state:
 
-    Returns None when the slug is unregistered; {'error': ...} when the
-    target has no URL or the gate blocks.
+    - composer_seed (draft/stopped/paused): Customer.io stores the payload
+      as the composer's Trigger data sample and executes nothing — today's
+      original behavior, identity stays SAMPLE_IDENTITY.
+    - flow_through (running): the [1/2] executes for real — Create or Update
+      Person writes the values and Send Event fires the prod event. Guarded
+      fail-closed: `recipient` must be an owned address (@pmygroup.com /
+      @sdfc.dev, subdomains included) so no fan is touched, and NO running
+      campaign may listen on the prod event (verified live — with the [2/2]
+      journey off, the values land on the person and stop there). On
+      success the response carries a deep link to the person.
+
+    Anything else (unknown/unverifiable state) blocks unless force — the
+    legacy escape hatch that skips every gate. Test sends skip the gates:
+    firing the twin is the harness's whole job.
+
+    `payload_override` replaces the registry template (tokens like
+    {identity} still fill), letting operators hand-shape the demo. Because
+    the [1/2] actions key on values INSIDE the payload, an edited payload is
+    re-scanned before the POST: every email-shaped token must be an owned
+    address, on BOTH targets — a fan address in a test payload would make
+    the running twin journey email that fan for real.
+
+    Returns None when the slug is unregistered; {'error': ...} / {'blocked':
+    True, ...} when a gate refuses.
     """
     spec = get_slug(slug)
     if spec is None:
@@ -143,15 +174,62 @@ def send_sample(slug: str, target: str, force: bool = False) -> dict | None:
         return {"error": f"No {target} webhook URL registered for this campaign"}
 
     state = None
+    mode = "composer_seed"
+    identity = SAMPLE_IDENTITY
+    cio = None
     if target == "prod":
         from .validator import _match_campaigns
 
+        campaigns: list[dict] = []
         try:
-            roles = _match_campaigns(CioClient().campaigns(), slug)
+            cio = CioClient()
+            campaigns = cio.campaigns()
+            roles = _match_campaigns(campaigns, slug)
             state = (roles.get("prod_trigger") or {}).get("state")
         except Exception:  # noqa: BLE001 — unreadable state is treated as unsafe below
             state = None
-        if not force and state not in _SAMPLE_SAFE_STATES:
+
+        if state == "running" and not force:
+            # Flow-through: the trigger executes, so every guard is hard.
+            cleaned = (recipient or "").strip().lower()
+            if not _OWNED_RECIPIENT_RE.fullmatch(cleaned):
+                return {
+                    "error": (
+                        "The prod trigger is RUNNING, so this send executes Create or Update "
+                        "Person and fires the prod event. Provide an owned recipient "
+                        "(@pmygroup.com or @sdfc.dev) — never a fan address."
+                    )
+                }
+            event_name = (spec.get("event_name") or "").strip()
+            if not event_name:
+                return {
+                    "blocked": True,
+                    "state": state,
+                    "error": (
+                        "No prod trigger event is registered, so the portal can't verify that "
+                        "nothing listens on it — set the event on the Registration tab first."
+                    ),
+                }
+            listeners = [
+                c
+                for c in campaigns
+                if c.get("active") and (c.get("event_name") or "") == event_name
+            ]
+            if listeners:
+                names = ", ".join(
+                    f"#{c.get('id')} {c.get('name', '')}" for c in listeners[:5]
+                )
+                return {
+                    "blocked": True,
+                    "state": state,
+                    "error": (
+                        f"Running campaigns listen on '{event_name}': {names} — a flow-through "
+                        "send would enter them. Stop them first, or exercise the twin instead."
+                    ),
+                }
+            mode = "flow_through"
+            identity = cleaned
+        elif not force and state not in _SAMPLE_SAFE_STATES:
             return {
                 "blocked": True,
                 "state": state,
@@ -162,14 +240,59 @@ def send_sample(slug: str, target: str, force: bool = False) -> dict | None:
                 ),
             }
 
-    payload = payloads.fill(payloads.effective_template(spec), SAMPLE_IDENTITY)
+    template = (
+        payload_override
+        if payload_override is not None
+        else payloads.effective_template(spec)
+    )
+    payload = payloads.fill(template, identity)
+    if payload_override is not None:
+        from .shadow import _EMAIL_TOKEN
+
+        bad = sorted(
+            {
+                tok
+                for tok in _EMAIL_TOKEN.findall(json.dumps(payload))
+                if not _OWNED_RECIPIENT_RE.fullmatch(tok.lower())
+            }
+        )
+        if bad:
+            return {
+                "error": (
+                    f"Edited payload contains non-owned addresses: {', '.join(bad[:3])} — "
+                    "the campaign's actions key on payload values, so only @pmygroup.com / "
+                    "@sdfc.dev addresses may ride a demo send."
+                )
+            }
     resp = requests.post(url.strip(), json=payload, timeout=20)
+
+    # For a flow-through send, hand back a deep link to the person the [1/2]
+    # just created/updated — that profile IS the verification surface. CIO
+    # may take a moment to materialize a brand-new person; two quick tries,
+    # then the UI falls back to "search the email in People".
+    person_link = None
+    if mode == "flow_through" and resp.status_code in (200, 202) and cio is not None:
+        import time as _time
+
+        for attempt in range(2):
+            try:
+                person = cio.customer_by_email(identity)
+                if person and person.get("cio_id"):
+                    person_link = person_url(person["cio_id"])
+                    break
+            except Exception:  # noqa: BLE001 — the link is best-effort, the send already happened
+                break
+            if attempt == 0:
+                _time.sleep(2)
+
     return {
         "target": target,
+        "mode": mode,
         "status_code": resp.status_code,
         "ok": resp.status_code in (200, 202),
-        "identity": SAMPLE_IDENTITY,
+        "identity": identity,
         "state": state,
+        "person_url": person_link,
         "payload": payload,
     }
 

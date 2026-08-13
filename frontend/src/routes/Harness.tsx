@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Navigate, useLocation } from 'react-router';
 import { oneOf, useUrlFilters } from '@/lib/urlState';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type HarnessRun, type HarnessRunSummary, type ValidationReport } from '@/lib/api';
@@ -9,9 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import SlugRegistry from '@/components/SlugRegistry';
-import TriggersPanel from '@/components/TriggersPanel';
 import CampaignDrilldown, {
   CAMPAIGN_TAB_KEYS,
   ValidationReportView,
@@ -23,16 +22,13 @@ export default function Harness() {
      "look at this failing run" is the whole point of a link here. A link that
      names only a run resolves its campaign from the runs feed and lands on
      that campaign's Test runs tab. */
-  const [url, setUrl] = useUrlFilters({ sel: '', ctab: '', run: '', slug: '', rtab: '' }, [
+  const [url, setUrl] = useUrlFilters({ sel: '', ctab: '', run: '', slug: '' }, [
     'sel',
     'ctab',
     'run',
-    'rtab',
   ]);
   const queryClient = useQueryClient();
-  /* Which list the page shows when no campaign is selected: the registered
-     campaigns or the warehouse triggers that feed them. */
-  const listTab = url.rtab === 'triggers' ? 'triggers' : 'campaigns';
+  const location = useLocation();
 
   const runsQuery = useQuery({
     queryKey: ['harness-runs'],
@@ -61,6 +57,15 @@ export default function Harness() {
 
   /* The slug awaiting run confirmation — the dialog is open while set. */
   const [confirmRun, setConfirmRun] = useState<string | null>(null);
+
+  /* Triggers moved to their own area — send old ?rtab=triggers links there,
+     keeping any trigger-drilldown params (tsel/ttab/tq/tstat) intact. */
+  const legacyParams = new URLSearchParams(location.search);
+  if (legacyParams.get('rtab') === 'triggers') {
+    legacyParams.delete('rtab');
+    const rest = legacyParams.toString();
+    return <Navigate to={`/triggers${rest ? `?${rest}` : ''}`} replace />;
+  }
 
   return (
     <div className="grid gap-6">
@@ -110,23 +115,8 @@ export default function Harness() {
         />
       ) : (
         <>
-          <Tabs
-            value={listTab}
-            onValueChange={(v) => setUrl({ rtab: v === 'triggers' ? 'triggers' : '' })}
-          >
-            <TabsList>
-              <TabsTrigger value="triggers">Triggers</TabsTrigger>
-              <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
-            </TabsList>
-          </Tabs>
-          {listTab === 'campaigns' ? (
-            <>
-              <SlugRegistry onSelect={(s) => setUrl({ sel: s, ctab: '', run: '' })} />
-              <FreeformValidate />
-            </>
-          ) : (
-            <TriggersPanel onSelect={(s) => setUrl({ sel: s, ctab: '', run: '', rtab: '' })} />
-          )}
+          <SlugRegistry onSelect={(s) => setUrl({ sel: s, ctab: '', run: '' })} />
+          <FreeformValidate />
         </>
       )}
     </div>

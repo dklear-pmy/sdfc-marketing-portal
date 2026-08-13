@@ -29,6 +29,10 @@ _VIEW = f"{GCP_PROJECT}.customerio_state.vw_campaign_affected_customers"
 _PREVIEW_VIEW = f"{GCP_PROJECT}.customerio_state.vw_campaign_would_fire"
 _HISTORY_TF = f"{GCP_PROJECT}.customerio_state.tf_campaign_would_fire_history"
 _REGISTRY = f"{GCP_PROJECT}.customerio_state.slug_registry"
+_KILL_TABLE = f"{GCP_PROJECT}.customerio_state.trigger_kill_switch"
+
+# The kill-switch row that stops EVERY trigger, not one.
+KILL_ALL_KEY = "all"
 
 # Triggers with a branch in the history table function. Extend together with
 # tf_campaign_would_fire_history.sql — a trigger absent here gets the live
@@ -159,7 +163,7 @@ TRIGGER_ENABLED = {
     "tb_signup_260715": False,  # switched off 2026-08-11 — hold until launch decision
     "welcome_tickets_single_game": False,  # switched off 2026-08-11; re-baseline before re-enabling
     "welcome_shopify_260715": False,  # draft SQL in the view; WHERE FALSE in the hub
-    "stm_welcome_tickets_260807": False,  # reserved for the general STM journey re-spec
+    "stm_welcome_tickets_260807": True,  # enabled 2026-08-13 (Dean); query still WHERE FALSE until the re-spec lands
     "stm_welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 60/61
     "stm_welcome_tickets_premium_260807": True,  # Premium Season Membership — CIO relay pair 68/69
 }
@@ -213,9 +217,34 @@ def triggers_overview() -> dict:
             .result()
         }
 
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        f_reg, f_cand, f_fires = ex.submit(registry), ex.submit(candidates), ex.submit(fires)
-        reg, cand, fire = f_reg.result(), f_cand.result(), f_fires.result()
+    def kills():
+        return {
+            r.trigger_key: r
+            for r in client()
+            .query(
+                f"""
+                SELECT trigger_key, killed, reason, updated_by, updated_at
+                FROM `{_KILL_TABLE}` WHERE killed
+                """
+            )
+            .result()
+        }
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        f_reg, f_cand, f_fires, f_kills = (
+            ex.submit(registry),
+            ex.submit(candidates),
+            ex.submit(fires),
+            ex.submit(kills),
+        )
+        reg, cand, fire, kill = f_reg.result(), f_cand.result(), f_fires.result(), f_kills.result()
+
+    def kill_info(row):
+        return {
+            "reason": row.reason,
+            "by": row.updated_by,
+            "at": row.updated_at.isoformat() if row.updated_at else None,
+        }
 
     by_key: dict[str, list[dict]] = {}
     for r in reg:
@@ -226,9 +255,12 @@ def triggers_overview() -> dict:
     for key in keys:
         entries = by_key.get(key, [])
         f = fire.get(key)
+        k = kill.get(key)
         rows.append(
             {
                 "key": key,
+                "killed": k is not None,
+                "kill": kill_info(k) if k is not None else None,
                 "label": next((e["trigger_label"] for e in entries if e["trigger_label"]), None),
                 "in_hub": key in TRIGGER_CAPS or key in TRIGGER_ENABLED,
                 "enabled": TRIGGER_ENABLED.get(key),
@@ -249,7 +281,68 @@ def triggers_overview() -> dict:
                 "last_fired_at": f.last_fired_at.isoformat() if f and f.last_fired_at else None,
             }
         )
-    return {"triggers": rows}
+    hub_kill = kill.get(KILL_ALL_KEY)
+    return {
+        "triggers": rows,
+        "hub_killed": kill_info(hub_kill) if hub_kill is not None else None,
+    }
+
+
+def set_trigger_kill(trigger_key: str, killed: bool, reason: str | None, actor: str) -> None:
+    """Flip the emergency kill switch for one trigger (or 'all').
+
+    OFF-ONLY by design on the hub side: the hub consults this table as
+    "AND NOT killed", so writing killed=TRUE stops sends but killed=FALSE
+    can never enable a trigger the code has disabled. MERGE keeps one row
+    per key; updated_by/updated_at are the audit trail.
+    """
+    client().query(
+        f"""
+        MERGE `{_KILL_TABLE}` t
+        USING (SELECT @key AS trigger_key) s
+        ON t.trigger_key = s.trigger_key
+        WHEN MATCHED THEN UPDATE SET
+          killed = @killed, reason = @reason,
+          updated_by = @actor, updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN INSERT (trigger_key, killed, reason, updated_by, updated_at)
+        VALUES (@key, @killed, @reason, @actor, CURRENT_TIMESTAMP())
+        """,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("key", "STRING", trigger_key),
+                bigquery.ScalarQueryParameter("killed", "BOOL", killed),
+                bigquery.ScalarQueryParameter("reason", "STRING", reason or None),
+                bigquery.ScalarQueryParameter("actor", "STRING", actor),
+            ]
+        ),
+    ).result()
+
+
+def set_trigger_label(trigger_key: str, label: str | None, actor: str) -> int:
+    """Rename a trigger's display label — cosmetic only, the key stays the id.
+
+    The label lives on the slug_registry row(s) carrying this trigger_key
+    (there is no standalone trigger table yet), so a trigger with no
+    registered campaign has nowhere to store one — callers 404 on 0 rows.
+    Empty/None clears the label and the UI falls back to the key.
+    """
+    job = client().query(
+        f"""
+        UPDATE `{_REGISTRY}`
+        SET trigger_label = @label,
+            updated_at = CURRENT_TIMESTAMP(), updated_by = @actor
+        WHERE trigger_key = @key
+        """,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("label", "STRING", label or None),
+                bigquery.ScalarQueryParameter("actor", "STRING", actor),
+                bigquery.ScalarQueryParameter("key", "STRING", trigger_key),
+            ]
+        ),
+    )
+    job.result()
+    return job.num_dml_affected_rows or 0
 
 
 def affected_page(

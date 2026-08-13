@@ -118,7 +118,7 @@ const parseList = (s: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
-function toBody(d: Draft) {
+export function toBody(d: Draft) {
   return {
     display_name: d.display_name.trim() || null,
     trigger_key: d.trigger_key.trim() || null,
@@ -411,18 +411,31 @@ export function SlugForm({
     },
   });
 
-  /* Fires one contract-shaped payload at the SAVED entry's webhook — seeds
-     the Customer.io composer's Trigger data sample so trigger.* references
-     validate. Uses the saved URL, not the draft: save first. The server
-     re-checks the prod campaign's live state and 409s unless draft/stopped;
-     force is the explicit override offered after that refusal. */
+  /* Fires one contract-shaped payload at the SAVED entry's webhook. Uses the
+     saved URL, not the draft: save first. The server decides the prod mode
+     from the [1/2] trigger's LIVE state: draft/stopped seeds the composer's
+     Trigger data sample; RUNNING executes the actions for real (flow-through
+     check) — the server then requires an owned recipient and verifies
+     nothing running listens on the prod event. force is the legacy override
+     offered after a refusal. */
   const sample = useMutation({
-    mutationFn: ({ target, force }: { target: 'test' | 'prod'; force?: boolean }) =>
+    mutationFn: ({
+      target,
+      force,
+      recipient,
+    }: {
+      target: 'test' | 'prod';
+      force?: boolean;
+      recipient?: string;
+    }) =>
       api.post<SampleResult>(
         `/api/slugs/${encodeURIComponent(existingSlug ?? draft.slug.trim())}/sample` +
-          `?target=${target}${force ? '&force=true' : ''}`
+          `?target=${target}${force ? '&force=true' : ''}` +
+          (recipient ? `&recipient=${encodeURIComponent(recipient)}` : '')
       ),
   });
+  /* Owned recipient for a flow-through prod send (RUNNING [1/2] trigger). */
+  const [prodRecipient, setProdRecipient] = useState('');
 
   /* The prod trigger's live state from the on-open precheck — dialog copy
      only; the server re-verifies at send time. */
@@ -708,16 +721,40 @@ export function SlugForm({
       <ConfirmDialog
         open={confirmProdSample}
         onOpenChange={setConfirmProdSample}
-        title="Send a sample payload to the PROD webhook?"
-        description={
-          prodState && ['draft', 'stopped', 'paused'].includes(prodState)
-            ? `The prod campaign is currently ${prodState} — Customer.io stores the payload as Trigger data and runs nothing. The server re-checks the live state before sending.`
-            : prodState
-              ? `The prod campaign is currently ${prodState.toUpperCase()} — the sample identity (scenario-000@qa.sdfc.dev) would enter the live workflow, so the server will refuse this send unless forced.`
-              : 'The prod campaign state could not be read — the server checks it live and only sends while the campaign is draft or stopped.'
+        destructive={prodState === 'running'}
+        title={
+          prodState === 'running'
+            ? 'Send a flow-through sample to the PROD webhook?'
+            : 'Send a sample payload to the PROD webhook?'
         }
-        confirmLabel="Send sample"
-        onConfirm={() => sample.mutate({ target: 'prod' })}
+        description={
+          prodState === 'running' ? (
+            <span className="grid gap-3">
+              <span>
+                The prod [1/2] trigger is RUNNING: this send executes Create or Update Person and
+                fires the prod event for the recipient below — the values land on that person in the
+                production workspace. The server verifies first that nothing running listens on the
+                prod event, so with the journey off it stops there.
+              </span>
+              <Input
+                placeholder="Owned recipient — @pmygroup.com or @sdfc.dev"
+                value={prodRecipient}
+                onChange={(e) => setProdRecipient(e.target.value)}
+              />
+              <span>Never a fan address — the server refuses anything not on an owned domain.</span>
+            </span>
+          ) : prodState && ['draft', 'stopped', 'paused'].includes(prodState) ? (
+            `The prod campaign is currently ${prodState} — Customer.io stores the payload as Trigger data and runs nothing. The server re-checks the live state before sending.`
+          ) : prodState ? (
+            `The prod campaign is currently ${prodState.toUpperCase()} — the sample identity (scenario-000@qa.sdfc.dev) would enter the live workflow, so the server will refuse this send unless forced.`
+          ) : (
+            'The prod campaign state could not be read — the server checks it live and only sends while the campaign is draft or stopped.'
+          )
+        }
+        confirmLabel={prodState === 'running' ? 'Send flow-through sample' : 'Send sample'}
+        onConfirm={() =>
+          sample.mutate({ target: 'prod', recipient: prodRecipient.trim() || undefined })
+        }
       />
 
       {sample.isError && (
@@ -741,11 +778,37 @@ export function SlugForm({
       {sample.isSuccess && (
         <Alert>
           <AlertTitle>
-            Sample delivered to the {sample.data.target} webhook (HTTP {sample.data.status_code})
+            {sample.data.mode === 'flow_through'
+              ? `Flow-through sample delivered to the prod webhook (HTTP ${sample.data.status_code})`
+              : `Sample delivered to the ${sample.data.target} webhook (HTTP ${sample.data.status_code})`}
           </AlertTitle>
           <AlertDescription>
-            Re-open the campaign's composer and pick the newest sample — trigger.* references now
-            validate against the contract payload for {sample.data.identity}.
+            {sample.data.mode === 'flow_through' ? (
+              <>
+                Create or Update Person ran and the prod event fired for {sample.data.identity} —
+                nothing running was listening, so it stops there.{' '}
+                {sample.data.person_url ? (
+                  <a
+                    href={sample.data.person_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2"
+                  >
+                    Open the person in Customer.io ↗
+                  </a>
+                ) : (
+                  <>
+                    Search {sample.data.identity} under People in Customer.io to inspect the values
+                    that came through.
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                Re-open the campaign's composer and pick the newest sample — trigger.* references
+                now validate against the contract payload for {sample.data.identity}.
+              </>
+            )}
           </AlertDescription>
         </Alert>
       )}

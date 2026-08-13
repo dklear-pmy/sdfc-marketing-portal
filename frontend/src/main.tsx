@@ -12,6 +12,7 @@ import {
 import AppLayout from '@/routes/AppLayout';
 import Login from '@/routes/Login';
 import Harness from '@/routes/Harness';
+import Triggers from '@/routes/Triggers';
 import Fans from '@/routes/Fans';
 import FanLedger from '@/routes/FanLedger';
 import Tripwires from '@/routes/Tripwires';
@@ -43,6 +44,14 @@ const router = createBrowserRouter([
         element: (
           <RequireSection section="marketing">
             <Harness />
+          </RequireSection>
+        ),
+      },
+      {
+        path: 'triggers',
+        element: (
+          <RequireSection section="marketing">
+            <Triggers />
           </RequireSection>
         ),
       },

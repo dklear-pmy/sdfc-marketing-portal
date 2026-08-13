@@ -53,3 +53,5 @@ jobs:
       - run: python tests/test_access_model.py
       # Shadow-run guards: sink-only rewrite, SHADOW- identity keys, refusal paths.
       - run: python tests/test_shadow_guards.py
+      # Prod sample-send guards: owned-recipient, event-listener and fail-closed refusals.
+      - run: python tests/test_sample_send.py

@@ -1,4 +1,4 @@
-/* Triggers area of the Campaign Tester: the warehouse triggers that actually
+/* Trigger Manager (its own nav area): the warehouse triggers that actually
    send the webhooks. Each row is a cio-trigger-hub trigger — a BigQuery
    selection that finds matching customers and POSTs one webhook per person
    into its campaign's [1/2] relay. Joined against the slug registry so a
@@ -14,9 +14,12 @@
    Customers (live next-run selection + trailing-90-day history). */
 
 import { Fragment, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { api, type TriggerRow, type WouldFirePage } from '@/lib/api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, type TriggerKillInfo, type TriggerRow, type WouldFirePage } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { useUrlFilters } from '@/lib/urlState';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import SampleSender from '@/components/SampleSender';
 import { formatPacific, prettyPayload, relativeFrom } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -40,11 +43,38 @@ const HISTORY_DAYS = 90;
 
 function statusBadge(t: TriggerRow) {
   if (!t.in_hub) return <Badge variant="destructive">Not in hub</Badge>;
+  if (t.killed) return <Badge variant="destructive">Emergency off</Badge>;
   return t.enabled ? (
     <Badge variant="default">Enabled</Badge>
   ) : (
     <Badge variant="secondary">Disabled</Badge>
   );
+}
+
+interface TriggersResponse {
+  triggers: TriggerRow[];
+  hub_killed: TriggerKillInfo | null;
+}
+
+/* Shared kill-switch mutation — POST /api/triggers/{key}/kill. Killing is
+   off-only on the hub side, so it can never send; lifting re-allows sends
+   and the API restricts it to admins. */
+function useKillMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, killed, reason }: { key: string; killed: boolean; reason?: string }) =>
+      api.post(`/api/triggers/${encodeURIComponent(key)}/kill`, { killed, reason }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['triggers'] }),
+  });
+}
+
+function killDetail(info: TriggerKillInfo | null) {
+  if (!info) return null;
+  const parts = [];
+  if (info.reason) parts.push(`“${info.reason}”`);
+  if (info.by) parts.push(`by ${info.by}`);
+  if (info.at) parts.push(relativeFrom(info.at));
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 function BulletBlock({ title, lines, empty }: { title: string; lines: string[]; empty: string }) {
@@ -306,6 +336,26 @@ function TriggerDrilldown({
   onBack: () => void;
   onCampaign: (slug: string) => void;
 }) {
+  const { role } = useAuth();
+  const canEdit = role === 'operator' || role === 'admin';
+  const isAdmin = role === 'admin';
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [nameInput, setNameInput] = useState(t.label ?? '');
+  const rename = useMutation({
+    mutationFn: (label: string) =>
+      api.post(`/api/triggers/${encodeURIComponent(t.key)}/label`, { label }),
+    onSuccess: () => {
+      setEditing(false);
+      void queryClient.invalidateQueries({ queryKey: ['triggers'] });
+    },
+  });
+
+  const kill = useKillMutation();
+  const [confirmKill, setConfirmKill] = useState(false);
+  const [confirmLift, setConfirmLift] = useState(false);
+  const [killReason, setKillReason] = useState('');
+
   return (
     <div className="grid gap-6">
       <div>
@@ -313,12 +363,146 @@ function TriggerDrilldown({
           ← Back to triggers
         </Button>
       </div>
+
+      <ConfirmDialog
+        open={confirmKill}
+        onOpenChange={setConfirmKill}
+        destructive
+        title={`Emergency-disable ${t.label ?? t.key}?`}
+        confirmLabel="Emergency disable"
+        description={
+          <span className="grid gap-3">
+            <span>
+              The hub will skip this trigger on every run until the switch is deliberately lifted.
+              This only stops sends — it cannot send anything.
+            </span>
+            <Input
+              placeholder="Reason (optional, shown in the audit trail)"
+              maxLength={300}
+              value={killReason}
+              onChange={(e) => setKillReason(e.target.value)}
+            />
+          </span>
+        }
+        onConfirm={() => kill.mutate({ key: t.key, killed: true, reason: killReason.trim() })}
+      />
+      <ConfirmDialog
+        open={confirmLift}
+        onOpenChange={setConfirmLift}
+        destructive
+        title={`Lift the emergency disable on ${t.label ?? t.key}?`}
+        confirmLabel="Lift emergency disable"
+        description={
+          `Lifting re-allows sends for this trigger. Its selection currently matches ` +
+          `${t.candidates.toLocaleString()} customer${t.candidates === 1 ? '' : 's'} — that is ` +
+          `who the next armed run would send to.`
+        }
+        onConfirm={() => kill.mutate({ key: t.key, killed: false })}
+      />
+
+      {t.killed && (
+        <Alert variant="destructive">
+          <AlertTitle>Emergency-disabled — the hub skips this trigger on every run</AlertTitle>
+          <AlertDescription>
+            <span className="grid gap-2">
+              <span>{killDetail(t.kill) ?? 'No reason recorded.'}</span>
+              {isAdmin && (
+                <span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={kill.isPending}
+                    onClick={() => setConfirmLift(true)}
+                  >
+                    Lift emergency disable
+                  </Button>
+                </span>
+              )}
+              {!isAdmin && <span>Lifting an emergency disable is admin-only.</span>}
+            </span>
+          </AlertDescription>
+        </Alert>
+      )}
+      {kill.isError && (
+        <Alert variant="destructive">
+          <AlertTitle>Kill-switch update failed</AlertTitle>
+          <AlertDescription>{(kill.error as Error).message}</AlertDescription>
+        </Alert>
+      )}
+
       <Card>
         <CardHeader>
-          <div className="flex flex-wrap items-center gap-3">
-            <CardTitle className="text-xl">{t.label ?? t.key}</CardTitle>
-            {statusBadge(t)}
-          </div>
+          {editing ? (
+            <form
+              className="flex flex-wrap items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                rename.mutate(nameInput.trim());
+              }}
+            >
+              <Input
+                className="w-80"
+                autoFocus
+                maxLength={80}
+                placeholder={t.key}
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+              />
+              <Button type="submit" size="sm" disabled={rename.isPending}>
+                {rename.isPending ? 'Saving…' : 'Save'}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setEditing(false);
+                  setNameInput(t.label ?? '');
+                }}
+              >
+                Cancel
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Display name only — the trigger key stays the stable id. Blank falls back to the
+                key.
+              </span>
+            </form>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3">
+              <CardTitle className="text-xl">{t.label ?? t.key}</CardTitle>
+              {statusBadge(t)}
+              {canEdit && t.campaigns.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  onClick={() => {
+                    setNameInput(t.label ?? '');
+                    setEditing(true);
+                  }}
+                >
+                  Rename
+                </Button>
+              )}
+              {canEdit && !t.killed && t.in_hub && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="ml-auto"
+                  disabled={kill.isPending}
+                  onClick={() => {
+                    setKillReason('');
+                    setConfirmKill(true);
+                  }}
+                >
+                  Emergency disable
+                </Button>
+              )}
+            </div>
+          )}
+          {rename.isError && (
+            <p className="text-xs text-destructive">{(rename.error as Error).message}</p>
+          )}
           {t.label && <code className="text-xs text-muted-foreground">{t.key}</code>}
         </CardHeader>
         <CardContent>
@@ -404,22 +588,27 @@ function TriggerDrilldown({
 
       {tab === 'overview' &&
         (t.in_hub ? (
-          <Card>
-            <CardContent className="pt-6">
-              <div className="grid gap-6">
-                <BulletBlock
-                  title="Selection logic"
-                  lines={t.logic ?? []}
-                  empty="No logic summary recorded for this trigger yet."
-                />
-                <BulletBlock
-                  title="Webhook payload"
-                  lines={t.payload ?? []}
-                  empty="No payload contract recorded for this trigger yet."
-                />
-              </div>
-            </CardContent>
-          </Card>
+          <>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="grid gap-6">
+                  <BulletBlock
+                    title="Selection logic"
+                    lines={t.logic ?? []}
+                    empty="No logic summary recorded for this trigger yet."
+                  />
+                  <BulletBlock
+                    title="Webhook payload"
+                    lines={t.payload ?? []}
+                    empty="No payload contract recorded for this trigger yet."
+                  />
+                </div>
+              </CardContent>
+            </Card>
+            {t.campaigns.map((c) => (
+              <SampleSender key={c.slug} slug={c.slug} />
+            ))}
+          </>
         ) : (
           <Alert variant="destructive">
             <AlertTitle>This key does not exist in the hub</AlertTitle>
@@ -447,13 +636,26 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
   const filter = tstat === 'disabled' ? 'disabled' : 'enabled';
   const tab: TriggerTab = ttab === 'preview' ? 'preview' : 'overview';
 
+  const { role } = useAuth();
+  const canEdit = role === 'operator' || role === 'admin';
+  const isAdmin = role === 'admin';
+
   const list = useQuery({
     queryKey: ['triggers'],
-    queryFn: () => api.get<{ triggers: TriggerRow[] }>('/api/triggers'),
+    queryFn: () => api.get<TriggersResponse>('/api/triggers'),
     staleTime: 60_000,
   });
 
   const all = list.data?.triggers ?? [];
+  const hubKilled = list.data?.hub_killed ?? null;
+
+  const kill = useKillMutation();
+  const [confirmStopAll, setConfirmStopAll] = useState(false);
+  const [confirmLiftAll, setConfirmLiftAll] = useState(false);
+  const [stopReason, setStopReason] = useState('');
+  /* Per-row emergency stop — the trigger awaiting confirmation, if any. */
+  const [rowKill, setRowKill] = useState<TriggerRow | null>(null);
+  const [rowReason, setRowReason] = useState('');
 
   if (tsel) {
     const t = all.find((x) => x.key === tsel);
@@ -522,14 +724,115 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
         {list.isPending && <Skeleton className="h-48" />}
         {list.data && (
           <>
+            <ConfirmDialog
+              open={confirmStopAll}
+              onOpenChange={setConfirmStopAll}
+              destructive
+              title="Emergency-stop ALL sends?"
+              confirmLabel="Stop all sends"
+              description={
+                <span className="grid gap-3">
+                  <span>
+                    The hub will skip every trigger on every run until the switch is deliberately
+                    lifted. This only stops sends — it cannot send anything.
+                  </span>
+                  <Input
+                    placeholder="Reason (optional, shown in the audit trail)"
+                    maxLength={300}
+                    value={stopReason}
+                    onChange={(e) => setStopReason(e.target.value)}
+                  />
+                </span>
+              }
+              onConfirm={() => kill.mutate({ key: 'all', killed: true, reason: stopReason.trim() })}
+            />
+            <ConfirmDialog
+              open={confirmLiftAll}
+              onOpenChange={setConfirmLiftAll}
+              destructive
+              title="Lift the hub-wide emergency stop?"
+              confirmLabel="Lift emergency stop"
+              description="Lifting re-allows sends for every enabled trigger that isn't individually emergency-disabled."
+              onConfirm={() => kill.mutate({ key: 'all', killed: false })}
+            />
+            <ConfirmDialog
+              open={!!rowKill}
+              onOpenChange={(o) => {
+                if (!o) setRowKill(null);
+              }}
+              destructive
+              title={`Emergency-disable ${rowKill?.label ?? rowKill?.key ?? ''}?`}
+              confirmLabel="Emergency disable"
+              description={
+                <span className="grid gap-3">
+                  <span>
+                    The hub will skip this trigger on every run until the switch is deliberately
+                    lifted. This only stops sends — it cannot send anything.
+                  </span>
+                  <Input
+                    placeholder="Reason (optional, shown in the audit trail)"
+                    maxLength={300}
+                    value={rowReason}
+                    onChange={(e) => setRowReason(e.target.value)}
+                  />
+                </span>
+              }
+              onConfirm={() => {
+                if (rowKill)
+                  kill.mutate({ key: rowKill.key, killed: true, reason: rowReason.trim() });
+              }}
+            />
+            {hubKilled && (
+              <Alert variant="destructive">
+                <AlertTitle>All sends are emergency-stopped</AlertTitle>
+                <AlertDescription>
+                  <span className="grid gap-2">
+                    <span>
+                      The hub skips every trigger on every run.{' '}
+                      {killDetail(hubKilled) ?? 'No reason recorded.'}
+                    </span>
+                    {isAdmin ? (
+                      <span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={kill.isPending}
+                          onClick={() => setConfirmLiftAll(true)}
+                        >
+                          Lift emergency stop
+                        </Button>
+                      </span>
+                    ) : (
+                      <span>Lifting an emergency stop is admin-only.</span>
+                    )}
+                  </span>
+                </AlertDescription>
+              </Alert>
+            )}
+            {kill.isError && (
+              <Alert variant="destructive">
+                <AlertTitle>Kill-switch update failed</AlertTitle>
+                <AlertDescription>{(kill.error as Error).message}</AlertDescription>
+              </Alert>
+            )}
             <div className="flex flex-wrap items-center gap-3">
               <Tabs
                 value={filter}
                 onValueChange={(v) => setUrl({ tstat: v === 'disabled' ? 'disabled' : '' })}
               >
                 <TabsList>
-                  <TabsTrigger value="enabled">Enabled ({enabled.length})</TabsTrigger>
-                  <TabsTrigger value="disabled">Disabled ({disabled.length})</TabsTrigger>
+                  <TabsTrigger value="enabled">
+                    Enabled
+                    <Badge variant="secondary" className="ml-1.5 px-1.5">
+                      {enabled.length}
+                    </Badge>
+                  </TabsTrigger>
+                  <TabsTrigger value="disabled">
+                    Disabled
+                    <Badge variant="secondary" className="ml-1.5 px-1.5">
+                      {disabled.length}
+                    </Badge>
+                  </TabsTrigger>
                 </TabsList>
               </Tabs>
               <Input
@@ -538,6 +841,20 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
                 value={tq}
                 onChange={(e) => setUrl({ tq: e.target.value })}
               />
+              {canEdit && !hubKilled && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="ml-auto"
+                  disabled={kill.isPending}
+                  onClick={() => {
+                    setStopReason('');
+                    setConfirmStopAll(true);
+                  }}
+                >
+                  Emergency stop all sends
+                </Button>
+              )}
             </div>
             <div className="overflow-x-auto rounded-md border">
               <Table>
@@ -549,12 +866,16 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
                     <TableHead className="text-right">Candidates</TableHead>
                     <TableHead className="text-right">Fire log</TableHead>
                     <TableHead>Last fired</TableHead>
+                    {canEdit && <TableHead className="w-32" />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {rows.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="h-16 text-center text-muted-foreground">
+                      <TableCell
+                        colSpan={canEdit ? 7 : 6}
+                        className="h-16 text-center text-muted-foreground"
+                      >
                         {q ? 'Nothing matches this search.' : `No ${filter} triggers.`}
                       </TableCell>
                     </TableRow>
@@ -615,6 +936,25 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
                           <span className="text-muted-foreground">—</span>
                         )}
                       </TableCell>
+                      {canEdit && (
+                        <TableCell className="align-top">
+                          {t.in_hub && !t.killed && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              className="text-xs"
+                              disabled={kill.isPending}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRowReason('');
+                                setRowKill(t);
+                              }}
+                            >
+                              Emergency stop
+                            </Button>
+                          )}
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>

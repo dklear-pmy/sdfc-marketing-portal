@@ -120,11 +120,17 @@ export interface SlugEntry {
    data sample. */
 export interface SampleResult {
   target: 'test' | 'prod';
+  /* composer_seed = trigger draft, CIO stores the payload and runs nothing;
+     flow_through = trigger running, Create/Update Person + Send Event
+     executed for the owned recipient (journey verified off) */
+  mode: 'composer_seed' | 'flow_through';
   status_code: number;
   ok: boolean;
   identity: string;
   /* the prod campaign's live state at send time (prod target only) */
   state: string | null;
+  /* deep link to the person a flow-through send created/updated (best-effort) */
+  person_url: string | null;
   payload: Record<string, unknown>;
 }
 
@@ -404,9 +410,19 @@ export interface WouldFirePage {
 /* One warehouse trigger on the Campaign Tester's Triggers tab: the hub
    mirror (enabled/cap), the registry campaigns it feeds, a live candidate
    count, and its fire-log stats. */
+/* Audit info for an active emergency kill */
+export interface TriggerKillInfo {
+  reason: string | null;
+  by: string | null;
+  at: string | null;
+}
+
 export interface TriggerRow {
   key: string;
   label: string | null;
+  /* emergency kill switch — hub skips this trigger on every run while set */
+  killed: boolean;
+  kill: TriggerKillInfo | null;
   /* false = the registry names a trigger the hub has never heard of —
      it will never fire */
   in_hub: boolean;
