@@ -194,7 +194,7 @@ export default function CampaignDrilldown({
 
       <div className="grid gap-1.5">
         <Tabs value={mode} onValueChange={(v) => setModeUrl({ cmode: v })}>
-          <TabsList className="h-11">
+          <TabsList>
             <TabsTrigger value="test" className="px-5 text-base">
               Testing Mode
             </TabsTrigger>

@@ -25,6 +25,10 @@
   --color-sdfc-chrome-shine: #e8ecf0;
   --color-sdfc-orange: #ff6b35;
   --color-sdfc-orange-light: #ff8f66;
+  /* Medium carries the brand orange onto LIGHT backgrounds, where the
+     primary is too pale to read as text (active tab labels). Same value as
+     the talent platform's sdfc.orange.medium — keep them in step. */
+  --color-sdfc-orange-medium: #e85a28;
   --color-sdfc-orange-dark: #cc4a1a;
   --color-sdfc-green: #10b981;
   --color-sdfc-green-light: #34d399;

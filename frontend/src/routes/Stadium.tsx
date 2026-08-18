@@ -535,7 +535,12 @@ export default function Stadium() {
                     onValueChange={(v) => setMetric(v as Metric)}
                     className="pointer-events-auto max-w-full"
                   >
-                    <TabsList className="max-w-full rounded-lg bg-sdfc-panel shadow-lg group-data-horizontal/tabs:h-8 md:group-data-horizontal/tabs:h-9">
+                    {/* Segmented, not underlined: this floats over the map,
+                        where there is no edge for a tab rule to sit on. */}
+                    <TabsList
+                      variant="pill"
+                      className="max-w-full rounded-lg bg-sdfc-panel shadow-lg group-data-horizontal/tabs:h-8 md:group-data-horizontal/tabs:h-9"
+                    >
                       {(Object.keys(METRIC_LABEL) as Metric[]).map((m) => (
                         <TabsTrigger
                           key={m}
