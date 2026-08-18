@@ -67,7 +67,9 @@ export default function SampleSender({ slug }: { slug: string }) {
         test_webhook_url: shownTestUrl.trim() || null,
         prod_webhook_url: shownProdUrl.trim() || null,
       };
-      return api.post(`/api/slugs/${encodeURIComponent(slug)}`, body);
+      // PUT, not POST — the registry's update route (same one SlugRegistry's
+      // form uses), so the server's full validation applies.
+      return api.put(`/api/slugs/${encodeURIComponent(slug)}`, body);
     },
     onSuccess: () => {
       setTestUrl(null);
