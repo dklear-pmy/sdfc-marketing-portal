@@ -47,6 +47,7 @@ HISTORY_TRIGGERS = {
     "welcome_shopify_260715",
     "stm_welcome_tickets_supporters_260807",
     "stm_welcome_tickets_premium_260807",
+    "stm_welcome_tickets_260807",
 }
 
 # Why a trigger has no history, in the reader's terms. Absent key => the
@@ -60,11 +61,6 @@ NO_HISTORY_REASON = {
         "there is no honest way to reconstruct who it would have caught. Only the "
         "live next-run view is available."
     ),
-    "stm_welcome_tickets_260807": (
-        "This trigger is still the placeholder — its hub query deliberately "
-        "selects nothing until the general STM journey is re-specced, so there is "
-        "no selection to look back on."
-    ),
 }
 
 # Mirror of each trigger's max_per_run circuit breaker in the hub
@@ -76,7 +72,7 @@ TRIGGER_CAPS = {
     "tb_signup_260715": 2000,
     "welcome_tickets_single_game": 500,
     "welcome_shopify_260715": 200,
-    "stm_welcome_tickets_260807": 25,
+    "stm_welcome_tickets_260807": 100,
     "stm_welcome_tickets_supporters_260807": 25,
     "stm_welcome_tickets_premium_260807": 25,
 }
@@ -113,6 +109,7 @@ TRIGGER_LOGIC = {
         "UPPER(name) LIKE '%SUPP%'",
         "record_type_id = Ticket Sales (012UR000001cuNBYAY)",
         "group_c = 'General Season Tickets'",
+        "Excludes initial-payment deposits and group sales — the welcome belongs to the deal that completes the purchase",
         "No-email rows held, not fired, until an email lands in SF or the window ages out",
         "Grain: one fire per opportunity_id",
     ],
@@ -123,13 +120,21 @@ TRIGGER_LOGIC = {
         "record_type_id = Premium Sales (012UR000001fAEAYA2)",
         "koreps2_product_c = 'Premium Season Membership' — the spec's 'Premium Membership' group has no Salesforce analog (approved mapping)",
         "No deal-name marker: Premium Sales names are auto-generated, a marker adds nothing",
+        "Excludes initial-payment deposits and group sales — the welcome belongs to the deal that completes the purchase",
         "No-email rows held, not fired, until an email lands in SF or the window ages out",
         "Grain: one fire per opportunity_id",
     ],
     "stm_welcome_tickets_260807": [
-        "WHERE FALSE — shadow placeholder, selects nothing",
-        "General STM closed/won still lives on the legacy cio_welcome_trigger poller (CIO pair #37/#38, unscheduled since Jul 6)",
-        "Reserved until the client re-spec; cutover ports the poller SQL (opportunity grain)",
+        "Source: Salesforce opportunity, joined to account (owner rep) and contact (email fallback)",
+        "is_closed = TRUE AND is_won = TRUE",
+        "close_date ≥ CURRENT_DATE − 1 day (tightest 24h window on a DATE column)",
+        "record_type_id = Ticket Sales (012UR000001cuNBYAY)",
+        "koreps2_product_c = 'General Season Membership'",
+        "group_c = 'General Season Tickets'",
+        "UPPER(name) NOT LIKE '%SUPP%' — the COMPLEMENT of the supporters trigger, so the two split that family and never both fire",
+        "Excludes initial-payment deposits and group sales — the welcome belongs to the deal that completes the purchase",
+        "No-email rows held, not fired, until an email lands in SF or the window ages out",
+        "Grain: one fire per opportunity_id",
     ],
 }
 
@@ -172,12 +177,7 @@ TRIGGER_PAYLOAD = {
     ],
     "stm_welcome_tickets_supporters_260807": _SF_MEMBERSHIP_PAYLOAD,
     "stm_welcome_tickets_premium_260807": _SF_MEMBERSHIP_PAYLOAD,
-    "stm_welcome_tickets_260807": [
-        "dedup_key — the sf_account_id",
-        "email / first_name / last_name",
-        "stm_product / stm_amount / close_date",
-        "Drafted only — WHERE FALSE means nothing ever POSTs",
-    ],
+    "stm_welcome_tickets_260807": _SF_MEMBERSHIP_PAYLOAD,
 }
 
 # Mirror of each trigger's `enabled` flag in triggers.py (same drift

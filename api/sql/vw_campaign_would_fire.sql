@@ -141,10 +141,15 @@ membership_cand AS (
   -- User record; no-email hold; per-opportunity dedup.
   SELECT
     CASE
-      WHEN o.record_type_id = '012UR000001cuNBYAY'
-        THEN 'stm_welcome_tickets_supporters_260807'
+      -- ORDER MATTERS: supporters and general share the Ticket Sales record
+      -- type and split on the SUPP deal-name marker, so premium (its own
+      -- record type) resolves first, then the marker, then general as the
+      -- remainder. The three are mutually exclusive by construction.
       WHEN o.record_type_id = '012UR000001fAEAYA2'
         THEN 'stm_welcome_tickets_premium_260807'
+      WHEN UPPER(o.name) LIKE '%SUPP%'
+        THEN 'stm_welcome_tickets_supporters_260807'
+      ELSE 'stm_welcome_tickets_260807'
     END                                                         AS matched_trigger,
     o.id                                                        AS dedup_key,
     LOWER(TRIM(NULLIF(COALESCE(NULLIF(a.person_email, 'None'),
@@ -224,7 +229,18 @@ membership_cand AS (
       OR
       (o.record_type_id = '012UR000001fAEAYA2'
        AND o.koreps2_product_c = 'Premium Season Membership')
+      OR
+      -- general (2026-08-18 re-spec): the SAME family as supporters, without
+      -- the marker — so the two partition that family completely.
+      (UPPER(o.name) NOT LIKE '%SUPP%'
+       AND o.record_type_id = '012UR000001cuNBYAY'
+       AND o.koreps2_product_c = 'General Season Membership'
+       AND o.group_c = 'General Season Tickets')
     )
+    -- Welcome fires on the deal completing the purchase, never the deposit
+    -- before it or a group-sales booking (Kevin 2026-06-09).
+    AND LOWER(o.name) NOT LIKE '%initial payment%'
+    AND LOWER(o.name) NOT LIKE '%group sales%'
     AND o.close_date >= DATE_SUB(CURRENT_DATE('UTC'), INTERVAL 1 DAY)
   -- No-email accounts are held, not fired (mirrors the hub guard): a fire
   -- would burn the exactly-once key on an event Send Event can never
@@ -306,13 +322,33 @@ WHERE s.dedup_key IS NULL
 
 UNION ALL
 
--- stm_welcome_tickets_260807: shadow placeholder; live logic still on the
--- legacy cio_welcome_trigger poller until the webhook-path cutover.
+-- stm_welcome_tickets_260807: STM-New-Member-Welcome-Journey-260807. The
+-- GENERAL membership journey — re-specced 2026-08-18 as the complement of
+-- the supporters and premium triggers (the legacy cio_welcome_trigger
+-- poller's population included both, which would have double-enrolled).
 SELECT
   'stm_welcome_tickets_260807',
-  CAST(NULL AS STRING), CAST(NULL AS STRING), CAST(NULL AS STRING),
-  CAST(NULL AS STRING), CAST(NULL AS TIMESTAMP), CAST(NULL AS STRING)
-FROM (SELECT 1) WHERE FALSE
+  cand.dedup_key,
+  cand.email,
+  cand.first_name,
+  cand.last_name,
+  cand.event_at,
+  TO_JSON_STRING(STRUCT(
+    cand.dedup_key, cand.email, cand.first_name, cand.last_name,
+    cand.account_name, cand.account_id, cand.opportunity_id,
+    cand.opportunity_name, cand.stage_name, cand.is_closed, cand.is_won,
+    cand.product, cand.amount, cand.seat_block, cand.number_of_seats,
+    cand.ticket_price, cand.close_date, cand.rep_name, cand.rep_email,
+    cand.rep_phone, cand.account_owner, cand.ticketing_event_date,
+    cand.ticketing_event_name
+  ))
+FROM membership_cand cand
+LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
+  ON s.trigger = 'stm_welcome_tickets_260807'
+ AND s.dedup_key = cand.dedup_key
+ AND s.status IN ('sent', 'suppressed', 'baseline')
+WHERE cand.matched_trigger = 'stm_welcome_tickets_260807'
+  AND s.dedup_key IS NULL
 
 
 UNION ALL

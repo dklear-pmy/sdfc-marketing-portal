@@ -16,14 +16,14 @@
 -- days ago" is reconstructable from the event's own time.
 --   tb_signup_260715      — event = the TB form-entry activity (activity_ts).
 --   welcome_shopify_260715 — event = the first paid Shopify order (order_at).
---   supporters/premium 260807 — event = the opportunity close date.
+--   the three 260807 STM triggers — event = the opportunity close date
+--     (supporters, premium, and general as of 2026-08-18).
 -- welcome_tickets_single_game is deliberately ABSENT: it selects on current
 -- fan state (first purchase, zero attendance, no season plan) out of
 -- fan_attributes_cio_sync, which retains no history — the live view even
 -- emits NULL for its event_at. Reconstructing it would mean inventing a
 -- spec for what the state WAS on a past day; affected.py explains that in
--- the UI rather than guessing here. stm_welcome_tickets_260807 is likewise
--- absent — its hub query is still the WHERE FALSE placeholder.
+-- the UI rather than guessing here.
 
 CREATE OR REPLACE TABLE FUNCTION
   `sdfc-udp-dev.customerio_state.tf_campaign_would_fire_history`(history_days INT64)
@@ -142,10 +142,11 @@ shopify_cand AS (
     AND o.order_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL history_days * 24 HOUR)
 ),
 membership_cand AS (
-  -- MIRROR of _sf_membership_welcome_query in triggers.py: both SF
+  -- MIRROR of _sf_membership_welcome_query in triggers.py: all three SF
   -- membership triggers share one query implementation in the hub, so they
-  -- share one CTE here; matched_trigger discriminates (record types are
-  -- mutually exclusive, an opp can never match both).
+  -- share one CTE here; matched_trigger discriminates. The three partition
+  -- the population — premium by record type, supporters and general by the
+  -- SUPP marker within one family — so an opp can never match two.
   --   stm_welcome_tickets_supporters_260807 (spec 2026-08-07): SUPP marker +
   --     Ticket Sales record type + General Season Tickets group.
   --   stm_welcome_tickets_premium_260807 (spec 2026-08-09): Premium Sales
@@ -154,10 +155,15 @@ membership_cand AS (
   -- OWNER's User record; no-email hold; per-opportunity dedup.
   SELECT
     CASE
-      WHEN o.record_type_id = '012UR000001cuNBYAY'
-        THEN 'stm_welcome_tickets_supporters_260807'
+      -- ORDER MATTERS: supporters and general share the Ticket Sales record
+      -- type and split on the SUPP deal-name marker, so premium (its own
+      -- record type) resolves first, then the marker, then general as the
+      -- remainder. The three are mutually exclusive by construction.
       WHEN o.record_type_id = '012UR000001fAEAYA2'
         THEN 'stm_welcome_tickets_premium_260807'
+      WHEN UPPER(o.name) LIKE '%SUPP%'
+        THEN 'stm_welcome_tickets_supporters_260807'
+      ELSE 'stm_welcome_tickets_260807'
     END                                                         AS matched_trigger,
     o.id                                                        AS dedup_key,
     LOWER(TRIM(NULLIF(COALESCE(NULLIF(a.person_email, 'None'),
@@ -237,7 +243,18 @@ membership_cand AS (
       OR
       (o.record_type_id = '012UR000001fAEAYA2'
        AND o.koreps2_product_c = 'Premium Season Membership')
+      OR
+      -- general (2026-08-18 re-spec): the SAME family as supporters, without
+      -- the marker — so the two partition that family completely.
+      (UPPER(o.name) NOT LIKE '%SUPP%'
+       AND o.record_type_id = '012UR000001cuNBYAY'
+       AND o.koreps2_product_c = 'General Season Membership'
+       AND o.group_c = 'General Season Tickets')
     )
+    -- Welcome fires on the deal completing the purchase, never the deposit
+    -- before it or a group-sales booking (Kevin 2026-06-09).
+    AND LOWER(o.name) NOT LIKE '%initial payment%'
+    AND LOWER(o.name) NOT LIKE '%group sales%'
     AND o.close_date >= DATE_SUB(CURRENT_DATE('UTC'), INTERVAL history_days DAY)
   -- No-email accounts are held, not fired (mirrors the hub guard): a fire
   -- would burn the exactly-once key on an event Send Event can never
