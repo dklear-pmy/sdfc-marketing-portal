@@ -184,11 +184,14 @@ function TriggerAffected({ t }: { t: TriggerRow }) {
         {list.isPending && <Skeleton className="h-40" />}
         {win === 'history' && page?.history_available === false && (
           <Alert>
-            <AlertTitle>No history view for this trigger yet</AlertTitle>
+            <AlertTitle>
+              {page.no_history_reason
+                ? 'History can’t be reconstructed for this trigger'
+                : 'No history view for this trigger yet'}
+            </AlertTitle>
             <AlertDescription>
-              The history table function doesn&apos;t carry this trigger&apos;s branch — only the
-              live next-run view is available. History exists for the SF membership triggers
-              (supporters and premium).
+              {page.no_history_reason ??
+                'The history table function doesn’t carry this trigger’s branch — only the live next-run view is available.'}
             </AlertDescription>
           </Alert>
         )}

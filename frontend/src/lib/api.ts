@@ -405,6 +405,10 @@ export interface WouldFirePage {
   days?: number | null;
   /* whether tf_campaign_would_fire_history has a branch for this trigger */
   history_available?: boolean;
+  /* Set only when history is unavailable AND the reason is structural (the
+     trigger selects on state, or is still a placeholder) rather than merely
+     unbuilt — the tab prints it instead of the generic line. */
+  no_history_reason?: string | null;
 }
 
 /* One warehouse trigger on the Campaign Tester's Triggers tab: the hub

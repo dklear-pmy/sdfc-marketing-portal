@@ -36,10 +36,35 @@ KILL_ALL_KEY = "all"
 
 # Triggers with a branch in the history table function. Extend together with
 # tf_campaign_would_fire_history.sql — a trigger absent here gets the live
-# view only, and the tab says history isn't built for it yet.
+# view only, and the tab explains why using NO_HISTORY_REASON below.
+#
+# The dividing line is whether the trigger selects on a TIMESTAMPED EVENT:
+# an event carries its own time, so "what would have fired N days ago" is
+# reconstructable. A trigger that selects on current fan STATE cannot be
+# replayed — the warehouse keeps no snapshot of what that state used to be.
 HISTORY_TRIGGERS = {
+    "tb_signup_260715",
+    "welcome_shopify_260715",
     "stm_welcome_tickets_supporters_260807",
     "stm_welcome_tickets_premium_260807",
+}
+
+# Why a trigger has no history, in the reader's terms. Absent key => the
+# generic "not built yet" line; a trigger here is one where history is not
+# merely unbuilt but not reconstructable from what the warehouse retains.
+NO_HISTORY_REASON = {
+    "welcome_tickets_single_game": (
+        "This trigger selects on a fan's CURRENT state — first ticket purchase, "
+        "no attendance, no season plan — rather than on a timestamped event. The "
+        "warehouse keeps no snapshot of what that state was on a past day, so "
+        "there is no honest way to reconstruct who it would have caught. Only the "
+        "live next-run view is available."
+    ),
+    "stm_welcome_tickets_260807": (
+        "This trigger is still the placeholder — its hub query deliberately "
+        "selects nothing until the general STM journey is re-specced, so there is "
+        "no selection to look back on."
+    ),
 }
 
 # Mirror of each trigger's max_per_run circuit breaker in the hub
@@ -458,11 +483,13 @@ def would_fire_page(
     cap = TRIGGER_CAPS.get(trigger_key)
     enabled = TRIGGER_ENABLED.get(trigger_key)
     history_available = trigger_key in HISTORY_TRIGGERS
+    reason = None if history_available else NO_HISTORY_REASON.get(trigger_key)
     empty = {"trigger_key": trigger_key,
              "trigger_label": entry.get("trigger_label"),
              "rows": [], "total": 0,
              "limit": limit, "offset": offset, "cap": cap, "enabled": enabled,
-             "days": days, "history_available": history_available}
+             "days": days, "history_available": history_available,
+             "no_history_reason": reason}
     if not trigger_key or (days and not history_available):
         return empty
 
@@ -471,7 +498,8 @@ def would_fire_page(
             "trigger_label": entry.get("trigger_label"),
             "rows": rows, "total": n,
             "limit": limit, "offset": offset, "cap": cap, "enabled": enabled,
-            "days": days, "history_available": history_available}
+            "days": days, "history_available": history_available,
+            "no_history_reason": reason}
 
 
 def _preview_rows(
@@ -552,4 +580,7 @@ def trigger_preview_page(
             "trigger_label": None,
             "rows": rows, "total": n,
             "limit": limit, "offset": offset, "cap": cap, "enabled": enabled,
-            "days": days, "history_available": history_available}
+            "days": days, "history_available": history_available,
+            "no_history_reason": (
+                None if history_available else NO_HISTORY_REASON.get(trigger_key)
+            )}
