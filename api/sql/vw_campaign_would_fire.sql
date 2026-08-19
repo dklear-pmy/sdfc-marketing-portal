@@ -133,7 +133,7 @@ membership_cand AS (
   -- mutually exclusive, an opp can never match both).
   --   stm_welcome_tickets_supporters_260807 (spec 2026-08-07): SUPP marker +
   --     Ticket Sales record type + General Season Tickets group.
-  --   stm_welcome_tickets_premium_260807 (spec 2026-08-09): Premium Sales
+  --   stm_welcome_tickets_premium_260813 (spec 2026-08-09): Premium Sales
   --     record type + product 'Premium Season Membership' (the sheet's
   --     "Group = Premium Membership" — no such group_c exists); no name
   --     marker (auto-generated names).
@@ -146,7 +146,7 @@ membership_cand AS (
       -- record type) resolves first, then the marker, then general as the
       -- remainder. The three are mutually exclusive by construction.
       WHEN o.record_type_id = '012UR000001fAEAYA2'
-        THEN 'stm_welcome_tickets_premium_260807'
+        THEN 'stm_welcome_tickets_premium_260813'
       WHEN UPPER(o.name) LIKE '%SUPP%'
         THEN 'stm_welcome_tickets_supporters_260807'
       ELSE 'stm_welcome_tickets_260807'
@@ -381,10 +381,10 @@ WHERE cand.matched_trigger = 'stm_welcome_tickets_supporters_260807'
 
 UNION ALL
 
--- stm_welcome_tickets_premium_260807: STM-Premium-New-Member-Welcome-Journey-260807
--- (CIO relay pair 68/69).
+-- stm_welcome_tickets_premium_260813: STM-Premium-New-Member-Welcome-Journey-260813
+-- (CIO relay pair 75/71 prod, 68/69 test; re-dated from 260807 on 2026-08-18).
 SELECT
-  'stm_welcome_tickets_premium_260807',
+  'stm_welcome_tickets_premium_260813',
   cand.dedup_key,
   cand.email,
   cand.first_name,
@@ -401,8 +401,8 @@ SELECT
   ))
 FROM membership_cand cand
 LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
-  ON s.trigger = 'stm_welcome_tickets_premium_260807'
+  ON s.trigger = 'stm_welcome_tickets_premium_260813'
  AND s.dedup_key = cand.dedup_key
  AND s.status IN ('sent', 'suppressed', 'baseline')
-WHERE cand.matched_trigger = 'stm_welcome_tickets_premium_260807'
+WHERE cand.matched_trigger = 'stm_welcome_tickets_premium_260813'
   AND s.dedup_key IS NULL

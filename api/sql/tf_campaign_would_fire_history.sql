@@ -149,7 +149,7 @@ membership_cand AS (
   -- SUPP marker within one family — so an opp can never match two.
   --   stm_welcome_tickets_supporters_260807 (spec 2026-08-07): SUPP marker +
   --     Ticket Sales record type + General Season Tickets group.
-  --   stm_welcome_tickets_premium_260807 (spec 2026-08-09): Premium Sales
+  --   stm_welcome_tickets_premium_260813 (spec 2026-08-09): Premium Sales
   --     record type + product 'Premium Season Membership'.
   -- Common: closed/won + close date within history_days; rep_* = Account
   -- OWNER's User record; no-email hold; per-opportunity dedup.
@@ -160,7 +160,7 @@ membership_cand AS (
       -- record type) resolves first, then the marker, then general as the
       -- remainder. The three are mutually exclusive by construction.
       WHEN o.record_type_id = '012UR000001fAEAYA2'
-        THEN 'stm_welcome_tickets_premium_260807'
+        THEN 'stm_welcome_tickets_premium_260813'
       WHEN UPPER(o.name) LIKE '%SUPP%'
         THEN 'stm_welcome_tickets_supporters_260807'
       ELSE 'stm_welcome_tickets_260807'

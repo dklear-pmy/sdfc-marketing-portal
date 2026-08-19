@@ -46,7 +46,7 @@ HISTORY_TRIGGERS = {
     "tb_signup_260715",
     "welcome_shopify_260715",
     "stm_welcome_tickets_supporters_260807",
-    "stm_welcome_tickets_premium_260807",
+    "stm_welcome_tickets_premium_260813",
     "stm_welcome_tickets_260807",
 }
 
@@ -74,7 +74,7 @@ TRIGGER_CAPS = {
     "welcome_shopify_260715": 200,
     "stm_welcome_tickets_260807": 100,
     "stm_welcome_tickets_supporters_260807": 25,
-    "stm_welcome_tickets_premium_260807": 25,
+    "stm_welcome_tickets_premium_260813": 25,
 }
 
 # Bullet-list mirror of each trigger's selection SQL in triggers.py (same
@@ -113,7 +113,7 @@ TRIGGER_LOGIC = {
         "No-email rows held, not fired, until an email lands in SF or the window ages out",
         "Grain: one fire per opportunity_id",
     ],
-    "stm_welcome_tickets_premium_260807": [
+    "stm_welcome_tickets_premium_260813": [
         "Source: Salesforce opportunity, joined to account (owner rep) and contact (email fallback)",
         "is_closed = TRUE AND is_won = TRUE",
         "close_date ≥ CURRENT_DATE − 1 day (tightest 24h window on a DATE column)",
@@ -176,7 +176,7 @@ TRIGGER_PAYLOAD = {
         "shopify_amount_spent",
     ],
     "stm_welcome_tickets_supporters_260807": _SF_MEMBERSHIP_PAYLOAD,
-    "stm_welcome_tickets_premium_260807": _SF_MEMBERSHIP_PAYLOAD,
+    "stm_welcome_tickets_premium_260813": _SF_MEMBERSHIP_PAYLOAD,
     "stm_welcome_tickets_260807": _SF_MEMBERSHIP_PAYLOAD,
 }
 
@@ -188,9 +188,9 @@ TRIGGER_ENABLED = {
     "tb_signup_260715": False,  # switched off 2026-08-11 — hold until launch decision
     "welcome_tickets_single_game": False,  # switched off 2026-08-11; re-baseline before re-enabling
     "welcome_shopify_260715": False,  # draft SQL in the view; WHERE FALSE in the hub
-    "stm_welcome_tickets_260807": True,  # enabled 2026-08-13 (Dean); query still WHERE FALSE until the re-spec lands
-    "stm_welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 60/61
-    "stm_welcome_tickets_premium_260807": True,  # Premium Season Membership — CIO relay pair 68/69
+    "stm_welcome_tickets_260807": True,  # complement of the two carve-outs (re-specced 2026-08-18); CIO relay pair 72/65
+    "stm_welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 74/67
+    "stm_welcome_tickets_premium_260813": True,  # Premium Season Membership — CIO relay pair 75/71 (re-dated 260807 → 260813 on 2026-08-18)
 }
 
 
