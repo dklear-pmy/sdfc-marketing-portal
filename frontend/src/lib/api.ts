@@ -34,8 +34,37 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/* Authenticated file download — fetches with the bearer token (a plain <a
+   href> can't carry it), then hands the blob to the browser under the
+   server's Content-Disposition filename. */
+async function download(path: string): Promise<void> {
+  const user = auth.currentUser;
+  const token = user ? await user.getIdToken() : null;
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    let detail = body;
+    try {
+      detail = JSON.parse(body).detail ?? body;
+    } catch {
+      /* plain-text error body */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  const blob = await res.blob();
+  const match = /filename="?([^";]+)/.exec(res.headers.get('Content-Disposition') ?? '');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = match?.[1] ?? 'export.xlsx';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
+  download,
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   put: <T>(path: string, body?: unknown) =>

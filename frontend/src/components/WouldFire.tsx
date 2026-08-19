@@ -18,6 +18,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ExportExcelButton } from '@/components/ExportExcel';
+import { PreviewCountSkeleton, PreviewTableSkeleton } from '@/components/PreviewSkeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
@@ -58,6 +60,11 @@ export function WouldFireTab({ slug }: { slug: string }) {
   const rows = page?.rows ?? [];
   const total = page?.total ?? 0;
   const overCap = win === 'next' && !pq && page?.cap != null && total > page.cap;
+  /* isPlaceholderData = the rows on screen belong to the previous window,
+     page, or search — not the query now in flight. Treating that as loading
+     is what stops a window switch from showing the old window's answer for
+     the several seconds the warehouse takes. */
+  const loading = list.isPending || list.isPlaceholderData;
 
   return (
     <Card>
@@ -98,7 +105,12 @@ export function WouldFireTab({ slug }: { slug: string }) {
             <AlertDescription>{(list.error as Error).message}</AlertDescription>
           </Alert>
         )}
-        {list.isPending && <Skeleton className="h-64" />}
+        {list.isPending && (
+          <>
+            <PreviewCountSkeleton />
+            <PreviewTableSkeleton />
+          </>
+        )}
         {page && !page.trigger_key && (
           <Alert>
             <AlertTitle>No trigger key registered</AlertTitle>
@@ -121,7 +133,7 @@ export function WouldFireTab({ slug }: { slug: string }) {
                 <TabsTrigger value="history">Last {HISTORY_DAYS} Days</TabsTrigger>
               </TabsList>
             </Tabs>
-            {win === 'history' && page.history_available === false && (
+            {!loading && win === 'history' && page.history_available === false && (
               <Alert>
                 <AlertTitle>No history view for this trigger yet</AlertTitle>
                 <AlertDescription>
@@ -141,7 +153,7 @@ export function WouldFireTab({ slug }: { slug: string }) {
                 </AlertDescription>
               </Alert>
             )}
-            {overCap && (
+            {!loading && overCap && (
               <Alert className="border-amber-500/50 text-amber-700 dark:text-amber-500 [&>div]:text-amber-700/90 dark:[&>div]:text-amber-500/90">
                 <AlertTitle>
                   {total.toLocaleString()} exceeds the per-run safety cap (
@@ -172,7 +184,8 @@ export function WouldFireTab({ slug }: { slug: string }) {
                   Search
                 </Button>
               </form>
-              {!pq && !overCap && (
+              {loading && <PreviewCountSkeleton />}
+              {!loading && !pq && !overCap && (
                 <span className="text-sm text-muted-foreground">
                   <span className="font-medium text-foreground">{total.toLocaleString()}</span>{' '}
                   {win === 'next'
@@ -180,10 +193,25 @@ export function WouldFireTab({ slug }: { slug: string }) {
                     : `matching ${total === 1 ? 'event' : 'events'} in the last ${HISTORY_DAYS} days.`}
                 </span>
               )}
+              <span className="ml-auto">
+                <ExportExcelButton
+                  path={
+                    `/api/slugs/${encodeURIComponent(slug)}/preview/export` +
+                    (win === 'history' ? `?days=${HISTORY_DAYS}` : '') +
+                    (pq ? `${win === 'history' ? '&' : '?'}q=${encodeURIComponent(pq)}` : '')
+                  }
+                  disabled={loading || total === 0}
+                />
+              </span>
             </div>
 
+            {loading && <PreviewTableSkeleton />}
             <div
-              className={cn('overflow-x-auto rounded-md border', list.isFetching && 'opacity-60')}
+              className={cn(
+                'overflow-x-auto rounded-md border',
+                list.isFetching && !loading && 'opacity-60',
+                loading && 'hidden'
+              )}
             >
               <Table>
                 <TableHeader>
@@ -257,14 +285,20 @@ export function WouldFireTab({ slug }: { slug: string }) {
 
             <div className="flex items-center justify-between text-sm text-muted-foreground">
               <span>
-                {rows.length === 0 ? '0' : `${poffset + 1}–${poffset + rows.length}`} of{' '}
-                {total.toLocaleString()}
+                {loading ? (
+                  <Skeleton className="h-4 w-24" />
+                ) : (
+                  <>
+                    {rows.length === 0 ? '0' : `${poffset + 1}–${poffset + rows.length}`} of{' '}
+                    {total.toLocaleString()}
+                  </>
+                )}
               </span>
               <div className="flex gap-2">
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={poffset === 0}
+                  disabled={loading || poffset === 0}
                   onClick={() => setUrl({ poffset: Math.max(0, poffset - PAGE) })}
                 >
                   Previous
@@ -272,7 +306,7 @@ export function WouldFireTab({ slug }: { slug: string }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={poffset + PAGE >= total}
+                  disabled={loading || poffset + PAGE >= total}
                   onClick={() => setUrl({ poffset: poffset + PAGE })}
                 >
                   Next

@@ -20,6 +20,8 @@ import { useAuth } from '@/lib/auth';
 import { useUrlFilters } from '@/lib/urlState';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import SampleSender from '@/components/SampleSender';
+import { ExportExcelButton } from '@/components/ExportExcel';
+import { PreviewCountSkeleton, PreviewTableSkeleton } from '@/components/PreviewSkeleton';
 import { formatPacific, prettyPayload, relativeFrom } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -122,6 +124,84 @@ function FireLogCell({ t }: { t: TriggerRow }) {
   );
 }
 
+/* Loading shapes for the triggers list and drilldown — structured rows that
+   mirror the real tables, so loading reads as "the table is coming" rather
+   than an empty card (one featureless block on a dark card was effectively
+   invisible). */
+function TriggerListSkeleton() {
+  return (
+    <div className="space-y-3" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading triggers…</span>
+      <div className="flex items-center gap-2">
+        <Skeleton className="h-9 w-64" />
+        <Skeleton className="h-9 w-40" />
+      </div>
+      <div className="overflow-x-auto rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-24">Status</TableHead>
+              <TableHead>Trigger</TableHead>
+              <TableHead className="text-right">Cap</TableHead>
+              <TableHead className="text-right">Candidates</TableHead>
+              <TableHead className="text-right">Fire log</TableHead>
+              <TableHead>Last fired</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {Array.from({ length: 6 }, (_, i) => (
+              <TableRow key={i}>
+                <TableCell>
+                  <Skeleton className="h-5 w-16" />
+                </TableCell>
+                <TableCell>
+                  <Skeleton className="h-4 w-44" />
+                  <Skeleton className="mt-1 h-3 w-64" />
+                </TableCell>
+                <TableCell>
+                  <Skeleton className="ml-auto h-4 w-8" />
+                </TableCell>
+                <TableCell>
+                  <Skeleton className="ml-auto h-4 w-8" />
+                </TableCell>
+                <TableCell>
+                  <Skeleton className="ml-auto h-4 w-20" />
+                </TableCell>
+                <TableCell>
+                  <Skeleton className="h-4 w-24" />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
+
+function TriggerDrilldownSkeleton() {
+  return (
+    <div className="space-y-4" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading trigger…</span>
+      <Skeleton className="h-9 w-36" />
+      <Card>
+        <CardHeader>
+          <Skeleton className="h-6 w-64" />
+          <Skeleton className="mt-1 h-4 w-80" />
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {Array.from({ length: 5 }, (_, i) => (
+            <div key={i} className="flex items-center justify-between gap-4">
+              <Skeleton className="h-4 w-32" />
+              <Skeleton className="h-4 w-56" />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 /* Who the trigger would affect: the live next-run selection, or every event
    of the trailing 90 days from the history table function. Same data the
    campaign drilldown's Matching Customers tab shows, addressed by trigger
@@ -147,6 +227,11 @@ function TriggerAffected({ t }: { t: TriggerRow }) {
   const rows = page?.rows ?? [];
   const total = page?.total ?? 0;
   const overCap = win === 'next' && page?.cap != null && total > page.cap;
+  /* isPlaceholderData = what's on screen belongs to the PREVIOUS window or
+     page, not the one now being fetched — so a window switch shows the
+     skeleton instead of the old window's rows and count. isPending covers the
+     first load, when there is nothing to hold over at all. */
+  const loading = list.isPending || list.isPlaceholderData;
 
   return (
     <Card>
@@ -181,8 +266,13 @@ function TriggerAffected({ t }: { t: TriggerRow }) {
             <AlertDescription>{(list.error as Error).message}</AlertDescription>
           </Alert>
         )}
-        {list.isPending && <Skeleton className="h-40" />}
-        {win === 'history' && page?.history_available === false && (
+        {loading && (
+          <>
+            <PreviewCountSkeleton />
+            <PreviewTableSkeleton />
+          </>
+        )}
+        {!loading && win === 'history' && page?.history_available === false && (
           <Alert>
             <AlertTitle>
               {page.no_history_reason
@@ -195,7 +285,7 @@ function TriggerAffected({ t }: { t: TriggerRow }) {
             </AlertDescription>
           </Alert>
         )}
-        {overCap && (
+        {!loading && overCap && (
           <Alert className="border-amber-500/50 text-amber-700 dark:text-amber-500 [&>div]:text-amber-700/90 dark:[&>div]:text-amber-500/90">
             <AlertTitle>
               {total.toLocaleString()} exceeds the per-run safety cap ({page!.cap!.toLocaleString()}
@@ -207,14 +297,23 @@ function TriggerAffected({ t }: { t: TriggerRow }) {
             </AlertDescription>
           </Alert>
         )}
-        {page && !(win === 'history' && page.history_available === false) && (
+        {!loading && page && !(win === 'history' && page.history_available === false) && (
           <>
-            <p className="text-sm text-muted-foreground">
-              <span className="font-medium text-foreground">{total.toLocaleString()}</span>{' '}
-              {win === 'next'
-                ? `${total === 1 ? 'customer' : 'customers'} currently selected.`
-                : `matching ${total === 1 ? 'event' : 'events'} in the last ${HISTORY_DAYS} days.`}
-            </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{total.toLocaleString()}</span>{' '}
+                {win === 'next'
+                  ? `${total === 1 ? 'customer' : 'customers'} currently selected.`
+                  : `matching ${total === 1 ? 'event' : 'events'} in the last ${HISTORY_DAYS} days.`}
+              </p>
+              <ExportExcelButton
+                path={
+                  `/api/triggers/${encodeURIComponent(t.key)}/preview/export` +
+                  (win === 'history' ? `?days=${HISTORY_DAYS}` : '')
+                }
+                disabled={total === 0}
+              />
+            </div>
             <div
               className={cn('overflow-x-auto rounded-md border', list.isFetching && 'opacity-60')}
             >
@@ -662,7 +761,7 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
 
   if (tsel) {
     const t = all.find((x) => x.key === tsel);
-    if (list.isPending) return <Skeleton className="h-64" />;
+    if (list.isPending) return <TriggerDrilldownSkeleton />;
     if (!t)
       return (
         <Alert variant="destructive">
@@ -724,7 +823,7 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
             <AlertDescription>{(list.error as Error).message}</AlertDescription>
           </Alert>
         )}
-        {list.isPending && <Skeleton className="h-48" />}
+        {list.isPending && <TriggerListSkeleton />}
         {list.data && (
           <>
             <ConfirmDialog

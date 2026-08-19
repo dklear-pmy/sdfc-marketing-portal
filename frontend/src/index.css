@@ -202,3 +202,27 @@
   background: #e8ecf0;
   color: #0b2341;
 }
+
+/* Skeleton shimmer — a moving highlight band instead of Tailwind's opacity
+   pulse. The pulse was invisible in dark mode: the skeleton's bg-muted
+   (#0f2d4f) sits on a card of #0b2341, so fading a near-invisible block's
+   opacity animates nothing anyone can see. The band mixes the theme's
+   foreground into muted, so it carries real contrast in BOTH themes. */
+@keyframes skeleton-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    100deg,
+    var(--muted) 40%,
+    color-mix(in oklab, var(--foreground) 14%, var(--muted)) 50%,
+    var(--muted) 60%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s linear infinite;
+}

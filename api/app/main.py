@@ -4,9 +4,10 @@ import re
 import requests
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 
-from . import admin, affected, bqstate, customers, emailer, ledger, payloads, runner, shadow, slugs, stadium, tripwires
+from . import admin, affected, bqstate, customers, emailer, export_xlsx, ledger, payloads, runner, shadow, slugs, stadium, tripwires
 from . import config
 from .auth import Principal, require_access, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
@@ -19,6 +20,9 @@ app.add_middleware(
     allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["Authorization", "Content-Type"],
+    # The Excel export's filename rides Content-Disposition; without exposing
+    # it the browser client can read the blob but not the name.
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -159,6 +163,34 @@ def triggers_preview(
     )
 
 
+def _preview_export_response(trigger_key: str, days: int | None, q: str | None) -> Response:
+    """One .xlsx of the full preview window (next-run or last-N-days)."""
+    if days and trigger_key not in affected.HISTORY_TRIGGERS:
+        raise HTTPException(status_code=400, detail="No history view for this trigger")
+    filename, data = export_xlsx.preview_xlsx(
+        trigger_key, days=max(1, min(days, 365)) if days else None, q=q
+    )
+    return Response(
+        content=data,
+        media_type=export_xlsx.XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/triggers/{key}/preview/export")
+def triggers_preview_export(
+    key: str,
+    q: str | None = None,
+    days: int | None = None,
+    principal: Principal = require_access("marketing"),
+) -> Response:
+    if not re.fullmatch(r"[a-z0-9_]{1,80}", key):
+        raise HTTPException(status_code=400, detail="Bad trigger key")
+    if q and len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search too long")
+    return _preview_export_response(key, days, q)
+
+
 @app.get("/api/slugs/{slug}/precheck")
 def slugs_precheck(
     slug: str,
@@ -246,6 +278,24 @@ def slugs_preview(
     if page is None:
         raise HTTPException(status_code=404, detail="Slug not registered")
     return page
+
+
+@app.get("/api/slugs/{slug}/preview/export")
+def slugs_preview_export(
+    slug: str,
+    q: str | None = None,
+    days: int | None = None,
+    principal: Principal = require_access("marketing"),
+) -> Response:
+    if q and len(q) > 200:
+        raise HTTPException(status_code=400, detail="Search too long")
+    entry = affected.get_slug(_valid_slug(slug))
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Slug not registered")
+    trigger_key = entry.get("trigger_key")
+    if not trigger_key:
+        raise HTTPException(status_code=400, detail="No trigger key registered for this campaign")
+    return _preview_export_response(trigger_key, days, q)
 
 
 @app.post("/api/slugs/{slug}/sample")
