@@ -24,6 +24,14 @@
 -- emits NULL for its event_at. Reconstructing it would mean inventing a
 -- spec for what the state WAS on a past day; affected.py explains that in
 -- the UI rather than guessing here.
+--
+-- ⚠️ AFTER APPLYING THIS FILE, RUN `python3 api/sql/reauthorize_history_tf.py`.
+-- Replacing a routine EXPIRES its authorization on the datasets it reads. The
+-- access entry stays listed, so `bq show` looks healthy while every call from
+-- the portal SA 403s on salesforce_silver.account until the entry is deleted
+-- and re-added. Authorized VIEWS do not behave this way, so
+-- vw_campaign_would_fire keeps working and the breakage presents as "the last
+-- 90 days tab 500s but next run is fine" (diagnosed 2026-08-18).
 
 CREATE OR REPLACE TABLE FUNCTION
   `sdfc-udp-dev.customerio_state.tf_campaign_would_fire_history`(history_days INT64)
