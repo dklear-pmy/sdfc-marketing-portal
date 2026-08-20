@@ -163,13 +163,29 @@ def triggers_preview(
     )
 
 
-def _preview_export_response(trigger_key: str, days: int | None, q: str | None) -> Response:
-    """One .xlsx of the full preview window (next-run or last-N-days)."""
-    if days and trigger_key not in affected.HISTORY_TRIGGERS:
-        raise HTTPException(status_code=400, detail="No history view for this trigger")
-    filename, data = export_xlsx.preview_xlsx(
-        trigger_key, days=max(1, min(days, 365)) if days else None, q=q
-    )
+def _preview_export_response(
+    trigger_key: str,
+    days: int | None,
+    q: str | None,
+    windows: str | None = None,
+    slug: str | None = None,
+) -> Response:
+    """One .xlsx of the preview. windows="all" puts BOTH windows in one file
+    as worksheet tabs (Next Run / Last N days, days defaulting to 90);
+    otherwise it's the single window days selects (next-run or last-N-days).
+    The filename leads with the campaign slug — the same name the portal URL
+    carries — falling back to the trigger key for campaign-less triggers."""
+    base = slug or affected.slug_for_trigger(trigger_key)
+    if windows == "all":
+        filename, data = export_xlsx.campaign_xlsx(
+            trigger_key, history_days=max(1, min(days or 90, 365)), q=q, filename_base=base
+        )
+    else:
+        if days and trigger_key not in affected.HISTORY_TRIGGERS:
+            raise HTTPException(status_code=400, detail="No history view for this trigger")
+        filename, data = export_xlsx.preview_xlsx(
+            trigger_key, days=max(1, min(days, 365)) if days else None, q=q, filename_base=base
+        )
     return Response(
         content=data,
         media_type=export_xlsx.XLSX_MIME,
@@ -182,13 +198,14 @@ def triggers_preview_export(
     key: str,
     q: str | None = None,
     days: int | None = None,
+    windows: str | None = None,
     principal: Principal = require_access("marketing"),
 ) -> Response:
     if not re.fullmatch(r"[a-z0-9_]{1,80}", key):
         raise HTTPException(status_code=400, detail="Bad trigger key")
     if q and len(q) > 200:
         raise HTTPException(status_code=400, detail="Search too long")
-    return _preview_export_response(key, days, q)
+    return _preview_export_response(key, days, q, windows)
 
 
 @app.get("/api/slugs/{slug}/precheck")
@@ -285,6 +302,7 @@ def slugs_preview_export(
     slug: str,
     q: str | None = None,
     days: int | None = None,
+    windows: str | None = None,
     principal: Principal = require_access("marketing"),
 ) -> Response:
     if q and len(q) > 200:
@@ -295,7 +313,7 @@ def slugs_preview_export(
     trigger_key = entry.get("trigger_key")
     if not trigger_key:
         raise HTTPException(status_code=400, detail="No trigger key registered for this campaign")
-    return _preview_export_response(trigger_key, days, q)
+    return _preview_export_response(trigger_key, days, q, windows, slug=entry["slug"])
 
 
 @app.post("/api/slugs/{slug}/sample")

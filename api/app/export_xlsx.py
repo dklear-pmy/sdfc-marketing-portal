@@ -66,12 +66,70 @@ def _cell(key: str, v):
     return v
 
 
+def _filename(base: str, part: str) -> str:
+    """`<base>--<part>--<YYYY-MM-DD-HHMM>.xlsx`, Pacific-stamped. base is the
+    campaign slug when one exists — the same name the portal URL leads with —
+    with the trigger key as fallback."""
+    stamp = dt.datetime.now(_PACIFIC).strftime("%Y-%m-%d-%H%M")
+    safe = re.sub(r'[^A-Za-z0-9._-]', "-", base)
+    return f"{safe}--{part}--{stamp}.xlsx"
+
+
 def preview_xlsx(
-    trigger_key: str, days: int | None = None, q: str | None = None
+    trigger_key: str,
+    days: int | None = None,
+    q: str | None = None,
+    filename_base: str | None = None,
 ) -> tuple[str, bytes]:
     """(filename, xlsx bytes) for a trigger's preview window."""
     rows, total = affected._preview_rows(trigger_key, q, EXPORT_MAX, 0, days)
 
+    wb = Workbook()
+    ws = wb.active
+    ws.title = trigger_key[:31]  # Excel's sheet-name limit
+    _fill_sheet(ws, rows, total)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    window = f"last-{days}-days" if days else "next-run"
+    return _filename(filename_base or trigger_key, window), buf.getvalue()
+
+
+def campaign_xlsx(
+    trigger_key: str,
+    history_days: int = 90,
+    q: str | None = None,
+    filename_base: str | None = None,
+) -> tuple[str, bytes]:
+    """(filename, xlsx bytes) with BOTH windows as worksheet tabs — "Next Run"
+    and "Last N Days" — so one file carries the whole preview. A trigger
+    without a history branch still exports; its history tab says why it's
+    empty instead of pretending zero events."""
+    wb = Workbook()
+
+    ws = wb.active
+    ws.title = "Next Run"
+    rows, total = affected._preview_rows(trigger_key, q, EXPORT_MAX, 0, None)
+    _fill_sheet(ws, rows, total)
+
+    ws_hist = wb.create_sheet(f"Last {history_days} Days")
+    if trigger_key in affected.HISTORY_TRIGGERS:
+        rows, total = affected._preview_rows(trigger_key, q, EXPORT_MAX, 0, history_days)
+        _fill_sheet(ws_hist, rows, total)
+    else:
+        ws_hist.append([
+            affected.NO_HISTORY_REASON.get(trigger_key)
+            or "No history view for this trigger — only the live next-run selection exists."
+        ])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return _filename(filename_base or trigger_key, "campaign"), buf.getvalue()
+
+
+def _fill_sheet(ws, rows: list[dict], total: int) -> None:
+    """Write one preview window into a worksheet: header, data rows, cap
+    note, number formats, fitted column widths."""
     # Column union across every row's payload, first-seen order, identity first.
     cols = list(_LEAD)
     payloads: list[dict] = []
@@ -90,9 +148,6 @@ def preview_xlsx(
                 cols.append(k)
 
     header = ["event_at (PT)"] + cols + ["dedup_key"]
-    wb = Workbook()
-    ws = wb.active
-    ws.title = trigger_key[:31]  # Excel's sheet-name limit
     ws.append(header)
     for c in ws[1]:
         c.font = Font(bold=True)
@@ -124,9 +179,3 @@ def preview_xlsx(
             if v is not None:
                 width = max(width, len(str(v)))
         ws.column_dimensions[get_column_letter(i)].width = min(42, width + 2)
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    window = f"last-{days}-days" if days else "next-run"
-    stamp = dt.datetime.now(_PACIFIC).strftime("%Y%m%d-%H%M")
-    return f"{trigger_key}--{window}--{stamp}.xlsx", buf.getvalue()

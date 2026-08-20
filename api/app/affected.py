@@ -344,6 +344,23 @@ def set_trigger_kill(trigger_key: str, killed: bool, reason: str | None, actor: 
     ).result()
 
 
+def slug_for_trigger(trigger_key: str) -> str | None:
+    """The registered campaign slug carrying this trigger key, if any — the
+    name the portal URL and export filenames lead with. First row wins on
+    the (theoretical) multi-campaign case, matching the UI's choice."""
+    rows = list(
+        client()
+        .query(
+            f"SELECT slug FROM `{_REGISTRY}` WHERE trigger_key = @key ORDER BY slug LIMIT 1",
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("key", "STRING", trigger_key)]
+            ),
+        )
+        .result()
+    )
+    return rows[0].slug if rows else None
+
+
 def set_trigger_label(trigger_key: str, label: str | None, actor: str) -> int:
     """Rename a trigger's display label — cosmetic only, the key stays the id.
 

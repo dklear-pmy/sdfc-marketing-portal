@@ -8,7 +8,15 @@ import { useState } from 'react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 
-export function ExportExcelButton({ path, disabled }: { path: string; disabled?: boolean }) {
+export function ExportExcelButton({
+  path,
+  disabled,
+  label = 'Export Excel',
+}: {
+  path: string;
+  disabled?: boolean;
+  label?: string;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +37,7 @@ export function ExportExcelButton({ path, disabled }: { path: string; disabled?:
             .finally(() => setBusy(false));
         }}
       >
-        {busy ? 'Exporting…' : 'Export Excel'}
+        {busy ? 'Exporting…' : label}
       </Button>
     </span>
   );

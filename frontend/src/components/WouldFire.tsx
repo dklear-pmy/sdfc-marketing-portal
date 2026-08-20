@@ -122,6 +122,17 @@ export function WouldFireTab({ slug }: { slug: string }) {
         )}
         {page && page.trigger_key && (
           <>
+            {/* Whole-campaign export: BOTH windows in one file, as worksheet
+                tabs — distinct from the per-window button below the tabs. */}
+            <div className="flex justify-start">
+              <ExportExcelButton
+                label="Export Campaign Excel"
+                path={
+                  `/api/slugs/${encodeURIComponent(slug)}/preview/export?windows=all&days=${HISTORY_DAYS}` +
+                  (pq ? `&q=${encodeURIComponent(pq)}` : '')
+                }
+              />
+            </div>
             <Tabs
               value={win}
               onValueChange={(v) =>

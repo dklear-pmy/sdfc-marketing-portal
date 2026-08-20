@@ -208,7 +208,11 @@ function TriggerDrilldownSkeleton() {
    key so it works even for a trigger with no registered campaign. Strictly
    preview — the portal never fires a production webhook. */
 function TriggerAffected({ t }: { t: TriggerRow }) {
-  const [win, setWin] = useState<'next' | 'history'>('next');
+  /* The window lives in the URL (twin=history; absent = next run) so both
+     tabs are directly linkable, same as the drilldown's ttab. Paging stays
+     local — a deep link always lands on page one. */
+  const [{ twin }, setUrl] = useUrlFilters({ twin: '' }, ['twin']);
+  const win: 'next' | 'history' = twin === 'history' ? 'history' : 'next';
   const [offset, setOffset] = useState(0);
   const [openRow, setOpenRow] = useState<string | null>(null);
 
@@ -248,10 +252,18 @@ function TriggerAffected({ t }: { t: TriggerRow }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* Whole-campaign export: BOTH windows in one file, as worksheet
+            tabs — distinct from the per-window button below the tabs. */}
+        <div className="flex justify-start">
+          <ExportExcelButton
+            label="Export Campaign Excel"
+            path={`/api/triggers/${encodeURIComponent(t.key)}/preview/export?windows=all&days=${HISTORY_DAYS}`}
+          />
+        </div>
         <Tabs
           value={win}
           onValueChange={(v) => {
-            setWin(v === 'history' ? 'history' : 'next');
+            setUrl({ twin: v === 'history' ? 'history' : '' });
             setOffset(0);
           }}
         >
@@ -726,15 +738,19 @@ function TriggerDrilldown({
 }
 
 export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) => void }) {
-  const [{ tstat, tq, tsel, ttab }, setUrl] = useUrlFilters(
+  const [{ tstat, tq, tsel, ttab, twin }, setUrl] = useUrlFilters(
     {
       tstat: '',
       tq: '',
       tsel: '',
       ttab: '',
+      /* owned by TriggerAffected; declared here so leaving a drilldown
+         clears it instead of leaking last-90-days into the next one */
+      twin: '',
     },
     ['tsel', 'ttab']
   );
+  void twin;
   const filter = tstat === 'disabled' ? 'disabled' : 'enabled';
   const tab: TriggerTab = ttab === 'preview' ? 'preview' : 'overview';
 
@@ -760,7 +776,10 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
   const [rowReason, setRowReason] = useState('');
 
   if (tsel) {
-    const t = all.find((x) => x.key === tsel);
+    /* tsel carries the registered campaign SLUG when one exists (the name
+       people actually recognize in a shared link), with the raw trigger key
+       accepted too — older links and campaign-less triggers still resolve. */
+    const t = all.find((x) => x.key === tsel || x.campaigns.some((c) => c.slug === tsel));
     if (list.isPending) return <TriggerDrilldownSkeleton />;
     if (!t)
       return (
@@ -771,7 +790,7 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
             <button
               type="button"
               className="underline underline-offset-2"
-              onClick={() => setUrl({ tsel: '', ttab: '' })}
+              onClick={() => setUrl({ tsel: '', ttab: '', twin: '' })}
             >
               back to the list
             </button>
@@ -784,7 +803,7 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
         t={t}
         tab={tab}
         onTab={(next) => setUrl({ ttab: next === 'overview' ? '' : next })}
-        onBack={() => setUrl({ tsel: '', ttab: '' })}
+        onBack={() => setUrl({ tsel: '', ttab: '', twin: '' })}
         onCampaign={(slug) => onSelect(slug)}
       />
     );
@@ -985,7 +1004,9 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
                   {rows.map((t) => (
                     <TableRow
                       key={t.key}
-                      onClick={() => setUrl({ tsel: t.key, ttab: '' })}
+                      onClick={() =>
+                        setUrl({ tsel: t.campaigns[0]?.slug ?? t.key, ttab: '', twin: '' })
+                      }
                       className="cursor-pointer"
                     >
                       <TableCell className="align-top">{statusBadge(t)}</TableCell>
