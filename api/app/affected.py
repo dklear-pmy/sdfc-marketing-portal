@@ -150,6 +150,7 @@ _SF_MEMBERSHIP_PAYLOAD = [
     "product / amount / seat_block / number_of_seats / ticket_price",
     "close_date — DATE as string",
     "rep_name / rep_email / rep_phone / account_owner — the SF Account Owner's User record (not the legacy digideck fields)",
+    "opportunity_owner_name / opportunity_owner_email / opportunity_owner_phone — the Opportunity Owner's User record (the deal closer; a different person from rep_* on most closed-won deals)",
     "ticketing_event_date — next real home match as unix epoch (feeds CIO's Wait Until); null in the off-season",
     "ticketing_event_name",
 ]

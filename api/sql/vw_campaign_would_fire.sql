@@ -176,6 +176,9 @@ membership_cand AS (
     rep.email                                                   AS rep_email,
     rep.phone                                                   AS rep_phone,
     rep.name                                                    AS account_owner,
+    opp_rep.name                                                AS opportunity_owner_name,
+    opp_rep.email                                               AS opportunity_owner_email,
+    opp_rep.phone                                               AS opportunity_owner_phone,
     nm.ticketing_event_date                                     AS ticketing_event_date,
     nm.ticketing_event_name                                     AS ticketing_event_name
   FROM `sdfc-udp-dev.salesforce_silver.opportunity` o
@@ -191,6 +194,15 @@ membership_cand AS (
     WHERE name NOT IN ('KORE Service', 'KORE Admin',
                        'Leap Marketing', 'Vozzi Integration')
   ) rep ON rep.id = a.owner_id
+  -- Opportunity OWNER (the deal closer) — mirrors the hub's opp_rep join.
+  LEFT JOIN (
+    SELECT id, name,
+           LOWER(NULLIF(NULLIF(email, 'None'), '')) AS email,
+           NULLIF(NULLIF(phone, 'None'), '')        AS phone
+    FROM `sdfc-udp-dev.salesforce_silver.user`
+    WHERE name NOT IN ('KORE Service', 'KORE Admin',
+                       'Leap Marketing', 'Vozzi Integration')
+  ) opp_rep ON opp_rep.id = o.owner_id
   -- Next home match (mirrors the hub): real fixtures only — shells (Member
   -- Lounge/Extra Time/Hospitality/parking/plan shells with placeholder
   -- dates) and "vs TBD" contingencies excluded by long-name pattern; the
@@ -339,8 +351,9 @@ SELECT
     cand.opportunity_name, cand.stage_name, cand.is_closed, cand.is_won,
     cand.product, cand.amount, cand.seat_block, cand.number_of_seats,
     cand.ticket_price, cand.close_date, cand.rep_name, cand.rep_email,
-    cand.rep_phone, cand.account_owner, cand.ticketing_event_date,
-    cand.ticketing_event_name
+    cand.rep_phone, cand.account_owner, cand.opportunity_owner_name,
+    cand.opportunity_owner_email, cand.opportunity_owner_phone,
+    cand.ticketing_event_date, cand.ticketing_event_name
   ))
 FROM membership_cand cand
 LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
@@ -368,8 +381,9 @@ SELECT
     cand.opportunity_name, cand.stage_name, cand.is_closed, cand.is_won,
     cand.product, cand.amount, cand.seat_block, cand.number_of_seats,
     cand.ticket_price, cand.close_date, cand.rep_name, cand.rep_email,
-    cand.rep_phone, cand.account_owner, cand.ticketing_event_date,
-    cand.ticketing_event_name
+    cand.rep_phone, cand.account_owner, cand.opportunity_owner_name,
+    cand.opportunity_owner_email, cand.opportunity_owner_phone,
+    cand.ticketing_event_date, cand.ticketing_event_name
   ))
 FROM membership_cand cand
 LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
@@ -396,8 +410,9 @@ SELECT
     cand.opportunity_name, cand.stage_name, cand.is_closed, cand.is_won,
     cand.product, cand.amount, cand.seat_block, cand.number_of_seats,
     cand.ticket_price, cand.close_date, cand.rep_name, cand.rep_email,
-    cand.rep_phone, cand.account_owner, cand.ticketing_event_date,
-    cand.ticketing_event_name
+    cand.rep_phone, cand.account_owner, cand.opportunity_owner_name,
+    cand.opportunity_owner_email, cand.opportunity_owner_phone,
+    cand.ticketing_event_date, cand.ticketing_event_name
   ))
 FROM membership_cand cand
 LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
