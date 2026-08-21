@@ -344,6 +344,33 @@ def set_trigger_kill(trigger_key: str, killed: bool, reason: str | None, actor: 
     ).result()
 
 
+def trigger_directory(enabled_only: bool = False) -> list[dict]:
+    """Every known trigger as {key, slug, label} — registry campaigns plus
+    hub-only keys with no registration yet. Drives the all-campaigns export,
+    where each entry becomes a worksheet. enabled_only keeps just the
+    triggers the hub would actually run (TRIGGER_ENABLED mirror) — disabled
+    and not-in-hub keys drop out."""
+    by_key: dict[str, dict] = {}
+    for r in (
+        client()
+        .query(
+            f"""SELECT trigger_key, slug, trigger_label
+                FROM `{_REGISTRY}` WHERE trigger_key IS NOT NULL
+                ORDER BY trigger_key, slug"""
+        )
+        .result()
+    ):
+        by_key.setdefault(
+            r.trigger_key, {"key": r.trigger_key, "slug": r.slug, "label": r.trigger_label}
+        )
+    for key in TRIGGER_CAPS:
+        by_key.setdefault(key, {"key": key, "slug": None, "label": None})
+    keys = sorted(by_key)
+    if enabled_only:
+        keys = [k for k in keys if TRIGGER_ENABLED.get(k) is True]
+    return [by_key[k] for k in keys]
+
+
 def slug_for_trigger(trigger_key: str) -> str | None:
     """The registered campaign slug carrying this trigger key, if any — the
     name the portal URL and export filenames lead with. First row wins on

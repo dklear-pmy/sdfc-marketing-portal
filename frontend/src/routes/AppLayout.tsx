@@ -40,15 +40,22 @@ const paths = {
   map: 'M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7',
   mail: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
   bolt: 'M13 10V3L4 14h7v7l9-11h-7z',
+  chevronDown: 'M19 9l-7 7-7-7',
 };
 
 const nav: { to: string; label: string; icon: string; section: Section }[] = [
-  { to: '/harness', label: 'Campaign Tester', icon: paths.beaker, section: 'marketing' },
   { to: '/triggers', label: 'Trigger Manager', icon: paths.bolt, section: 'marketing' },
   { to: '/fans', label: 'Fan Activity', icon: paths.users, section: 'fans' },
   { to: '/ledger', label: 'Fan Ledger', icon: paths.ledger, section: 'fans' },
   { to: '/tripwires', label: 'Tripwires', icon: paths.bell, section: 'marketing' },
   { to: '/stadium', label: 'Stadium Heat', icon: paths.map, section: 'stadium' },
+];
+
+/* Stale-but-kept destinations, parked at the bottom behind "More" so the
+   daily surfaces stay uncluttered. Campaign Tester moved here 2026-08-21 —
+   its validator/runner still work, the harness just isn't day-to-day now. */
+const moreNav: { to: string; label: string; icon: string; section: Section }[] = [
+  { to: '/harness', label: 'Campaign Tester', icon: paths.beaker, section: 'marketing' },
 ];
 
 function Wordmark() {
@@ -78,6 +85,12 @@ function SidebarNav({ children }: { children?: ReactNode }) {
   const visible = nav.filter((item) => sections.includes(item.section));
   const items =
     role === 'admin' ? [...visible, { to: '/admin', label: 'Admin', icon: paths.gear }] : visible;
+  const moreItems = moreNav.filter((item) => sections.includes(item.section));
+  /* Strictly collapsed unless clicked — even when a parked page is the
+     current route (Dean 2026-08-21: closed on reload at /harness too). The
+     page itself shows where you are; the nav stays quiet. */
+  const [moreOpen, setMoreOpen] = useState(false);
+  const showMore = moreOpen;
   return (
     <nav className="mt-4 flex-1 overflow-y-auto">
       {items.map((item) => (
@@ -115,6 +128,42 @@ function SidebarNav({ children }: { children?: ReactNode }) {
             ↗
           </span>
         </a>
+      )}
+      {moreItems.length > 0 && (
+        <>
+          <button
+            type="button"
+            onClick={() => setMoreOpen((v) => !v)}
+            aria-expanded={showMore}
+            className="flex w-full items-center border-l-2 border-transparent px-6 py-2 text-xs font-medium tracking-wider text-sdfc-chrome-shine/60 uppercase transition-colors hover:text-white"
+          >
+            More
+            <Icon
+              d={paths.chevronDown}
+              className={cn('ml-1.5 size-3.5 transition-transform', showMore && 'rotate-180')}
+            />
+          </button>
+          {showMore &&
+            moreItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  cn(
+                    'flex items-center border-l-2 px-6 py-3 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'border-sdfc-orange bg-sdfc-orange/10 text-sdfc-orange'
+                      : 'border-transparent text-sdfc-chrome-shine/85 hover:bg-sdfc-elevated hover:text-white'
+                  )
+                }
+              >
+                <span className="mr-3">
+                  <Icon d={item.icon} />
+                </span>
+                {item.label}
+              </NavLink>
+            ))}
+        </>
       )}
       {children}
     </nav>

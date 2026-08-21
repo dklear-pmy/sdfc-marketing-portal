@@ -86,6 +86,27 @@ def triggers_list(principal: Principal = require_access("marketing")) -> dict:
     return affected.triggers_overview()
 
 
+# Static path — registered before the /api/triggers/{key}/... routes so a
+# trigger named "export" can never shadow it (and vice versa).
+@app.get("/api/triggers/export")
+def triggers_export_all(
+    days: int | None = None,
+    principal: Principal = require_access("marketing"),
+) -> Response:
+    """One workbook, one worksheet per ENABLED campaign, both windows stacked
+    per sheet under a leading `window` column (future / past_<N>days).
+    Disabled and not-in-hub triggers are omitted — the file answers "what
+    would the live system send", not "what exists"."""
+    filename, data = export_xlsx.all_campaigns_xlsx(
+        affected.trigger_directory(enabled_only=True), history_days=max(1, min(days or 90, 365))
+    )
+    return Response(
+        content=data,
+        media_type=export_xlsx.XLSX_MIME,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 class TriggerLabelUpdate(BaseModel):
     label: str | None = None
 

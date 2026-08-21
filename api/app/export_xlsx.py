@@ -11,6 +11,7 @@ import datetime as dt
 import io
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from zoneinfo import ZoneInfo
 
@@ -127,9 +128,70 @@ def campaign_xlsx(
     return _filename(filename_base or trigger_key, "campaign"), buf.getvalue()
 
 
-def _fill_sheet(ws, rows: list[dict], total: int) -> None:
+def all_campaigns_xlsx(
+    directory: list[dict], history_days: int = 90
+) -> tuple[str, bytes]:
+    """(filename, xlsx bytes) with ONE worksheet per campaign, both windows
+    stacked in it and told apart by a leading `window` column — "future"
+    (the live next-run selection) vs "past_<N>days" (the trailing history).
+    directory rows are affected.trigger_directory() entries; sheets are named
+    by trigger label (the short human name — slugs blow Excel's 31-char
+    sheet-name limit), falling back to slug/key, deduped when truncation
+    collides."""
+    # Every (trigger, window) fetch in flight at once — serial execution took
+    # ~35s across 11 warehouse queries; the BQ client is thread-safe.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        fetched = {
+            (t["key"], days): pool.submit(affected._preview_rows, t["key"], None, EXPORT_MAX, 0, days)
+            for t in directory
+            for days in ([None, history_days] if t["key"] in affected.HISTORY_TRIGGERS else [None])
+        }
+        results = {k: f.result() for k, f in fetched.items()}
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    used: set[str] = set()
+    for t in directory:
+        ws = wb.create_sheet(_sheet_name(t, used))
+        rows, total = results[(t["key"], None)]
+        windows = ["future"] * len(rows)
+        if t["key"] in affected.HISTORY_TRIGGERS:
+            hist_rows, hist_total = results[(t["key"], history_days)]
+            rows = rows + hist_rows
+            windows += [f"past_{history_days}days"] * len(hist_rows)
+            total += hist_total
+        _fill_sheet(ws, rows, total, windows=windows)
+        if t["key"] not in affected.HISTORY_TRIGGERS:
+            ws.append([])
+            ws.append([
+                "NOTE: future window only — "
+                + (
+                    affected.NO_HISTORY_REASON.get(t["key"])
+                    or "no history view exists for this trigger."
+                )
+            ])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return _filename("all-campaigns", "windows"), buf.getvalue()
+
+
+def _sheet_name(t: dict, used: set[str]) -> str:
+    """Excel-safe worksheet name: label > slug > key, illegal chars swapped,
+    31-char limit, collisions numbered."""
+    base = re.sub(r"[\[\]:*?/\\']", "-", t.get("label") or t.get("slug") or t["key"])[:31]
+    name, n = base, 2
+    while name.lower() in used:
+        name = f"{base[:28]}~{n}"
+        n += 1
+    used.add(name.lower())
+    return name
+
+
+def _fill_sheet(ws, rows: list[dict], total: int, windows: list[str] | None = None) -> None:
     """Write one preview window into a worksheet: header, data rows, cap
-    note, number formats, fitted column widths."""
+    note, number formats, fitted column widths. `windows` (parallel to rows)
+    prepends a window column for sheets that stack both windows."""
     # Column union across every row's payload, first-seen order, identity first.
     cols = list(_LEAD)
     payloads: list[dict] = []
@@ -147,20 +209,30 @@ def _fill_sheet(ws, rows: list[dict], total: int) -> None:
             if k not in cols and k != "dedup_key":
                 cols.append(k)
 
-    header = ["event_at (PT)"] + cols + ["dedup_key"]
+    header = (["window"] if windows is not None else []) + ["event_at (PT)"] + cols + ["dedup_key"]
     ws.append(header)
     for c in ws[1]:
         c.font = Font(bold=True)
     ws.freeze_panes = "A2"
 
-    for r, p in zip(rows, payloads):
+    # Widths tracked while writing (first 500 rows — cosmetic, not worth 20k).
+    # NEVER re-scan with iter_rows(max_row=N): in write mode it MATERIALIZES
+    # every cell it touches, padding the sheet with hundreds of blank rows.
+    widths = [len(str(h)) for h in header]
+    for i, (r, p) in enumerate(zip(rows, payloads)):
         # Identity falls back to the row's own columns when a payload lacks it.
         merged = {**{k: r.get(k) for k in _LEAD}, **p}
-        ws.append(
-            [_pacific(r.get("event_at"))]
+        values = (
+            ([windows[i]] if windows is not None else [])
+            + [_pacific(r.get("event_at"))]
             + [_cell(k, merged.get(k)) for k in cols]
             + [r.get("dedup_key")]
         )
+        ws.append(values)
+        if i < 500:
+            for j, v in enumerate(values):
+                if v is not None:
+                    widths[j] = max(widths[j], len(str(v)))
     if total > len(rows):
         ws.append([])
         ws.append([f"NOTE: {total - len(rows):,} more rows beyond the {EXPORT_MAX:,}-row export cap"])
@@ -172,10 +244,5 @@ def _fill_sheet(ws, rows: list[dict], total: int) -> None:
             elif isinstance(cell.value, dt.date):
                 cell.number_format = "yyyy-mm-dd"
 
-    # Fit columns to content (sampled — width is cosmetic, not worth 20k rows).
-    for i, name in enumerate(header, start=1):
-        width = len(str(name))
-        for (v,) in ws.iter_rows(min_col=i, max_col=i, min_row=2, max_row=500, values_only=True):
-            if v is not None:
-                width = max(width, len(str(v)))
-        ws.column_dimensions[get_column_letter(i)].width = min(42, width + 2)
+    for j, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(j)].width = min(42, width + 2)

@@ -127,7 +127,9 @@ export function RequireSection({ section, children }: { section: Section; childr
 
 /* "/" lands on the first section this user can actually see. */
 const SECTION_HOME: Record<Section, string> = {
-  marketing: '/harness',
+  // Trigger Manager is the marketing landing since 2026-08-21 — the harness
+  // (Campaign Tester) is parked behind the sidebar's "More".
+  marketing: '/triggers',
   fans: '/fans',
   stadium: '/stadium',
 };

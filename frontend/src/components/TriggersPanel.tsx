@@ -962,6 +962,12 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
                 value={tq}
                 onChange={(e) => setUrl({ tq: e.target.value })}
               />
+              {/* Every campaign in one workbook — a worksheet per campaign,
+                  both windows stacked under a `window` column. */}
+              <ExportExcelButton
+                label="Export All Campaigns Excel"
+                path={`/api/triggers/export?days=${HISTORY_DAYS}`}
+              />
               {canEdit && !hubKilled && (
                 <Button
                   variant="destructive"
