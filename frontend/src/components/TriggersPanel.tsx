@@ -42,6 +42,10 @@ import {
 
 const AFFECTED_PAGE = 20;
 const HISTORY_DAYS = 90;
+/* Preview fetch bound. The API's own result timeout is 25s; abort a hair
+   under it so a stalled request fails here first and react-query retries
+   (default 3x) instead of the skeleton sitting open-ended. */
+const PREVIEW_TIMEOUT_MS = 20_000;
 
 function statusBadge(t: TriggerRow) {
   if (!t.in_hub) return <Badge variant="destructive">Not in hub</Badge>;
@@ -221,7 +225,8 @@ function TriggerAffected({ t }: { t: TriggerRow }) {
     queryFn: () =>
       api.get<WouldFirePage>(
         `/api/triggers/${encodeURIComponent(t.key)}/preview?limit=${AFFECTED_PAGE}&offset=${offset}` +
-          (win === 'history' ? `&days=${HISTORY_DAYS}` : '')
+          (win === 'history' ? `&days=${HISTORY_DAYS}` : ''),
+        { timeoutMs: PREVIEW_TIMEOUT_MS }
       ),
     placeholderData: (prev) => prev,
     staleTime: 60_000,

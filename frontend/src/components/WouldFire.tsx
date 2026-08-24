@@ -32,6 +32,9 @@ import {
 import { cn } from '@/lib/utils';
 
 const PAGE = 20;
+/* Same bound as TriggersPanel: fail fast under the API's 25s result timeout so
+   react-query retries instead of leaving the skeleton open-ended. */
+const PREVIEW_TIMEOUT_MS = 20_000;
 
 const HISTORY_DAYS = 90;
 
@@ -50,7 +53,8 @@ export function WouldFireTab({ slug }: { slug: string }) {
       api.get<WouldFirePage>(
         `/api/slugs/${encodeURIComponent(slug)}/preview?limit=${PAGE}&offset=${poffset}` +
           (pq ? `&q=${encodeURIComponent(pq)}` : '') +
-          (win === 'history' ? `&days=${HISTORY_DAYS}` : '')
+          (win === 'history' ? `&days=${HISTORY_DAYS}` : ''),
+        { timeoutMs: PREVIEW_TIMEOUT_MS }
       ),
     placeholderData: (prev) => prev,
     staleTime: 60_000,

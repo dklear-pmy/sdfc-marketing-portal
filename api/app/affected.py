@@ -17,6 +17,7 @@ ACL: portal SA reads customerio_state (same grant the slug registry uses).
 """
 
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 
 from google.cloud import bigquery
 
@@ -30,6 +31,19 @@ _PREVIEW_VIEW = f"{GCP_PROJECT}.customerio_state.vw_campaign_would_fire"
 _HISTORY_TF = f"{GCP_PROJECT}.customerio_state.tf_campaign_would_fire_history"
 _REGISTRY = f"{GCP_PROJECT}.customerio_state.slug_registry"
 _KILL_TABLE = f"{GCP_PROJECT}.customerio_state.trigger_kill_switch"
+
+# Upper bound on waiting for a preview query's RESULT. The queries themselves
+# finish in 1-4s (3,280 portal jobs over 2026-08-21..24: max run 4.3s, max
+# queue 0.5s); the one 36s preview seen in that window stalled in the
+# container AFTER its BigQuery job had finished. Without a bound, that stall
+# is an open-ended skeleton in the portal. With it, the request fails fast
+# as a 504 and the frontend's retry gets a fresh attempt.
+_BQ_RESULT_TIMEOUT_S = 25
+
+
+class PreviewTimeout(TimeoutError):
+    """A preview query did not return within _BQ_RESULT_TIMEOUT_S."""
+
 
 # The kill-switch row that stops EVERY trigger, not one.
 KILL_ALL_KEY = "all"
@@ -466,7 +480,7 @@ def affected_page(
                 """,
                 job_config=bigquery.QueryJobConfig(query_parameters=params),
             )
-            .result()
+            .result(timeout=_BQ_RESULT_TIMEOUT_S)
         ]
 
     def total():
@@ -592,12 +606,19 @@ def _preview_rows(
                 f"SELECT COUNT(*) AS n FROM {source} WHERE {cond}",
                 job_config=bigquery.QueryJobConfig(query_parameters=params),
             )
-            .result()
+            .result(timeout=_BQ_RESULT_TIMEOUT_S)
         )[0].n
 
     with ThreadPoolExecutor(max_workers=2) as ex:
         f_page, f_total = ex.submit(page), ex.submit(total)
-        return f_page.result(), f_total.result()
+        try:
+            return f_page.result(), f_total.result()
+        except (FuturesTimeout, TimeoutError) as exc:
+            raise PreviewTimeout(
+                f"The preview for {trigger_key} did not return within "
+                f"{_BQ_RESULT_TIMEOUT_S}s — the query is fine, the wait was not. "
+                "Retry; if it persists, check the marketing-portal-api instance."
+            ) from exc
 
 
 def trigger_preview_page(

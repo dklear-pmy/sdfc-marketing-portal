@@ -10,17 +10,41 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export interface RequestOptions {
+  /* Abort the request if the server hasn't answered within this many ms.
+     The abort surfaces as an ApiError(504) so react-query's retry handles it
+     like any other transient failure — a slow answer never becomes an
+     open-ended loading state. */
+  timeoutMs?: number;
+}
+
+async function request<T>(path: string, init?: RequestInit, opts?: RequestOptions): Promise<T> {
   const user = auth.currentUser;
   const token = user ? await user.getIdToken() : null;
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init?.headers,
-    },
-  });
+  const controller = opts?.timeoutMs ? new AbortController() : undefined;
+  const timer = controller ? setTimeout(() => controller.abort(), opts?.timeoutMs) : undefined;
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      signal: controller?.signal ?? init?.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
+    });
+  } catch (err) {
+    if (controller?.signal.aborted) {
+      throw new ApiError(
+        504,
+        `The server didn't answer within ${Math.round((opts?.timeoutMs ?? 0) / 1000)}s — retrying.`
+      );
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   if (!res.ok) {
     const body = await res.text();
     let detail = body;
@@ -63,7 +87,7 @@ async function download(path: string): Promise<void> {
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
+  get: <T>(path: string, opts?: RequestOptions) => request<T>(path, undefined, opts),
   download,
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),

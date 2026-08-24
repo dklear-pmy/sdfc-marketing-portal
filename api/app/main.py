@@ -4,7 +4,7 @@ import re
 import requests
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from . import admin, affected, bqstate, customers, emailer, export_xlsx, ledger, payloads, runner, shadow, slugs, stadium, tripwires
@@ -14,6 +14,13 @@ from .config import CORS_ORIGINS
 from .validator import validate_slug
 
 app = FastAPI(title="SDFC Marketing Ops API", docs_url=None, redoc_url=None)
+
+
+@app.exception_handler(affected.PreviewTimeout)
+def _preview_timeout(_request, exc: affected.PreviewTimeout) -> JSONResponse:
+    # A bounded wait, not a broken query — 504 so the frontend retries instead
+    # of showing an open-ended skeleton (see affected._BQ_RESULT_TIMEOUT_S).
+    return JSONResponse(status_code=504, content={"detail": str(exc)})
 
 app.add_middleware(
     CORSMiddleware,
