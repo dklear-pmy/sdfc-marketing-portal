@@ -16,6 +16,7 @@ campaign's inbound webhook in CIO, then confirm the same person/payload here.
 ACL: portal SA reads customerio_state (same grant the slug registry uses).
 """
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 
@@ -31,6 +32,8 @@ _PREVIEW_VIEW = f"{GCP_PROJECT}.customerio_state.vw_campaign_would_fire"
 _HISTORY_TF = f"{GCP_PROJECT}.customerio_state.tf_campaign_would_fire_history"
 _REGISTRY = f"{GCP_PROJECT}.customerio_state.slug_registry"
 _KILL_TABLE = f"{GCP_PROJECT}.customerio_state.trigger_kill_switch"
+_SETTINGS_TABLE = f"{GCP_PROJECT}.customerio_state.trigger_settings"
+_HUB_RUNS_TABLE = f"{GCP_PROJECT}.customerio_state.hub_runs"
 
 # Upper bound on waiting for a preview query's RESULT. The queries themselves
 # finish in 1-4s (3,280 portal jobs over 2026-08-21..24: max run 4.3s, max
@@ -195,17 +198,19 @@ TRIGGER_PAYLOAD = {
     "stm_welcome_tickets_260807": _SF_MEMBERSHIP_PAYLOAD,
 }
 
-# Mirror of each trigger's `enabled` flag in triggers.py (same drift
-# warning). False = the preview view carries drafted/placeholder logic the
-# hub won't execute yet — the tab labels these "not enabled", so the list
-# reads as a demonstration of the selection logic, not a pending send.
-TRIGGER_ENABLED = {
-    "tb_signup_260715": True,  # re-enabled 2026-08-24 — Welcome-General-260715 launch; CIO PROD pair 45/41
-    "welcome_tickets_single_game": True,  # re-enabled 2026-08-24 — Welcome-Tickets-Single-Game-260715; backlog since the Jul-16 baseline must be re-baselined or fired deliberately before arming
-    "welcome_shopify_260715": False,  # draft SQL in the view; WHERE FALSE in the hub
+# Mirror of each trigger's CODE GATE in the hub (Trigger.enabled in
+# triggers.py) — structural only: False means the hub never evaluates it
+# (placeholder queries) and the portal cannot enable it. Whether a code-open
+# trigger actually SENDS is the Enabled toggle in
+# customerio_state.trigger_settings, read live — nothing to mirror there.
+# DRIFT WARNING: update together with triggers.py.
+TRIGGER_CODE_ENABLED = {
+    "tb_signup_260715": True,  # code gate opened 2026-08-24 — Welcome-General-260715; CIO PROD pair 45/41
+    "welcome_tickets_single_game": True,  # code gate opened 2026-08-24 — backlog since the Jul-16 baseline must be re-baselined or fired deliberately BEFORE enabling
+    "welcome_shopify_260715": False,  # placeholder — WHERE FALSE in the hub; cannot be enabled from the portal
     "stm_welcome_tickets_260807": True,  # complement of the two carve-outs (re-specced 2026-08-18); CIO relay pair 72/65
     "stm_welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 74/67
-    "stm_welcome_tickets_premium_260813": False,  # switched off 2026-08-24 — hold; CIO relay pair 75/71 still draft (re-dated 260807 → 260813 on 2026-08-18)
+    "stm_welcome_tickets_premium_260813": True,  # CIO relay pair 75/71 still draft — held by its Enabled toggle, not by code
 }
 
 
@@ -213,7 +218,7 @@ def triggers_overview() -> dict:
     """Every warehouse trigger the portal knows about, joined three ways.
 
     A row per trigger key in the union of the hub mirrors (TRIGGER_CAPS /
-    TRIGGER_ENABLED) and the registry's trigger_key column, so both failure
+    TRIGGER_CODE_ENABLED) and the registry's trigger_key column, so both failure
     modes are visible: a registry key the hub has never heard of (fires
     nothing, ever) and a hub trigger no campaign is registered to (fires
     into a webhook nobody is validating). Candidate counts come live from
@@ -270,14 +275,47 @@ def triggers_overview() -> dict:
             .result()
         }
 
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        f_reg, f_cand, f_fires, f_kills = (
+    def settings():
+        return {
+            r.trigger_key: r
+            for r in client()
+            .query(
+                f"""
+                SELECT trigger_key, state, reason, updated_by, updated_at
+                FROM `{_SETTINGS_TABLE}`
+                """
+            )
+            .result()
+        }
+
+    def last_run():
+        rows = list(
+            client()
+            .query(
+                f"""
+                SELECT run_at, target, global_dry_run, ok,
+                       TO_JSON_STRING(triggers) AS triggers
+                FROM `{_HUB_RUNS_TABLE}`
+                WHERE run_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+                ORDER BY run_at DESC LIMIT 1
+                """
+            )
+            .result()
+        )
+        return rows[0] if rows else None
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        f_reg, f_cand, f_fires, f_kills, f_set, f_run = (
             ex.submit(registry),
             ex.submit(candidates),
             ex.submit(fires),
             ex.submit(kills),
+            ex.submit(settings),
+            ex.submit(last_run),
         )
         reg, cand, fire, kill = f_reg.result(), f_cand.result(), f_fires.result(), f_kills.result()
+        setting, run = f_set.result(), f_run.result()
+    run_triggers = json.loads(run.triggers) if run and run.triggers else {}
 
     def kill_info(row):
         return {
@@ -290,20 +328,42 @@ def triggers_overview() -> dict:
     for r in reg:
         by_key.setdefault(r["trigger_key"], []).append(r)
 
-    keys = sorted(set(TRIGGER_CAPS) | set(TRIGGER_ENABLED) | set(by_key))
+    keys = sorted(set(TRIGGER_CAPS) | set(TRIGGER_CODE_ENABLED) | set(by_key))
     rows = []
     for key in keys:
         entries = by_key.get(key, [])
         f = fire.get(key)
         k = kill.get(key)
+        st = setting.get(key)
+        lr = run_triggers.get(key)
         rows.append(
             {
                 "key": key,
                 "killed": k is not None,
                 "kill": kill_info(k) if k is not None else None,
                 "label": next((e["trigger_label"] for e in entries if e["trigger_label"]), None),
-                "in_hub": key in TRIGGER_CAPS or key in TRIGGER_ENABLED,
-                "enabled": TRIGGER_ENABLED.get(key),
+                "in_hub": key in TRIGGER_CAPS or key in TRIGGER_CODE_ENABLED,
+                # code gate (hub evaluates it at all) vs the portal's state
+                # (enabled = it actually sends; disabled = built, off; draft =
+                # still being built). No settings row == disabled; a code-
+                # closed trigger is always draft whatever its row says.
+                "code_enabled": TRIGGER_CODE_ENABLED.get(key),
+                "state": effective_state(key, st.state if st is not None else None),
+                "enabled": effective_state(key, st.state if st is not None else None) == "enabled",
+                "state_info": kill_info(st) if st is not None else None,
+                # what the hub's LAST run actually did with this trigger
+                "last_run": (
+                    {
+                        "at": run.run_at.isoformat(),
+                        "mode": lr.get("mode"),
+                        "candidates": lr.get("candidates", 0),
+                        "fired": lr.get("fired", 0),
+                        "failed": lr.get("failed", 0),
+                        "skipped": lr.get("skipped"),
+                    }
+                    if run is not None and lr is not None
+                    else None
+                ),
                 "cap": TRIGGER_CAPS.get(key),
                 "logic": TRIGGER_LOGIC.get(key),
                 "payload": TRIGGER_PAYLOAD.get(key),
@@ -325,6 +385,11 @@ def triggers_overview() -> dict:
     return {
         "triggers": rows,
         "hub_killed": kill_info(hub_kill) if hub_kill is not None else None,
+        # The hub-wide DRY_RUN override as of the last run: while True, no
+        # trigger sends whatever its toggle says — the UI must say so.
+        "hub_dry_run": bool(run.global_dry_run) if run is not None else None,
+        "hub_last_run_at": run.run_at.isoformat() if run is not None else None,
+        "hub_target": run.target if run is not None else None,
     }
 
 
@@ -358,12 +423,125 @@ def set_trigger_kill(trigger_key: str, killed: bool, reason: str | None, actor: 
     ).result()
 
 
+TRIGGER_STATES = ("enabled", "disabled", "draft")
+
+
+def effective_state(trigger_key: str, stored: str | None) -> str:
+    """The state the portal shows. A code-closed trigger (placeholder query)
+    is draft no matter what its row says — the hub never evaluates it;
+    otherwise the stored value, with no row meaning disabled."""
+    if not TRIGGER_CODE_ENABLED.get(trigger_key):
+        return "draft"
+    return stored if stored in TRIGGER_STATES else "disabled"
+
+
+def state_change_error(
+    trigger_key: str, state: str, role: str, absorb: bool = False
+) -> tuple[int, str] | None:
+    """Why a state change is refused, as (http status, message) — or None
+    when it may proceed. Pure, so the gate is testable without BigQuery:
+      404  unknown key
+      400  unknown state
+      400  any change on a code-closed trigger (locked at draft — its query
+           is a placeholder the hub never evaluates)
+      400  absorb with anything but enabled (absorbing is the prelude to arming)
+      403  enabling as a non-admin (it starts real sends to fans)
+    Disabling / drafting is operator-level — the safe direction."""
+    if trigger_key not in TRIGGER_CODE_ENABLED:
+        return 404, "No such trigger in the hub"
+    if state not in TRIGGER_STATES:
+        return 400, f"state must be one of {', '.join(TRIGGER_STATES)}"
+    if not TRIGGER_CODE_ENABLED.get(trigger_key):
+        return 400, (
+            "This trigger is switched off in the hub's code (placeholder query) — "
+            "it stays in draft until the hub carries a real query"
+        )
+    if absorb and state != "enabled":
+        return 400, "Absorbing the backlog only makes sense when enabling — send state=enabled"
+    if state == "enabled" and role != "admin":
+        return 403, "Enabling starts real sends to fans — admin only"
+    return None
+
+
+def absorb_candidates_as_baseline(trigger_key: str) -> int:
+    """Write every CURRENT would-fire candidate of a trigger into the hub's
+    state table as status='baseline' — the same operation the Jul-16
+    bootstrap used — so those people never receive the email and only
+    matches that land from now on fire. Returns the number absorbed.
+
+    INSERT … SELECT from vw_campaign_would_fire, which is the hub's own
+    candidate SQL MINUS everyone already in state: it can never duplicate a
+    key, and it absorbs whatever is current at execution (not the count the
+    dialog showed a moment earlier — that is the right semantics for a
+    rolling window like tb_signup's 72h). The payload is kept so the fire
+    log shows WHO was absorbed, not just how many."""
+    job = client().query(
+        f"""
+        INSERT INTO `{GCP_PROJECT}.customerio_state.cio_trigger_log`
+          (trigger, dedup_key, email, payload, status, status_code, error, fired_at)
+        SELECT trigger, dedup_key, email, payload_json, 'baseline', NULL, NULL,
+               CURRENT_TIMESTAMP()
+        FROM `{_PREVIEW_VIEW}`
+        WHERE trigger = @key
+        """,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("key", "STRING", trigger_key)]
+        ),
+    )
+    job.result()
+    return job.num_dml_affected_rows or 0
+
+
+def set_trigger_state(trigger_key: str, state: str, reason: str | None, actor: str) -> None:
+    """Set a trigger's state — the hub reads this row on its next run.
+    'enabled' arms real sends; 'disabled' / 'draft' (or no row) run it dry.
+    MERGE keeps one row per key; updated_by/updated_at are the audit trail."""
+    client().query(
+        f"""
+        MERGE `{_SETTINGS_TABLE}` t
+        USING (SELECT @key AS trigger_key) s
+        ON t.trigger_key = s.trigger_key
+        WHEN MATCHED THEN UPDATE SET
+          state = @state, reason = @reason,
+          updated_by = @actor, updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN INSERT (trigger_key, state, reason, updated_by, updated_at)
+        VALUES (@key, @state, @reason, @actor, CURRENT_TIMESTAMP())
+        """,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("key", "STRING", trigger_key),
+                bigquery.ScalarQueryParameter("state", "STRING", state),
+                bigquery.ScalarQueryParameter("reason", "STRING", reason or None),
+                bigquery.ScalarQueryParameter("actor", "STRING", actor),
+            ]
+        ),
+    ).result()
+
+
+def trigger_enabled(trigger_key: str) -> bool:
+    """Does this trigger SEND — state == 'enabled'. No row == disabled, same
+    as the hub."""
+    rows = list(
+        client()
+        .query(
+            f"SELECT state FROM `{_SETTINGS_TABLE}` WHERE trigger_key = @key LIMIT 1",
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("key", "STRING", trigger_key)]
+            ),
+        )
+        .result()
+    )
+    return bool(rows) and effective_state(trigger_key, rows[0].state) == "enabled"
+
+
 def trigger_directory(enabled_only: bool = False) -> list[dict]:
     """Every known trigger as {key, slug, label} — registry campaigns plus
     hub-only keys with no registration yet. Drives the all-campaigns export,
-    where each entry becomes a worksheet. enabled_only keeps just the
-    triggers the hub would actually run (TRIGGER_ENABLED mirror) — disabled
-    and not-in-hub keys drop out."""
+    where each entry becomes a worksheet. enabled_only keeps the triggers the
+    hub EVALUATES (code gate open — TRIGGER_CODE_ENABLED), which includes
+    ones still in dry-run: the export previews who would be sent, so a
+    trigger being reviewed before arming belongs in it. Placeholders and
+    not-in-hub keys drop out."""
     by_key: dict[str, dict] = {}
     for r in (
         client()
@@ -381,7 +559,7 @@ def trigger_directory(enabled_only: bool = False) -> list[dict]:
         by_key.setdefault(key, {"key": key, "slug": None, "label": None})
     keys = sorted(by_key)
     if enabled_only:
-        keys = [k for k in keys if TRIGGER_ENABLED.get(k) is True]
+        keys = [k for k in keys if TRIGGER_CODE_ENABLED.get(k) is True]
     return [by_key[k] for k in keys]
 
 
@@ -540,7 +718,7 @@ def would_fire_page(
         return None
     trigger_key = entry.get("trigger_key")
     cap = TRIGGER_CAPS.get(trigger_key)
-    enabled = TRIGGER_ENABLED.get(trigger_key)
+    enabled = trigger_enabled(trigger_key)  # the portal toggle — does it SEND
     history_available = trigger_key in HISTORY_TRIGGERS
     reason = None if history_available else NO_HISTORY_REASON.get(trigger_key)
     empty = {"trigger_key": trigger_key,
@@ -636,7 +814,7 @@ def trigger_preview_page(
     TVF. Strictly display; nothing here can send a webhook.
     """
     cap = TRIGGER_CAPS.get(trigger_key)
-    enabled = TRIGGER_ENABLED.get(trigger_key)
+    enabled = trigger_enabled(trigger_key)  # the portal toggle — does it SEND
     history_available = trigger_key in HISTORY_TRIGGERS
     if days and not history_available:
         rows, n = [], 0

@@ -4,8 +4,9 @@
    into its campaign's [1/2] relay. Joined against the slug registry so a
    key mismatch is visible from either side: a registry key the hub doesn't
    carry ("Not in hub" — fires nothing, ever) or a hub trigger no campaign
-   is registered to (fires into a webhook nobody validates). Read-only;
-   trigger SQL, caps and enabled flags live in the hub's triggers.py.
+   is registered to (fires into a webhook nobody validates). Trigger SQL
+   and caps live in the hub's triggers.py; each trigger's STATE (Enabled /
+   Disabled / Draft) is set here and read by the hub every run.
 
    Mirrors the campaigns area's shape: a searchable list (Enabled/Disabled
    filter, default enabled; "Not in hub" errors surface under BOTH filters
@@ -14,8 +15,15 @@
    Customers (live next-run selection + trailing-90-day history). */
 
 import { Fragment, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type TriggerKillInfo, type TriggerRow, type WouldFirePage } from '@/lib/api';
+import { useIsFetching, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  api,
+  type TriggerKillInfo,
+  type TriggerLastRun,
+  type TriggerRow,
+  type WouldFirePage,
+} from '@/lib/api';
+import { Loader2Icon } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useUrlFilters } from '@/lib/urlState';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -30,6 +38,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { HoverTip } from '@/components/ui/hover-tip';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
@@ -47,19 +56,301 @@ const HISTORY_DAYS = 90;
    (default 3x) instead of the skeleton sitting open-ended. */
 const PREVIEW_TIMEOUT_MS = 20_000;
 
-function statusBadge(t: TriggerRow) {
-  if (!t.in_hub) return <Badge variant="destructive">Not in hub</Badge>;
-  if (t.killed) return <Badge variant="destructive">Emergency off</Badge>;
-  return t.enabled ? (
-    <Badge variant="default">Enabled</Badge>
-  ) : (
-    <Badge variant="secondary">Disabled</Badge>
+/* Is this trigger set to SEND on the next run? Every gate open: in the hub,
+   code gate open, not emergency-stopped, Enabled toggle on. The hub-wide
+   DRY_RUN override is separate — see HubDryRunBanner. */
+function isLive(t: TriggerRow) {
+  return t.in_hub && t.code_enabled === true && !t.killed && t.enabled;
+}
+
+function humanSkip(reason: string | null) {
+  return reason ? ` (${reason.toLowerCase().replace(/_/g, ' ')})` : '';
+}
+
+/* One line on what the hub's LAST run actually did with this trigger — the
+   per-trigger indicator. "would send" = evaluated and counted, nothing sent. */
+function lastRunLine(r: TriggerLastRun | null) {
+  if (!r) return null;
+  const when = relativeFrom(r.at);
+  switch (r.mode) {
+    case 'live':
+      return `Last run ${when}: sent ${r.fired.toLocaleString()}${r.failed ? `, ${r.failed} failed` : ''}`;
+    case 'dry_run':
+      return r.skipped
+        ? `Last run ${when}: skipped${humanSkip(r.skipped)}`
+        : `Last run ${when}: ${r.candidates.toLocaleString()} would send — nothing sent`;
+    case 'skipped':
+      return `Last run ${when}: skipped${humanSkip(r.skipped)}`;
+    default:
+      return `Last run ${when}: error`;
+  }
+}
+
+type TriggerState = TriggerRow['state'];
+const STATE_ORDER: TriggerState[] = ['draft', 'disabled', 'enabled'];
+const STATE_LABEL: Record<TriggerState, string> = {
+  draft: 'Draft',
+  disabled: 'Disabled',
+  enabled: 'Enabled',
+};
+
+/* Three-way state picker. Draft = still being built · Disabled = built and
+   reviewed, off · Enabled = sending. Draft and Disabled both run dry in the
+   hub — the split is a readiness label for people, not a hub behaviour. */
+function StateSegments({
+  value,
+  canEdit,
+  isAdmin,
+  busy,
+  pending,
+  onPick,
+}: {
+  value: TriggerState;
+  canEdit: boolean;
+  isAdmin: boolean;
+  busy?: boolean;
+  /* the state currently being written, if any — it already reads as the
+     selected segment (optimistically), so the spinner is what separates
+     "asked for" from "the warehouse agrees" */
+  pending?: TriggerState | null;
+  onPick: (state: TriggerState) => void;
+}) {
+  return (
+    <span
+      role="radiogroup"
+      aria-label="Trigger state"
+      aria-busy={pending ? true : undefined}
+      className="inline-flex rounded-md border bg-muted p-0.5"
+    >
+      {STATE_ORDER.map((st) => {
+        const active = st === value;
+        const locked = !canEdit || !!busy || (st === 'enabled' && !isAdmin);
+        return (
+          <button
+            key={st}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            disabled={locked && !active}
+            onClick={() => {
+              if (!active && !locked) onPick(st);
+            }}
+            className={cn(
+              'rounded-[5px] px-2.5 py-1 text-xs font-medium transition-colors',
+              active
+                ? st === 'enabled'
+                  ? 'bg-sdfc-orange text-white'
+                  : 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+              locked && !active && 'cursor-not-allowed opacity-50'
+            )}
+          >
+            <span className="inline-flex items-center gap-1">
+              {pending === st && <Loader2Icon className="size-3 animate-spin" aria-hidden="true" />}
+              {STATE_LABEL[st]}
+            </span>
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
+/* The Status cell. States nobody can change here get a badge; a code-open
+   trigger gets the three-way picker. Enabling goes through the caller's
+   confirmation (it starts real sends); Disabled and Draft apply
+   immediately — they are the safe directions. */
+function StatusControl({
+  t,
+  canEdit,
+  isAdmin,
+  busy,
+  pending,
+  refreshing,
+  onEnable,
+  onChange,
+}: {
+  t: TriggerRow;
+  canEdit: boolean;
+  isAdmin: boolean;
+  busy?: boolean;
+  pending?: TriggerState | null;
+  /* the write landed and the overview is re-reading the counts behind it —
+     a second, slower phase worth naming so the row doesn't look frozen */
+  refreshing?: boolean;
+  onEnable: () => void;
+  onChange: (state: TriggerState) => void;
+}) {
+  const line = lastRunLine(t.last_run);
+  let control: React.ReactNode;
+  if (!t.in_hub) control = <Badge variant="destructive">Not in hub</Badge>;
+  else if (t.killed) control = <Badge variant="destructive">Emergency off</Badge>;
+  else if (t.code_enabled !== true)
+    control = (
+      <HoverTip content="Locked in draft: switched off in the hub's code — its query is a placeholder the hub never evaluates.">
+        <Badge variant="secondary">Draft</Badge>
+      </HoverTip>
+    );
+  else {
+    const seg = (
+      <StateSegments
+        value={t.state}
+        canEdit={canEdit}
+        isAdmin={isAdmin}
+        busy={busy}
+        pending={pending}
+        onPick={(st) => (st === 'enabled' ? onEnable() : onChange(st))}
+      />
+    );
+    control =
+      canEdit && !isAdmin ? (
+        <HoverTip content="Enabling starts real sends — admin only.">{seg}</HoverTip>
+      ) : (
+        seg
+      );
+  }
+  /* While anything is in flight the last-run line is stale by definition,
+     so the progress line takes its place rather than sitting beside it. */
+  const busyLine = pending
+    ? `Saving ${STATE_LABEL[pending].toLowerCase()}\u2026`
+    : refreshing
+      ? 'Refreshing counts\u2026'
+      : null;
+  return (
+    <span className="grid gap-1">
+      {control}
+      {busyLine ? (
+        <span
+          aria-live="polite"
+          className="inline-flex items-center gap-1 text-xs whitespace-nowrap text-muted-foreground"
+        >
+          <Loader2Icon className="size-3 animate-spin" aria-hidden="true" />
+          {busyLine}
+        </span>
+      ) : line ? (
+        <span className="text-xs whitespace-nowrap text-muted-foreground">{line}</span>
+      ) : null}
+    </span>
+  );
+}
+
+/* The hub-wide DRY_RUN override, as of the last run. While it's on, no
+   trigger sends whatever its toggle says — toggles record intent, and each
+   row's last-run line shows what WOULD have gone out. */
+function HubDryRunBanner({ data }: { data: TriggersResponse | undefined }) {
+  if (!data || data.hub_dry_run !== true) return null;
+  return (
+    <Alert className="border-amber-500/50 text-amber-700 dark:text-amber-500 [&>div]:text-amber-700/90 dark:[&>div]:text-amber-500/90">
+      <AlertTitle>Hub-wide dry run is on — nothing sends yet</AlertTitle>
+      <AlertDescription>
+        Every trigger is evaluated and counted but no webhook fires, whatever its Enabled toggle
+        says. The toggles take effect the moment the hub&apos;s DRY_RUN override is lifted (Cloud
+        Run job env). Last hub run{' '}
+        {data.hub_last_run_at ? relativeFrom(data.hub_last_run_at) : 'not recorded yet'}.
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+/* Body of the enable confirmation — the numbers someone needs at the moment
+   they can still say no, and the one decision that matters: absorb the
+   current backlog as baseline first, or send to it. */
+function EnableDescription({
+  t,
+  hubDryRun,
+  reason,
+  onReason,
+  absorb,
+  onAbsorb,
+}: {
+  t: TriggerRow;
+  hubDryRun: boolean | null;
+  reason: string;
+  onReason: (v: string) => void;
+  absorb: boolean;
+  onAbsorb: (v: boolean) => void;
+}) {
+  const n = t.candidates;
+  const over = t.cap != null && n > t.cap;
+  const target = t.campaigns[0]?.display_name || t.campaigns[0]?.slug || 'its campaign';
+  const people = `${n.toLocaleString()} ${n === 1 ? 'person' : 'people'}`;
+  return (
+    <span className="grid gap-3">
+      <span>
+        From the next hourly run the hub POSTs one webhook per matching customer into {target} —
+        real fans, real emails. Right now <strong>{people}</strong> match
+        {t.cap != null && <> (per-run cap {t.cap.toLocaleString()})</>}.
+      </span>
+      {n > 0 && (
+        <span className="grid gap-2 rounded-md border p-3">
+          <label className="flex cursor-pointer items-start gap-2">
+            <input
+              type="radio"
+              name="enable-mode"
+              className="mt-1 accent-sdfc-orange"
+              checked={absorb}
+              onChange={() => onAbsorb(true)}
+            />
+            <span>
+              <strong>Absorb the {people} as already handled, then enable.</strong> They never get
+              this email — only people who match from now on do. Right for a backlog that built up
+              while the trigger was off.
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2">
+            <input
+              type="radio"
+              name="enable-mode"
+              className="mt-1 accent-sdfc-orange"
+              checked={!absorb}
+              onChange={() => onAbsorb(false)}
+            />
+            <span>
+              <strong>Enable and send to all {people} on the next run.</strong> Right only if every
+              one of them should receive it now.
+              {over && (
+                <span className="block text-destructive">
+                  That is above the per-run cap — the hub would skip and alert instead of sending.
+                </span>
+              )}
+            </span>
+          </label>
+          <span className="text-xs text-muted-foreground">
+            Absorbing writes them to the fire log as “baseline”. The count is re-evaluated at the
+            moment you confirm, so anyone who matched in the meantime is absorbed too.
+          </span>
+        </span>
+      )}
+      <span className="text-muted-foreground">
+        Switching it off later stops sends from the following run.
+      </span>
+      {hubDryRun === true && (
+        <span className="text-muted-foreground">
+          The hub-wide dry run is still on, so nothing sends until that override is lifted — this
+          records the intent{absorb && n > 0 ? ' and absorbs the backlog now' : ''}.
+          {absorb && n > 0 && t.key === 'tb_signup_260715'
+            ? ' Note tb_signup’s window keeps rolling: absorb it in the same hour the override lifts, or a new backlog forms.'
+            : ''}
+        </span>
+      )}
+      <Input
+        placeholder="Reason (optional, shown in the audit trail)"
+        maxLength={300}
+        value={reason}
+        onChange={(e) => onReason(e.target.value)}
+      />
+    </span>
   );
 }
 
 interface TriggersResponse {
   triggers: TriggerRow[];
   hub_killed: TriggerKillInfo | null;
+  /* the hub-wide DRY_RUN override as of the last run — while true nothing
+     sends whatever the toggles say; null = no run recorded yet */
+  hub_dry_run: boolean | null;
+  hub_last_run_at: string | null;
+  hub_target: string | null;
 }
 
 /* Shared kill-switch mutation — POST /api/triggers/{key}/kill. Killing is
@@ -72,6 +363,69 @@ function useKillMutation() {
       api.post(`/api/triggers/${encodeURIComponent(key)}/kill`, { killed, reason }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['triggers'] }),
   });
+}
+
+/* Trigger state — POST /api/triggers/{key}/state. Disabled and Draft are
+   operator-level; Enabled starts real sends and the API restricts it to
+   admins. */
+function useEnabledMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      key,
+      state,
+      reason,
+      absorb,
+    }: {
+      key: string;
+      state: TriggerState;
+      reason?: string;
+      absorb?: boolean;
+    }) =>
+      api.post<{ trigger_key: string; state: TriggerState; absorbed: number | null }>(
+        `/api/triggers/${encodeURIComponent(key)}/state`,
+        { state, reason, absorb }
+      ),
+    /* Flip the cell the moment the POST goes out. The write itself is quick
+       (one MERGE on trigger_settings); what takes 10-20s is the refetch
+       behind it, because /api/triggers re-runs every trigger's candidate
+       count against the warehouse. Waiting for that made the click look
+       ignored, so the state answers now and the counts catch up after. */
+    onMutate: async ({ key, state }) => {
+      await queryClient.cancelQueries({ queryKey: ['triggers'] });
+      const previous = queryClient.getQueryData<TriggersResponse>(['triggers']);
+      queryClient.setQueryData<TriggersResponse>(['triggers'], (old) =>
+        old
+          ? {
+              ...old,
+              triggers: old.triggers.map((t) =>
+                t.key === key ? { ...t, state, enabled: state === 'enabled' } : t
+              ),
+            }
+          : old
+      );
+      return { previous };
+    },
+    /* The API refuses some changes (enabling as a non-admin, a code-closed
+       trigger, an unknown state) — put the real answer back rather than
+       leave an optimistic lie on screen next to the error alert. */
+    onError: (_err, _vars, context) => {
+      if (context?.previous) queryClient.setQueryData(['triggers'], context.previous);
+    },
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: ['triggers'] }),
+  });
+}
+
+/* Which row is mid-change, and in which of the two phases. Split out because
+   the list and the drilldown both render StatusControl and must agree. */
+function useStateBusy(m: ReturnType<typeof useEnabledMutation>) {
+  const refetching = useIsFetching({ queryKey: ['triggers'] }) > 0;
+  const key = m.variables?.key ?? null;
+  return {
+    savingKey: m.isPending ? key : null,
+    savingState: m.isPending ? (m.variables?.state ?? null) : null,
+    refreshingKey: !m.isPending && m.isSuccess && refetching ? key : null,
+  };
 }
 
 function killDetail(info: TriggerKillInfo | null) {
@@ -144,7 +498,7 @@ function TriggerListSkeleton() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-24">Status</TableHead>
+              <TableHead className="w-52">Status</TableHead>
               <TableHead>Trigger</TableHead>
               <TableHead className="text-right">Cap</TableHead>
               <TableHead className="text-right">Candidates</TableHead>
@@ -448,12 +802,14 @@ function TriggerDrilldown({
   onTab,
   onBack,
   onCampaign,
+  hubDryRun,
 }: {
   t: TriggerRow;
   tab: TriggerTab;
   onTab: (tab: TriggerTab) => void;
   onBack: () => void;
   onCampaign: (slug: string) => void;
+  hubDryRun: boolean | null;
 }) {
   const { role } = useAuth();
   const canEdit = role === 'operator' || role === 'admin';
@@ -474,6 +830,11 @@ function TriggerDrilldown({
   const [confirmKill, setConfirmKill] = useState(false);
   const [confirmLift, setConfirmLift] = useState(false);
   const [killReason, setKillReason] = useState('');
+  const setEnabled = useEnabledMutation();
+  const stateBusy = useStateBusy(setEnabled);
+  const [confirmEnable, setConfirmEnable] = useState(false);
+  const [enableReason, setEnableReason] = useState('');
+  const [enableAbsorb, setEnableAbsorb] = useState(true);
 
   return (
     <div className="grid gap-6">
@@ -518,6 +879,63 @@ function TriggerDrilldown({
         }
         onConfirm={() => kill.mutate({ key: t.key, killed: false })}
       />
+      <ConfirmDialog
+        open={confirmEnable}
+        onOpenChange={setConfirmEnable}
+        title={`Enable ${t.label ?? t.key} — start sending?`}
+        confirmLabel={
+          enableAbsorb && t.candidates > 0
+            ? `Absorb ${t.candidates.toLocaleString()} and enable`
+            : 'Enable sends'
+        }
+        description={
+          <EnableDescription
+            t={t}
+            hubDryRun={hubDryRun}
+            reason={enableReason}
+            onReason={setEnableReason}
+            absorb={enableAbsorb}
+            onAbsorb={setEnableAbsorb}
+          />
+        }
+        onConfirm={() =>
+          setEnabled.mutate({
+            key: t.key,
+            state: 'enabled',
+            reason: enableReason.trim(),
+            absorb: enableAbsorb && t.candidates > 0,
+          })
+        }
+      />
+      <HubDryRunBanner
+        data={{
+          triggers: [],
+          hub_killed: null,
+          hub_dry_run: hubDryRun,
+          hub_last_run_at: t.last_run?.at ?? null,
+          hub_target: null,
+        }}
+      />
+      {setEnabled.isSuccess && setEnabled.data.state === 'enabled' && (
+        <Alert>
+          <AlertTitle>
+            Enabled
+            {setEnabled.data.absorbed != null
+              ? ` — ${setEnabled.data.absorbed.toLocaleString()} absorbed as baseline`
+              : ''}
+          </AlertTitle>
+          <AlertDescription>
+            Sends start on the hub&apos;s next hourly run
+            {hubDryRun ? ' (once the hub-wide dry run is lifted)' : ''}.
+          </AlertDescription>
+        </Alert>
+      )}
+      {setEnabled.isError && (
+        <Alert variant="destructive">
+          <AlertTitle>Enabled toggle update failed</AlertTitle>
+          <AlertDescription>{(setEnabled.error as Error).message}</AlertDescription>
+        </Alert>
+      )}
 
       {t.killed && (
         <Alert variant="destructive">
@@ -589,7 +1007,20 @@ function TriggerDrilldown({
           ) : (
             <div className="flex flex-wrap items-center gap-3">
               <CardTitle className="text-xl">{t.label ?? t.key}</CardTitle>
-              {statusBadge(t)}
+              <StatusControl
+                t={t}
+                canEdit={canEdit}
+                isAdmin={isAdmin}
+                busy={setEnabled.isPending}
+                pending={stateBusy.savingKey === t.key ? stateBusy.savingState : null}
+                refreshing={stateBusy.refreshingKey === t.key}
+                onEnable={() => {
+                  setEnableReason('');
+                  setEnableAbsorb(true);
+                  setConfirmEnable(true);
+                }}
+                onChange={(state) => setEnabled.mutate({ key: t.key, state })}
+              />
               {canEdit && t.campaigns.length > 0 && (
                 <Button
                   size="sm"
@@ -756,7 +1187,7 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
     ['tsel', 'ttab']
   );
   void twin;
-  const filter = tstat === 'disabled' ? 'disabled' : 'enabled';
+  const filter: TriggerState = tstat === 'disabled' || tstat === 'draft' ? tstat : 'enabled';
   const tab: TriggerTab = ttab === 'preview' ? 'preview' : 'overview';
 
   const { role } = useAuth();
@@ -779,6 +1210,12 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
   /* Per-row emergency stop — the trigger awaiting confirmation, if any. */
   const [rowKill, setRowKill] = useState<TriggerRow | null>(null);
   const [rowReason, setRowReason] = useState('');
+  const setEnabled = useEnabledMutation();
+  const stateBusy = useStateBusy(setEnabled);
+  /* Per-row enable — the trigger awaiting confirmation, if any. */
+  const [rowEnable, setRowEnable] = useState<TriggerRow | null>(null);
+  const [enableReason, setEnableReason] = useState('');
+  const [enableAbsorb, setEnableAbsorb] = useState(true);
 
   if (tsel) {
     /* tsel carries the registered campaign SLUG when one exists (the name
@@ -810,6 +1247,7 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
         onTab={(next) => setUrl({ ttab: next === 'overview' ? '' : next })}
         onBack={() => setUrl({ tsel: '', ttab: '', twin: '' })}
         onCampaign={(slug) => onSelect(slug)}
+        hubDryRun={list.data?.hub_dry_run ?? null}
       />
     );
   }
@@ -824,9 +1262,30 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
     t.campaigns.some(
       (c) => c.slug.toLowerCase().includes(q) || (c.display_name ?? '').toLowerCase().includes(q)
     );
-  const enabled = all.filter((t) => (!t.in_hub || t.enabled === true) && matches(t));
-  const disabled = all.filter((t) => (!t.in_hub || t.enabled === false) && matches(t));
-  const rows = filter === 'enabled' ? enabled : disabled;
+  /* Enabled = will SEND on the next run; everything else (toggle off,
+     code gate closed, emergency-stopped) is Disabled. Not-in-hub shows
+     under both — a misconfiguration, not a status. */
+  const enabled = all.filter((t) => (!t.in_hub || isLive(t)) && matches(t));
+  const disabled = all.filter(
+    (t) => (!t.in_hub || (!isLive(t) && t.state !== 'draft')) && matches(t)
+  );
+  const draft = all.filter((t) => t.in_hub && t.state === 'draft' && matches(t));
+  /* No explicit choice in the URL + nothing live yet (the dry-run phase)
+     → open on Disabled rather than an empty Enabled tab. */
+  const effectiveFilter =
+    tstat === '' && enabled.length === 0 && disabled.length > 0 ? 'disabled' : filter;
+  const tabRows = { enabled, disabled, draft }[effectiveFilter];
+  /* A row that just changed state belongs to a different tab the moment it
+     flips — but yanking it out from under the click is exactly what makes a
+     change feel like it didn't take. Hold it in its own position, spinner
+     and all, until its refresh lands and it moves on its own. The tab counts
+     above stay honest; only this list pins. */
+  const pinnedKey = stateBusy.savingKey ?? stateBusy.refreshingKey;
+  const tabKeys = new Set(tabRows.map((t) => t.key));
+  const rows =
+    pinnedKey && !tabKeys.has(pinnedKey)
+      ? all.filter((t) => tabKeys.has(t.key) || (t.key === pinnedKey && matches(t)))
+      : tabRows;
 
   return (
     <Card>
@@ -850,6 +1309,61 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
         {list.isPending && <TriggerListSkeleton />}
         {list.data && (
           <>
+            <HubDryRunBanner data={list.data} />
+            {setEnabled.isSuccess && setEnabled.data.state === 'enabled' && (
+              <Alert>
+                <AlertTitle>
+                  {setEnabled.data.trigger_key} enabled
+                  {setEnabled.data.absorbed != null
+                    ? ` — ${setEnabled.data.absorbed.toLocaleString()} absorbed as baseline`
+                    : ''}
+                </AlertTitle>
+                <AlertDescription>
+                  Sends start on the hub&apos;s next hourly run{' '}
+                  {list.data.hub_dry_run ? '(once the hub-wide dry run is lifted)' : ''}.
+                </AlertDescription>
+              </Alert>
+            )}
+            {setEnabled.isError && (
+              <Alert variant="destructive">
+                <AlertTitle>Enabled toggle update failed</AlertTitle>
+                <AlertDescription>{(setEnabled.error as Error).message}</AlertDescription>
+              </Alert>
+            )}
+            <ConfirmDialog
+              open={rowEnable !== null}
+              onOpenChange={(o) => {
+                if (!o) setRowEnable(null);
+              }}
+              title={`Enable ${rowEnable?.label ?? rowEnable?.key ?? ''} — start sending?`}
+              confirmLabel={
+                enableAbsorb && (rowEnable?.candidates ?? 0) > 0
+                  ? `Absorb ${rowEnable?.candidates.toLocaleString()} and enable`
+                  : 'Enable sends'
+              }
+              description={
+                rowEnable && (
+                  <EnableDescription
+                    t={rowEnable}
+                    hubDryRun={list.data.hub_dry_run}
+                    reason={enableReason}
+                    onReason={setEnableReason}
+                    absorb={enableAbsorb}
+                    onAbsorb={setEnableAbsorb}
+                  />
+                )
+              }
+              onConfirm={() => {
+                if (rowEnable)
+                  setEnabled.mutate({
+                    key: rowEnable.key,
+                    state: 'enabled',
+                    reason: enableReason.trim(),
+                    absorb: enableAbsorb && rowEnable.candidates > 0,
+                  });
+                setRowEnable(null);
+              }}
+            />
             <ConfirmDialog
               open={confirmStopAll}
               onOpenChange={setConfirmStopAll}
@@ -943,8 +1457,10 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
             )}
             <div className="flex flex-wrap items-center gap-3">
               <Tabs
-                value={filter}
-                onValueChange={(v) => setUrl({ tstat: v === 'disabled' ? 'disabled' : '' })}
+                value={effectiveFilter}
+                onValueChange={(v) =>
+                  setUrl({ tstat: v === 'disabled' || v === 'draft' ? v : 'enabled' })
+                }
               >
                 <TabsList>
                   <TabsTrigger value="enabled">
@@ -957,6 +1473,12 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
                     Disabled
                     <Badge variant="secondary" className="ml-1.5 px-1.5">
                       {disabled.length}
+                    </Badge>
+                  </TabsTrigger>
+                  <TabsTrigger value="draft">
+                    Draft
+                    <Badge variant="secondary" className="ml-1.5 px-1.5">
+                      {draft.length}
                     </Badge>
                   </TabsTrigger>
                 </TabsList>
@@ -992,7 +1514,7 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-24">Status</TableHead>
+                    <TableHead className="w-52">Status</TableHead>
                     <TableHead>Trigger</TableHead>
                     <TableHead className="text-right">Cap</TableHead>
                     <TableHead className="text-right">Candidates</TableHead>
@@ -1008,7 +1530,7 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
                         colSpan={canEdit ? 7 : 6}
                         className="h-16 text-center text-muted-foreground"
                       >
-                        {q ? 'Nothing matches this search.' : `No ${filter} triggers.`}
+                        {q ? 'Nothing matches this search.' : `No ${effectiveFilter} triggers.`}
                       </TableCell>
                     </TableRow>
                   )}
@@ -1020,7 +1542,22 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
                       }
                       className="cursor-pointer"
                     >
-                      <TableCell className="align-top">{statusBadge(t)}</TableCell>
+                      <TableCell className="align-top" onClick={(e) => e.stopPropagation()}>
+                        <StatusControl
+                          t={t}
+                          canEdit={canEdit}
+                          isAdmin={isAdmin}
+                          busy={setEnabled.isPending}
+                          pending={stateBusy.savingKey === t.key ? stateBusy.savingState : null}
+                          refreshing={stateBusy.refreshingKey === t.key}
+                          onEnable={() => {
+                            setEnableReason('');
+                            setEnableAbsorb(true);
+                            setRowEnable(t);
+                          }}
+                          onChange={(state) => setEnabled.mutate({ key: t.key, state })}
+                        />
+                      </TableCell>
                       <TableCell className="align-top">
                         <span className="grid grid-cols-[5rem_1fr] gap-x-1.5 gap-y-0.5">
                           <span className="text-right font-sans text-xs leading-5 font-medium text-muted-foreground">

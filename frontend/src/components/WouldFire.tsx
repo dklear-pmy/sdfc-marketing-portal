@@ -160,11 +160,11 @@ export function WouldFireTab({ slug }: { slug: string }) {
             )}
             {page.enabled === false && (
               <Alert>
-                <AlertTitle>Trigger not enabled in the hub yet</AlertTitle>
+                <AlertTitle>Trigger not enabled — nothing sends</AlertTitle>
                 <AlertDescription>
-                  This list demonstrates the drafted selection logic — who would receive the email
-                  and with what payload. Nothing sends until the trigger is enabled in the hub and
-                  the hub is armed.
+                  This list shows who the selection logic would pick and with what payload. The hub
+                  evaluates it every run but sends nothing until the trigger is switched on in
+                  Trigger Manager.
                 </AlertDescription>
               </Alert>
             )}

@@ -474,6 +474,18 @@ export interface TriggerKillInfo {
   at: string | null;
 }
 
+/* What the hub's most recent run actually did with a trigger. mode:
+   live = sent for real · dry_run = evaluated and counted, nothing sent ·
+   skipped = not evaluated (code gate / kill switch) · error */
+export interface TriggerLastRun {
+  at: string;
+  mode: 'live' | 'dry_run' | 'skipped' | 'error';
+  candidates: number;
+  fired: number;
+  failed: number;
+  skipped: string | null;
+}
+
 export interface TriggerRow {
   key: string;
   label: string | null;
@@ -483,7 +495,18 @@ export interface TriggerRow {
   /* false = the registry names a trigger the hub has never heard of —
      it will never fire */
   in_hub: boolean;
-  enabled: boolean | null;
+  /* the hub's CODE gate: false = never evaluated (placeholder query) and
+     cannot be enabled from the portal; null = not in hub */
+  code_enabled: boolean | null;
+  /* the portal state (customerio_state.trigger_settings): enabled = sends
+     for real on the next run; disabled = built and reviewed, off (the hub
+     runs it dry); draft = still being built (also dry). No row == disabled;
+     a code-closed trigger is always draft. */
+  state: 'enabled' | 'disabled' | 'draft';
+  /* state === 'enabled' */
+  enabled: boolean;
+  state_info: TriggerKillInfo | null;
+  last_run: TriggerLastRun | null;
   cap: number | null;
   /* bullet-list mirror of the trigger's selection SQL in the hub —
      one predicate or fact per entry */

@@ -55,3 +55,5 @@ jobs:
       - run: python tests/test_shadow_guards.py
       # Prod sample-send guards: owned-recipient, event-listener and fail-closed refusals.
       - run: python tests/test_sample_send.py
+      # Enabled-toggle gate: admin-only arming, code-closed triggers refused.
+      - run: python tests/test_trigger_toggle.py

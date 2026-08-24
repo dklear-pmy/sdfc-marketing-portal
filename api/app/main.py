@@ -123,6 +123,44 @@ class TriggerKillUpdate(BaseModel):
     reason: str | None = None
 
 
+class TriggerStateUpdate(BaseModel):
+    # enabled | disabled | draft — see affected.TRIGGER_STATES
+    state: str
+    reason: str | None = None
+    # enabled-only: absorb every current candidate as 'baseline' first so
+    # only matches from now on fire. The backlog remedy for tb_signup
+    # (rolling 72h window) and single-game (state diff since Jul 16).
+    absorb: bool = False
+
+
+@app.post("/api/triggers/{key}/state")
+def triggers_set_state(
+    key: str,
+    body: TriggerStateUpdate,
+    principal: Principal = require_access("marketing", "operator"),
+) -> dict:
+    """Set a trigger's state. 'enabled' arms real sends on the hub's next run
+    (admin-only); 'disabled' (built, off) and 'draft' (still being built)
+    both run it dry and are operator-level. A code-closed trigger is locked
+    at draft."""
+    if not re.fullmatch(r"[a-z0-9_]{1,80}", key):
+        raise HTTPException(status_code=400, detail="Bad trigger key")
+    refused = affected.state_change_error(key, body.state, principal.role, body.absorb)
+    if refused:
+        raise HTTPException(status_code=refused[0], detail=refused[1])
+    reason = (body.reason or "").strip()
+    if len(reason) > 300:
+        raise HTTPException(status_code=400, detail="Reason is longer than 300 characters")
+    absorbed = None
+    if body.absorb:
+        # Absorb BEFORE flipping the state: if this insert fails the trigger
+        # stays off, never the other way round.
+        absorbed = affected.absorb_candidates_as_baseline(key)
+        reason = f"{reason} · absorbed {absorbed} as baseline".strip(" ·")
+    affected.set_trigger_state(key, body.state, reason or None, actor=principal.email or "?")
+    return {"trigger_key": key, "state": body.state, "absorbed": absorbed}
+
+
 @app.post("/api/triggers/{key}/kill")
 def triggers_set_kill(
     key: str,
@@ -134,7 +172,7 @@ def triggers_set_kill(
     re-allows sends and is admin-only."""
     if not re.fullmatch(r"[a-z0-9_]{1,80}", key):
         raise HTTPException(status_code=400, detail="Bad trigger key")
-    if key != affected.KILL_ALL_KEY and key not in affected.TRIGGER_ENABLED:
+    if key != affected.KILL_ALL_KEY and key not in affected.TRIGGER_CODE_ENABLED:
         raise HTTPException(status_code=404, detail="No such trigger in the hub")
     if not body.killed and principal.role != "admin":
         raise HTTPException(
