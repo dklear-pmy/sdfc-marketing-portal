@@ -200,12 +200,12 @@ TRIGGER_PAYLOAD = {
 # hub won't execute yet — the tab labels these "not enabled", so the list
 # reads as a demonstration of the selection logic, not a pending send.
 TRIGGER_ENABLED = {
-    "tb_signup_260715": False,  # switched off 2026-08-11 — hold until launch decision
+    "tb_signup_260715": True,  # re-enabled 2026-08-24 — Welcome-General-260715 launch; CIO PROD pair 45/41
     "welcome_tickets_single_game": False,  # switched off 2026-08-11; re-baseline before re-enabling
     "welcome_shopify_260715": False,  # draft SQL in the view; WHERE FALSE in the hub
     "stm_welcome_tickets_260807": True,  # complement of the two carve-outs (re-specced 2026-08-18); CIO relay pair 72/65
     "stm_welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 74/67
-    "stm_welcome_tickets_premium_260813": True,  # Premium Season Membership — CIO relay pair 75/71 (re-dated 260807 → 260813 on 2026-08-18)
+    "stm_welcome_tickets_premium_260813": False,  # switched off 2026-08-24 — hold; CIO relay pair 75/71 still draft (re-dated 260807 → 260813 on 2026-08-18)
 }
 
 
