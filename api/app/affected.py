@@ -201,7 +201,7 @@ TRIGGER_PAYLOAD = {
 # reads as a demonstration of the selection logic, not a pending send.
 TRIGGER_ENABLED = {
     "tb_signup_260715": True,  # re-enabled 2026-08-24 — Welcome-General-260715 launch; CIO PROD pair 45/41
-    "welcome_tickets_single_game": False,  # switched off 2026-08-11; re-baseline before re-enabling
+    "welcome_tickets_single_game": True,  # re-enabled 2026-08-24 — Welcome-Tickets-Single-Game-260715; backlog since the Jul-16 baseline must be re-baselined or fired deliberately before arming
     "welcome_shopify_260715": False,  # draft SQL in the view; WHERE FALSE in the hub
     "stm_welcome_tickets_260807": True,  # complement of the two carve-outs (re-specced 2026-08-18); CIO relay pair 72/65
     "stm_welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 74/67
