@@ -189,7 +189,15 @@ membership_cand AS (
   LEFT JOIN (
     SELECT id, name,
            LOWER(NULLIF(NULLIF(email, 'None'), '')) AS email,
-           NULLIF(NULLIF(phone, 'None'), '')        AS phone
+           -- Never emit null. CIO reads a null trigger variable as
+           -- MISSING and rejects the entire Send Event ("Variable
+           -- 'trigger.<field>' is missing"), dropping the member while the
+           -- webhook still returns 200. Fall back to mobile, then to '':
+           -- an empty string is defined, so liquid renders blank instead
+           -- of failing. Mirrors the same guard in the hub's triggers.py.
+           COALESCE(NULLIF(NULLIF(phone, 'None'), ''),
+                    NULLIF(NULLIF(mobile_phone, 'None'), ''),
+                    '') AS phone
     FROM `sdfc-udp-dev.salesforce_silver.user`
     WHERE name NOT IN ('KORE Service', 'KORE Admin',
                        'Leap Marketing', 'Vozzi Integration')
@@ -198,7 +206,11 @@ membership_cand AS (
   LEFT JOIN (
     SELECT id, name,
            LOWER(NULLIF(NULLIF(email, 'None'), '')) AS email,
-           NULLIF(NULLIF(phone, 'None'), '')        AS phone
+           -- Same null guard as `rep` above; a null phone rejects
+           -- the Send Event outright.
+           COALESCE(NULLIF(NULLIF(phone, 'None'), ''),
+                    NULLIF(NULLIF(mobile_phone, 'None'), ''),
+                    '') AS phone
     FROM `sdfc-udp-dev.salesforce_silver.user`
     WHERE name NOT IN ('KORE Service', 'KORE Admin',
                        'Leap Marketing', 'Vozzi Integration')
