@@ -173,7 +173,7 @@ _SF_MEMBERSHIP_PAYLOAD = [
 ]
 TRIGGER_PAYLOAD = {
     "tb_signup_260715": [
-        "dedup_key — the activity_id (exactly-once key)",
+        "dedup_key — the lowercased email (exactly-once key: one welcome per PERSON, not per form entry — since 2026-08-27)",
         "email — from the fan profile",
         "activity_id / campaign_title",
         "signup_form_family — world_cup · stay_informed · etw · other",
