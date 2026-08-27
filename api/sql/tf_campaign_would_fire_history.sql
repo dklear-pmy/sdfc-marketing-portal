@@ -69,11 +69,13 @@ attrs AS (
 ),
 tb_signup_260715_cand AS (
   -- MIRROR of the tb_signup_260715 branch, with the 72h recency replaced by
-  -- history_days. has_season_plan comes from TODAY's attributes (the view
+  -- history_days. Grain is the PERSON (dedup_key = LOWER(email), one row per
+  -- person, newest entry wins) since 2026-08-27 — a fan who submits twice is
+  -- one welcome, not two. has_season_plan comes from TODAY's attributes (the view
   -- keeps no history) — it rides the payload, it is not an entry predicate,
   -- so a stale value cannot change WHO appears here.
   SELECT
-    CAST(a.activity_id AS STRING)                          AS dedup_key,
+    LOWER(f.email)                                         AS dedup_key,
     f.email,
     a.activity_id,
     a.campaign_title,
@@ -105,6 +107,13 @@ tb_signup_260715_cand AS (
     AND f.email != ''
     AND LOWER(f.email) NOT IN ('none', 'null')
     AND a.activity_ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL history_days * 24 HOUR)
+    -- One row per person per run. The hub engine's anti-join only sees
+    -- keys already in the state table; two entries by the same fan in one
+    -- batch must collapse here. MIRROR of triggers.py — keep identical.
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY LOWER(f.email)
+      ORDER BY a.activity_ts DESC NULLS LAST, a.activity_id DESC
+    ) = 1
 ),
 shopify_first_orders AS (
   -- First paid order per email across ALL time, then windowed below — the

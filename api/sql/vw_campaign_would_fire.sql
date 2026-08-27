@@ -44,7 +44,7 @@ attrs AS (
 ),
 tb_signup_260715_cand AS (
   SELECT
-    CAST(a.activity_id AS STRING)                          AS dedup_key,
+    LOWER(f.email)                                         AS dedup_key,
     f.email,
     a.activity_id,
     a.campaign_title,
@@ -76,6 +76,13 @@ tb_signup_260715_cand AS (
     AND f.email != ''
     AND LOWER(f.email) NOT IN ('none', 'null')
     AND a.activity_ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 72 HOUR)
+    -- One row per person per run. The hub engine's anti-join only sees
+    -- keys already in the state table; two entries by the same fan in one
+    -- batch must collapse here. MIRROR of triggers.py — keep identical.
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY LOWER(f.email)
+      ORDER BY a.activity_ts DESC NULLS LAST, a.activity_id DESC
+    ) = 1
 ),
 sg_cand AS (
   SELECT

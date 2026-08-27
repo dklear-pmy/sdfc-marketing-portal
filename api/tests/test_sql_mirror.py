@@ -34,6 +34,24 @@ def test_no_bare_null_phone_survives():
         assert "'')        AS phone" not in sql, name
 
 
+# The signup trigger's exactly-once grain is the PERSON. Keyed on the TB
+# activity_id until 2026-08-27, a fan who submitted a form twice was welcomed
+# twice (four fans got "Email 1" twice overnight 08-26/27). All three copies
+# must key on LOWER(f.email) and collapse each batch to one row per person.
+SIGNUP_KEY = "LOWER(f.email)                                         AS dedup_key"
+SIGNUP_OLD_KEY = "CAST(a.activity_id AS STRING)                          AS dedup_key"
+
+
+def test_signup_keyed_on_person_in_every_mirror():
+    """DRIFT WARNING: keep in step with the hub's triggers.py."""
+    for name in MIRRORED:
+        sql = (SQL_DIR / name).read_text()
+        assert SIGNUP_KEY in sql, name
+        assert SIGNUP_OLD_KEY not in sql, name
+        assert "PARTITION BY LOWER(f.email)" in sql, name
+        assert "ORDER BY a.activity_ts DESC NULLS LAST, a.activity_id DESC" in sql, name
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_") and callable(_fn):
