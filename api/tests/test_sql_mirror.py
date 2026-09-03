@@ -52,6 +52,33 @@ def test_signup_keyed_on_person_in_every_mirror():
         assert "ORDER BY a.activity_ts DESC NULLS LAST, a.activity_id DESC" in sql, name
 
 
+# welcome_shopify_260715 (spec 2026-09-03): first Shopify purchase, no ticket
+# history. Both copies must carry the hub's decisions — refunded/voided are
+# not purchases, staff are excluded, attendance counts as ticket history, and
+# names are blank-not-null (CIO rejects a Send Event with a NULL variable).
+SHOPIFY_PINS = (
+    "financial_status NOT IN ('REFUNDED', 'VOIDED')",
+    r"r'@(sandiegofc\.com|pmygroup\.com)$'",
+    "IFNULL(v.ticket_seats_purchased, 0) = 0",
+    "IFNULL(v.has_season_plan, FALSE) = FALSE",
+    "IFNULL(v.matches_attended_lifetime, 0) = 0",
+    "COALESCE(v.first_name, '')",
+    "COALESCE(v.last_name, '')",
+)
+# The Aug-6 draft: counted refunds as purchases and selected only people the
+# warehouse had never seen — a different, far narrower population.
+SHOPIFY_OLD = "financial_status IN ('PAID', 'PARTIALLY_REFUNDED', 'REFUNDED')"
+
+
+def test_shopify_mirrors_the_hub():
+    """DRIFT WARNING: keep in step with the hub's triggers.py."""
+    for name in MIRRORED:
+        sql = (SQL_DIR / name).read_text()
+        for pin in SHOPIFY_PINS:
+            assert pin in sql, (name, pin)
+        assert SHOPIFY_OLD not in sql, name
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_") and callable(_fn):
