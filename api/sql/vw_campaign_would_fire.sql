@@ -99,6 +99,11 @@ sg_cand AS (
     AND has_season_plan = FALSE
 ),
 shopify_first_orders AS (
+  -- MIRROR of welcome_shopify_260715 in triggers.py (spec 2026-09-03: first
+  -- Shopify purchase, no ticket history). First KEPT order per person across
+  -- the store's whole history; refunded/voided are not purchases, so a
+  -- refunded first order lets the next paid one count; staff at the stadium
+  -- store are not new fans. Keep identical to the hub.
   SELECT
     LOWER(customer_email)  AS email,
     id                     AS order_id,
@@ -106,14 +111,19 @@ shopify_first_orders AS (
     created_at             AS order_at
   FROM `sdfc-udp-dev.shopify_silver.orders`
   WHERE customer_email IS NOT NULL
-    AND customer_email != ''
-    AND LOWER(customer_email) NOT IN ('none', 'null')
-    AND financial_status IN ('PAID', 'PARTIALLY_REFUNDED', 'REFUNDED')
+    AND customer_email LIKE '%@%'
+    AND financial_status NOT IN ('REFUNDED', 'VOIDED')
+    AND NOT REGEXP_CONTAINS(LOWER(customer_email), r'@(sandiegofc\.com|pmygroup\.com)$')
   QUALIFY ROW_NUMBER() OVER (
-    PARTITION BY LOWER(customer_email) ORDER BY created_at
+    PARTITION BY LOWER(customer_email) ORDER BY created_at, id
   ) = 1
 ),
 shopify_cand AS (
+  -- No ticket history = the single-game checks inverted: never bought a
+  -- seat, no season plan, never attended (a fan missing from the view passes
+  -- — Shopify is all we know of them). Names COALESCE to '': shopify_silver
+  -- hashes every name column, the view is blank for ~36% of buyers, and CIO
+  -- rejects a Send Event carrying a NULL trigger variable.
   SELECT
     o.email                                 AS dedup_key,
     o.email,
@@ -121,17 +131,17 @@ shopify_cand AS (
     o.order_number,
     FORMAT_TIMESTAMP('%FT%TZ', o.order_at)  AS first_order_at,
     o.order_at                              AS event_at,
-    v.first_name,
-    v.last_name,
-    (v.email IS NULL)                       AS is_new_to_warehouse
+    COALESCE(v.first_name, '')              AS first_name,
+    COALESCE(v.last_name, '')               AS last_name,
+    (v.email IS NULL
+     OR (v.tm_acct_id IS NULL AND v.tb_fan_created_at IS NULL)) AS is_new_to_warehouse
   FROM shopify_first_orders o
   LEFT JOIN `sdfc-udp-dev.customerio_gold.fan_attributes_cio_sync` v
     ON LOWER(v.email) = o.email
-  WHERE
-    (v.email IS NULL OR (v.tb_fan_created_at IS NULL AND v.tm_acct_id IS NULL))
-    AND COALESCE(v.ticket_seats_purchased, 0) = 0
-    AND COALESCE(v.has_season_plan, FALSE) = FALSE
-    AND o.order_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 72 HOUR)
+  WHERE o.order_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 72 HOUR)
+    AND IFNULL(v.ticket_seats_purchased, 0) = 0
+    AND IFNULL(v.has_season_plan, FALSE) = FALSE
+    AND IFNULL(v.matches_attended_lifetime, 0) = 0
 ),
 membership_cand AS (
   -- MIRROR of _sf_membership_welcome_query in triggers.py: both SF
@@ -329,9 +339,8 @@ WHERE s.dedup_key IS NULL
 
 UNION ALL
 
--- welcome_shopify_260715: DRAFT logic (Automation Index entry criteria; still
--- WHERE FALSE / enabled=False in triggers.py — port + baseline before
--- enabling; the portal marks this trigger "not enabled yet").
+-- welcome_shopify_260715: Welcome-Retail-Shopify-260715 (CIO PROD pair 46/44).
+-- Real query since 2026-09-03; the hub's state row decides whether it sends.
 SELECT
   'welcome_shopify_260715',
   cand.dedup_key,

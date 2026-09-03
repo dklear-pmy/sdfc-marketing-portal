@@ -116,8 +116,13 @@ TRIGGER_LOGIC = {
         "Grain: one fire per email",
     ],
     "welcome_shopify_260715": [
-        "WHERE FALSE — selects nothing",
-        "Awaiting client entry criteria (likely: first merch order, no ticket history)",
+        "Source: shopify_silver.orders, one row per email on the FIRST kept order across the store's whole history",
+        "financial_status NOT IN ('REFUNDED', 'VOIDED') — a refunded first order lets the next paid one count; partial refunds count",
+        "first order created_at ≥ now − 72 hours",
+        "No ticket history, read from the fan-attributes view: ticket_seats_purchased = 0, has_season_plan = FALSE, matches_attended_lifetime = 0 (missing row passes)",
+        "Staff excluded: @sandiegofc.com / @pmygroup.com buyers at the stadium store",
+        "Names COALESCE to '' — shopify_silver hashes every name column and the view is blank for ~36% of buyers; CIO rejects a NULL trigger variable",
+        "Grain: one fire per email — the person's first purchase, exactly once",
     ],
     "stm_welcome_tickets_supporters_260807": [
         "Source: Salesforce opportunity, joined to account (owner rep) and contact (email fallback)",
@@ -190,8 +195,10 @@ TRIGGER_PAYLOAD = {
     ],
     "welcome_shopify_260715": [
         "dedup_key — the email (exactly-once key)",
-        "email / first_name / last_name",
-        "shopify_amount_spent",
+        "email / first_name / last_name ('' when the warehouse has no name)",
+        "order_id / order_number — the first kept Shopify order",
+        "first_order_at — ISO-8601 UTC",
+        "is_new_to_warehouse — TRUE when Shopify is the only system that knows this person (no Ticketmaster account, no TradableBits fan record)",
     ],
     "stm_welcome_tickets_supporters_260807": _SF_MEMBERSHIP_PAYLOAD,
     "stm_welcome_tickets_premium_260813": _SF_MEMBERSHIP_PAYLOAD,
@@ -207,7 +214,7 @@ TRIGGER_PAYLOAD = {
 TRIGGER_CODE_ENABLED = {
     "tb_signup_260715": True,  # code gate opened 2026-08-24 — Welcome-General-260715; CIO PROD pair 45/41
     "welcome_tickets_single_game": True,  # code gate opened 2026-08-24 — backlog since the Jul-16 baseline must be re-baselined or fired deliberately BEFORE enabling
-    "welcome_shopify_260715": False,  # placeholder — WHERE FALSE in the hub; cannot be enabled from the portal
+    "welcome_shopify_260715": True,  # code gate opened 2026-09-03 — first Shopify order, no ticket history; CIO PROD pair 46/44 still draft — held by its state row
     "stm_welcome_tickets_260807": True,  # complement of the two carve-outs (re-specced 2026-08-18); CIO relay pair 72/65
     "stm_welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 74/67
     "stm_welcome_tickets_premium_260813": True,  # CIO relay pair 75/71 still draft — held by its Enabled toggle, not by code

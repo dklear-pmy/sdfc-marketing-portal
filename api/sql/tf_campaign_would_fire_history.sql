@@ -15,7 +15,7 @@
 -- history if it selects on a TIMESTAMPED EVENT, so "what would have fired N
 -- days ago" is reconstructable from the event's own time.
 --   tb_signup_260715      — event = the TB form-entry activity (activity_ts).
---   welcome_shopify_260715 — event = the first paid Shopify order (order_at).
+--   welcome_shopify_260715 — event = the first kept Shopify order (order_at).
 --   the three 260807 STM triggers — event = the opportunity close date
 --     (supporters, premium, and general as of 2026-08-18).
 -- welcome_tickets_single_game is deliberately ABSENT: it selects on current
@@ -116,9 +116,14 @@ tb_signup_260715_cand AS (
     ) = 1
 ),
 shopify_first_orders AS (
-  -- First paid order per email across ALL time, then windowed below — the
+  -- First KEPT order per email across ALL time, then windowed below — the
   -- trigger's event is a fan's FIRST order, so the ranking must see every
   -- order, not just the window's.
+  -- MIRROR of welcome_shopify_260715 in triggers.py (spec 2026-09-03: first
+  -- Shopify purchase, no ticket history). First KEPT order per person across
+  -- the store's whole history; refunded/voided are not purchases, so a
+  -- refunded first order lets the next paid one count; staff at the stadium
+  -- store are not new fans. Keep identical to the hub.
   SELECT
     LOWER(customer_email)  AS email,
     id                     AS order_id,
@@ -126,19 +131,23 @@ shopify_first_orders AS (
     created_at             AS order_at
   FROM `sdfc-udp-dev.shopify_silver.orders`
   WHERE customer_email IS NOT NULL
-    AND customer_email != ''
-    AND LOWER(customer_email) NOT IN ('none', 'null')
-    AND financial_status IN ('PAID', 'PARTIALLY_REFUNDED', 'REFUNDED')
+    AND customer_email LIKE '%@%'
+    AND financial_status NOT IN ('REFUNDED', 'VOIDED')
+    AND NOT REGEXP_CONTAINS(LOWER(customer_email), r'@(sandiegofc\.com|pmygroup\.com)$')
   QUALIFY ROW_NUMBER() OVER (
-    PARTITION BY LOWER(customer_email) ORDER BY created_at
+    PARTITION BY LOWER(customer_email) ORDER BY created_at, id
   ) = 1
 ),
 shopify_cand AS (
-  -- MIRROR of the welcome_shopify_260715 branch (itself DRAFT logic — the
-  -- hub trigger is still WHERE FALSE), 72h replaced by history_days. The
-  -- no-ticket-history predicates read today's attributes, so this answers
-  -- "first-order fans in the window who are STILL merch-only", which is the
-  -- honest reconstruction available.
+  -- MIRROR of the welcome_shopify_260715 branch, 72h replaced by
+  -- history_days. The no-ticket-history predicates read today's attributes,
+  -- so this answers "first-order fans in the window who STILL have no ticket
+  -- history", which is the honest reconstruction available.
+  -- No ticket history = the single-game checks inverted: never bought a
+  -- seat, no season plan, never attended (a fan missing from the view passes
+  -- — Shopify is all we know of them). Names COALESCE to '': shopify_silver
+  -- hashes every name column, the view is blank for ~36% of buyers, and CIO
+  -- rejects a Send Event carrying a NULL trigger variable.
   SELECT
     o.email                                 AS dedup_key,
     o.email,
@@ -146,17 +155,17 @@ shopify_cand AS (
     o.order_number,
     FORMAT_TIMESTAMP('%FT%TZ', o.order_at)  AS first_order_at,
     o.order_at                              AS event_at,
-    v.first_name,
-    v.last_name,
-    (v.email IS NULL)                       AS is_new_to_warehouse
+    COALESCE(v.first_name, '')              AS first_name,
+    COALESCE(v.last_name, '')               AS last_name,
+    (v.email IS NULL
+     OR (v.tm_acct_id IS NULL AND v.tb_fan_created_at IS NULL)) AS is_new_to_warehouse
   FROM shopify_first_orders o
   LEFT JOIN `sdfc-udp-dev.customerio_gold.fan_attributes_cio_sync` v
     ON LOWER(v.email) = o.email
-  WHERE
-    (v.email IS NULL OR (v.tb_fan_created_at IS NULL AND v.tm_acct_id IS NULL))
-    AND COALESCE(v.ticket_seats_purchased, 0) = 0
-    AND COALESCE(v.has_season_plan, FALSE) = FALSE
-    AND o.order_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL history_days * 24 HOUR)
+  WHERE o.order_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL history_days * 24 HOUR)
+    AND IFNULL(v.ticket_seats_purchased, 0) = 0
+    AND IFNULL(v.has_season_plan, FALSE) = FALSE
+    AND IFNULL(v.matches_attended_lifetime, 0) = 0
 ),
 membership_cand AS (
   -- MIRROR of _sf_membership_welcome_query in triggers.py: all three SF

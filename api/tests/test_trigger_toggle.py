@@ -15,7 +15,6 @@ from app.affected import (  # noqa: E402
 )
 
 OPEN = next(k for k, v in TRIGGER_CODE_ENABLED.items() if v)
-CLOSED = next(k for k, v in TRIGGER_CODE_ENABLED.items() if not v)
 
 
 def test_admin_can_enable_a_code_open_trigger():
@@ -33,11 +32,19 @@ def test_operator_cannot_enable_but_can_disable_or_draft():
 
 def test_code_closed_trigger_is_locked_at_draft():
     """A placeholder query (WHERE FALSE) is never evaluated by the hub; the
-    portal shows it as draft and refuses every change, including to draft."""
-    for state in TRIGGER_STATES:
-        status, msg = state_change_error(CLOSED, state, "admin")
-        assert status == 400 and "draft" in msg, state
-    assert effective_state(CLOSED, "enabled") == "draft"
+    portal shows it as draft and refuses every change, including to draft.
+    Every real trigger has been code-open since shopify's query landed
+    (2026-09-03), so the closed case is a synthetic placeholder registered
+    for this test only — the gate must still hold for the next one."""
+    closed = "_placeholder_where_false"
+    TRIGGER_CODE_ENABLED[closed] = False
+    try:
+        for state in TRIGGER_STATES:
+            status, msg = state_change_error(closed, state, "admin")
+            assert status == 400 and "draft" in msg, state
+        assert effective_state(closed, "enabled") == "draft"
+    finally:
+        del TRIGGER_CODE_ENABLED[closed]
 
 
 def test_effective_state_defaults():
@@ -71,16 +78,18 @@ def test_unknown_key_is_404_before_any_role_check():
 
 
 def test_code_gate_mirror_matches_the_hub():
-    """The five code-open triggers as of 2026-08-24 (hub PR #230); shopify is
-    the only placeholder. DRIFT WARNING: update together with triggers.py."""
+    """All six hub triggers are code-open as of 2026-09-03 (shopify's real
+    query replaced the last WHERE FALSE placeholder). DRIFT WARNING: update
+    together with triggers.py."""
     assert {k for k, v in TRIGGER_CODE_ENABLED.items() if v} == {
         "tb_signup_260715",
         "welcome_tickets_single_game",
+        "welcome_shopify_260715",
         "stm_welcome_tickets_260807",
         "stm_welcome_tickets_supporters_260807",
         "stm_welcome_tickets_premium_260813",
     }
-    assert TRIGGER_CODE_ENABLED["welcome_shopify_260715"] is False
+    assert all(TRIGGER_CODE_ENABLED.values()), "no placeholder should remain"
 
 
 if __name__ == "__main__":
