@@ -33,6 +33,7 @@ DATASETS = [
     "ticketmaster_silver",
     "tradablebits_silver",
     "shopify_silver",
+    "ticketmaster_gold",  # shopify bought-or-attended check (2026-09-03)
 ]
 ROUTINE = {
     "projectId": PROJECT,

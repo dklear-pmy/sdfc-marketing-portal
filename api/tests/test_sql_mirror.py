@@ -67,6 +67,13 @@ SHOPIFY_PINS = (
     # spend rides the event (2026-09-03): the first order's total, NULL-guarded
     "IFNULL(o.current_total, 0.0)",
     "cand.order_total,",
+    # bought-or-attended across every reachable Archtics account (2026-09-03)
+    "tb_crm_customers_emails",
+    "tb_ticket_transfer_edges",
+    "WHERE status = 'SOLD'",
+    "WHERE scan_type IS NOT NULL",
+    "NOT IFNULL(h.bought, FALSE)",
+    "NOT IFNULL(h.attended, FALSE)",
 )
 # The Aug-6 draft: counted refunds as purchases and selected only people the
 # warehouse had never seen — a different, far narrower population.
