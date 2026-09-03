@@ -128,6 +128,7 @@ shopify_first_orders AS (
     LOWER(customer_email)  AS email,
     id                     AS order_id,
     order_number,
+    current_total,
     created_at             AS order_at
   FROM `sdfc-udp-dev.shopify_silver.orders`
   WHERE customer_email IS NOT NULL
@@ -153,6 +154,7 @@ shopify_cand AS (
     o.email,
     o.order_id,
     o.order_number,
+    IFNULL(o.current_total, 0.0)            AS order_total,
     FORMAT_TIMESTAMP('%FT%TZ', o.order_at)  AS first_order_at,
     o.order_at                              AS event_at,
     COALESCE(v.first_name, '')              AS first_name,
@@ -344,7 +346,7 @@ SELECT
   cand.event_at,
   TO_JSON_STRING(STRUCT(
     cand.dedup_key, cand.email, cand.order_id, cand.order_number,
-    cand.first_order_at, cand.first_name, cand.last_name,
+    cand.order_total, cand.first_order_at, cand.first_name, cand.last_name,
     cand.is_new_to_warehouse
   ))
 FROM shopify_cand cand

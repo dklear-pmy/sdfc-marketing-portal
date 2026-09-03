@@ -64,6 +64,9 @@ SHOPIFY_PINS = (
     "IFNULL(v.matches_attended_lifetime, 0) = 0",
     "COALESCE(v.first_name, '')",
     "COALESCE(v.last_name, '')",
+    # spend rides the event (2026-09-03): the first order's total, NULL-guarded
+    "IFNULL(o.current_total, 0.0)",
+    "cand.order_total,",
 )
 # The Aug-6 draft: counted refunds as purchases and selected only people the
 # warehouse had never seen — a different, far narrower population.

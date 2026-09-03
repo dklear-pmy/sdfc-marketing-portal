@@ -197,6 +197,7 @@ TRIGGER_PAYLOAD = {
         "dedup_key — the email (exactly-once key)",
         "email / first_name / last_name ('' when the warehouse has no name)",
         "order_id / order_number — the first kept Shopify order",
+        "order_total — what the fan paid on that order (after discounts, incl. tax and shipping, USD); on the event for segmentation, not a template variable",
         "first_order_at — ISO-8601 UTC",
         "is_new_to_warehouse — TRUE when Shopify is the only system that knows this person (no Ticketmaster account, no TradableBits fan record)",
     ],
