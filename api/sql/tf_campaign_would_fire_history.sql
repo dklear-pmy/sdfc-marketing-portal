@@ -139,7 +139,7 @@ shopify_first_orders AS (
     PARTITION BY LOWER(customer_email) ORDER BY created_at, id
   ) = 1
 ),
-shopify_cand AS (
+shopify_cand_pre AS (
   -- MIRROR of the welcome_shopify_260715 branch, 72h replaced by
   -- history_days. The no-ticket-history predicates read today's attributes,
   -- so this answers "first-order fans in the window who STILL have no ticket
@@ -168,6 +168,51 @@ shopify_cand AS (
     AND IFNULL(v.ticket_seats_purchased, 0) = 0
     AND IFNULL(v.has_season_plan, FALSE) = FALSE
     AND IFNULL(v.matches_attended_lifetime, 0) = 0
+),
+-- Every Archtics account reachable from the email, not only the one
+-- fan_attributes links (CIO attribute / Salesforce). MIRROR of the hub's
+-- accts / history CTEs in triggers.py — keep identical. Sentinel accts
+-- ('', '0', '-1', '-2') are shared buckets, never a person.
+shopify_accts AS (
+  SELECT DISTINCT c.email, a.acct_id
+  FROM shopify_cand_pre c
+  JOIN (
+    SELECT LOWER(TRIM(email_addr)) AS email, CAST(acct_id AS STRING) AS acct_id
+    FROM `sdfc-udp-dev.ticketmaster_silver.tb_crm_customers_emails`
+    WHERE email_addr LIKE '%@%'
+    UNION DISTINCT
+    SELECT LOWER(TRIM(dst_email)), dst_acct_id
+    FROM `sdfc-udp-dev.ticketmaster_gold.tb_ticket_transfer_edges`
+    WHERE dst_email IS NOT NULL AND dst_email NOT IN ('', 'None')
+      AND activity_name IN ('Forward', 'TE Resale', 'Retail Forward')
+    UNION DISTINCT
+    SELECT LOWER(email), tm_acct_id
+    FROM `sdfc-udp-dev.customerio_gold.fan_attributes_cio_sync`
+    WHERE tm_acct_id IS NOT NULL
+  ) a ON a.email = c.email
+  WHERE a.acct_id IS NOT NULL AND a.acct_id NOT IN ('', '0', '-1', '-2', 'None')
+),
+-- Exclude only on BOUGHT (a SOLD seat under any reachable account) or
+-- ATTENDED (a real gate scan under any reachable account). Rule per Dean
+-- 2026-09-03: a received transfer alone never disqualifies. A transfer does
+-- not move the seat, so recipients are caught by attendance, as intended.
+shopify_history AS (
+  SELECT a.email,
+         LOGICAL_OR(s.acct_id IS NOT NULL) AS bought,
+         LOGICAL_OR(t.acct_id IS NOT NULL) AS attended
+  FROM shopify_accts a
+  LEFT JOIN (SELECT DISTINCT acct_id FROM `sdfc-udp-dev.ticketmaster_gold.tb_seats_combined` WHERE status = 'SOLD') s
+    ON s.acct_id = a.acct_id
+  LEFT JOIN (SELECT DISTINCT acct_id FROM `sdfc-udp-dev.ticketmaster_gold.tb_attendance` WHERE scan_type IS NOT NULL) t
+    ON t.acct_id = a.acct_id
+  GROUP BY a.email
+),
+shopify_cand AS (
+  SELECT p.*
+  FROM shopify_cand_pre p
+  LEFT JOIN shopify_history h ON h.email = p.email
+  WHERE NOT IFNULL(h.bought, FALSE)
+    AND NOT IFNULL(h.attended, FALSE)
 ),
 membership_cand AS (
   -- MIRROR of _sf_membership_welcome_query in triggers.py: all three SF
