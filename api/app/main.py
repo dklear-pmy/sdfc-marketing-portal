@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from . import admin, affected, bqstate, customers, emailer, export_xlsx, ledger, payloads, runner, shadow, slugs, stadium, tripwires
+from . import admin, affected, bqstate, customers, emailer, export_xlsx, ledger, payloads, runner, shadow, slugs, spend, stadium, tripwires
 from . import config
 from .auth import Principal, require_access, require_role, require_scheduler_oidc
 from .config import CORS_ORIGINS
@@ -868,6 +868,90 @@ def alert_recipients_add(
 @app.delete("/api/admin/alert-recipients/{email}")
 def alert_recipients_remove(email: str, principal: Principal = require_role("admin")) -> dict:
     return emailer.remove_recipient(_valid_email(email))
+
+
+# ---------------------------------------------------------------------------
+# Pipeline Spend (platform section). Data is written hourly by the
+# bq-spend-monitor Cloud Run job; the portal reads it and owns three writes:
+# acknowledge a finding (operator), accept a baseline version (admin), and
+# the two alert recipient lists (admin).
+
+
+@app.get("/api/spend/summary")
+def spend_summary(principal: Principal = require_access("platform")) -> dict:
+    return spend.summary()
+
+
+@app.get("/api/spend/dags")
+def spend_dags(principal: Principal = require_access("platform")) -> dict:
+    return spend.dags()
+
+
+@app.get("/api/spend/dags/{dag_id}")
+def spend_dag_detail(dag_id: str, principal: Principal = require_access("platform")) -> dict:
+    try:
+        return spend.dag_detail(dag_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Unknown DAG {dag_id}")
+
+
+@app.get("/api/spend/findings")
+def spend_findings(status: str = "open", principal: Principal = require_access("platform")) -> dict:
+    return {"findings": spend.findings(status=status)}
+
+
+class SpendNote(BaseModel):
+    note: str | None = None
+
+
+@app.post("/api/spend/findings/{finding_id}/ack")
+def spend_ack_finding(
+    finding_id: str, body: SpendNote | None = None, principal: Principal = require_access("platform", "operator")
+) -> dict:
+    return spend.ack_finding(finding_id, principal.email or "operator", (body.note if body else None))
+
+
+@app.post("/api/spend/dags/{dag_id}/baseline/accept")
+def spend_accept_baseline(
+    dag_id: str, body: SpendNote | None = None, principal: Principal = require_role("admin")
+) -> dict:
+    try:
+        return spend.accept_baseline(dag_id, principal.email or "admin", (body.note if body else None))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/admin/spend-alert-recipients")
+def spend_recipients_list(principal: Principal = require_role("admin")) -> dict:
+    return spend.list_recipients()
+
+
+@app.post("/api/admin/spend-alert-recipients/{list_name}")
+def spend_recipients_add(
+    list_name: str, body: RecipientRequest, principal: Principal = require_role("admin")
+) -> dict:
+    if body.label and len(body.label) > 80:
+        raise HTTPException(status_code=400, detail="Label too long")
+    try:
+        return spend.add_recipient(list_name, _valid_email(body.email), (body.label or "").strip() or None, principal.email)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/admin/spend-alert-recipients/{list_name}/{email}")
+def spend_recipients_remove(list_name: str, email: str, principal: Principal = require_role("admin")) -> dict:
+    try:
+        return spend.remove_recipient(list_name, _valid_email(email))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/admin/spend-alert-recipients/{list_name}/test")
+def spend_recipients_test(list_name: str, principal: Principal = require_role("admin")) -> dict:
+    try:
+        return spend.send_test(list_name, principal.email)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 class InviteRequest(BaseModel):

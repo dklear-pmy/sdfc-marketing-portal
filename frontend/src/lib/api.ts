@@ -688,3 +688,195 @@ export interface HarnessRun {
   timeline: RunTimelineEntry[];
   detail: string | null;
 }
+
+/* ---- Pipeline Spend (platform section; data from the bq-spend-monitor job) ---- */
+
+export type DagState = 'learning' | 'armed' | 'unreviewed_change' | 'review';
+export type FindingKind =
+  | 'schedule_changed'
+  | 'new_dag'
+  | 'new_table'
+  | 'scan_growth'
+  | 'stacking'
+  | 'silence'
+  | 'hourly_total'
+  | 'ceiling'
+  | 'retries';
+export type FindingStatus = 'open' | 'acknowledged' | 'accepted' | 'resolved';
+
+export interface SpendDaily {
+  day_pt: string;
+  usd: number;
+  runs?: number;
+}
+
+export interface SpendTiles {
+  today_so_far: number;
+  expected_so_far: number;
+  yesterday: number;
+  approved_per_day: number;
+  mtd: number;
+  last_month_same_point: number;
+  projected_month: number;
+  daily_14: SpendDaily[];
+  open_findings: number;
+  critical_findings: number;
+  awaiting_acceptance: number;
+}
+
+export interface SpendHeatCell {
+  hour: string;
+  hour_pt: string;
+  actual: number | null;
+  baseline: number | null;
+  ratio: number | null;
+}
+
+export interface SpendMonitorRun {
+  run_at: string;
+  ok: boolean;
+  airflow_ok: boolean | null;
+  dataform_ok: boolean | null;
+  hours_rolled: number | null;
+  invocations_indexed: number | null;
+  findings_opened: number | null;
+  emails_sent: number | null;
+  duration_s: number | null;
+  error: string | null;
+}
+
+export interface SpendSummary {
+  tiles: SpendTiles;
+  heatmap: SpendHeatCell[];
+  last_run: SpendMonitorRun | null;
+  generated_at: string;
+}
+
+export interface SpendDagRow {
+  dag_id: string;
+  schedule: string | null;
+  is_paused: boolean;
+  tags: string[];
+  cloud_run_jobs: string[];
+  first_seen: string;
+  last_seen: string;
+  version: number | null;
+  learning_until: string | null;
+  accepted_at: string | null;
+  accepted_by: string | null;
+  change_reason: string | null;
+  state: DagState;
+  baseline_usd_per_day: number | null;
+  prev_usd_per_day: number | null;
+  runs_per_day_expected: number | null;
+  baseline_runs_per_day: number | null;
+  usd_per_day_7d: number;
+  runs_per_day_7d: number;
+  projected_month: number;
+  open_findings: number;
+  critical_findings: number;
+  series: SpendDaily[];
+}
+
+export interface SpendPrincipalRow {
+  dag_id: string;
+  usd_per_day_7d: number;
+  projected_month: number;
+  series: SpendDaily[];
+}
+
+export interface SpendDagsResponse {
+  dags: SpendDagRow[];
+  principals: SpendPrincipalRow[];
+  generated_at: string;
+}
+
+export interface SpendFinding {
+  finding_id: string;
+  kind: FindingKind;
+  severity: 'critical' | 'info';
+  dag_id: string | null;
+  table_key: string | null;
+  first_seen: string;
+  last_seen: string;
+  observed: number | null;
+  expected: number | null;
+  magnitude: number | null;
+  usd_per_month_delta: number | null;
+  detail: string | null;
+  status: FindingStatus;
+  acted_by: string | null;
+  acted_at: string | null;
+  note: string | null;
+}
+
+export interface SpendVersion {
+  dag_id: string;
+  version: number;
+  valid_from: string;
+  valid_to: string | null;
+  schedule: string | null;
+  tags: string[];
+  learning_until: string;
+  status: 'learning' | 'armed' | 'superseded';
+  change_reason: string | null;
+  runs_observed: number | null;
+  runs_per_day_expected: number | null;
+  runs_per_day: number | null;
+  usd_per_run_p50: number | null;
+  usd_per_day: number | null;
+  prev_usd_per_day: number | null;
+  finalized_at: string | null;
+  accepted_by: string | null;
+  accepted_at: string | null;
+}
+
+export interface SpendTableRow {
+  table_key: string;
+  action_type: string | null;
+  runs: number;
+  usd_per_day: number;
+  gib_per_run_p50: number;
+  baseline_gib_per_run: number | null;
+  baseline_usd_per_day: number | null;
+  gib_ratio: number | null;
+  in_baseline: boolean;
+}
+
+export interface SpendRun {
+  invocation_id: string;
+  dag_run_id: string | null;
+  tag: string | null;
+  compile_sha: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  state: string | null;
+  source: 'xcom' | 'dataform_api';
+  usd: number;
+  bytes_billed: number;
+}
+
+export interface SpendDagDetail {
+  dag: SpendDagRow & { state: DagState };
+  versions: SpendVersion[];
+  current_version: SpendVersion | null;
+  tables: SpendTableRow[];
+  hourly: { hour: string; usd: number; bytes_billed: number; runs: number }[];
+  runs: SpendRun[];
+  compile_changes: { compile_sha: string; first_seen: string }[];
+  findings: SpendFinding[];
+  generated_at: string;
+}
+
+export interface SpendRecipient {
+  list_name: 'spend_critical' | 'spend_digest';
+  email: string;
+  label: string | null;
+  added_by: string | null;
+  added_at: string;
+}
+
+export interface SpendRecipientsResponse {
+  lists: Record<'spend_critical' | 'spend_digest', SpendRecipient[]>;
+  fallback: string | null;
+}

@@ -14,7 +14,7 @@ from firebase_admin import auth as fb_auth
 from .config import GCP_PROJECT
 
 VALID_ROLES = ("viewer", "operator", "admin")
-VALID_SECTIONS = ("marketing", "fans", "stadium")
+VALID_SECTIONS = ("marketing", "fans", "stadium", "platform")
 
 _app = None
 

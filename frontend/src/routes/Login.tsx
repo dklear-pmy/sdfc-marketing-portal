@@ -51,7 +51,7 @@ export default function Login() {
           <span className="size-2 rounded-[2px] bg-sdfc-orange" aria-hidden />
           <span className="font-heading text-3xl font-bold tracking-wide text-white">SDFC</span>
           <span className="h-6 w-px bg-sdfc-overlay" aria-hidden />
-          <span className="text-base font-medium text-sdfc-chrome-light">Marketing Ops</span>
+          <span className="text-base font-medium text-sdfc-chrome-light">Technology Portal</span>
         </div>
         <Card className="w-full">
           <CardHeader>

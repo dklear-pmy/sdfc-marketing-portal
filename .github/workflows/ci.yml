@@ -57,3 +57,5 @@ jobs:
       - run: python tests/test_sample_send.py
       # Enabled-toggle gate: admin-only arming, code-closed triggers refused.
       - run: python tests/test_trigger_toggle.py
+      # Pipeline Spend: hour-of-day baselines, heatmap cells, tiles, DAG state derivation.
+      - run: python tests/test_spend_model.py
