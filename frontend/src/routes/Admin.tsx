@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { ROLE_LABELS, SECTIONS, SECTION_LABELS, type Role, type Section } from '@/lib/auth';
+import { SpendAlertRecipientsCard } from '@/components/SpendAlertRecipients';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -241,6 +242,8 @@ export default function Admin() {
       </Card>
 
       <AlertRecipientsCard />
+
+      <SpendAlertRecipientsCard />
 
       <Card>
         <CardHeader>

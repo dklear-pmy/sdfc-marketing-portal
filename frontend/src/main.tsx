@@ -19,6 +19,8 @@ import Tripwires from '@/routes/Tripwires';
 
 // Stadium pulls in MapLibre GL (~250 KB gzip) — split it out of the main bundle.
 const Stadium = lazy(() => import('@/routes/Stadium'));
+// Pipeline Spend is a Platform-section page most marketing users never open — split it too.
+const Spend = lazy(() => import('@/routes/Spend'));
 import Admin from '@/routes/Admin';
 import './index.css';
 
@@ -78,6 +80,16 @@ const router = createBrowserRouter([
           <RequireSection section="stadium">
             <Suspense fallback={null}>
               <Stadium />
+            </Suspense>
+          </RequireSection>
+        ),
+      },
+      {
+        path: 'spend',
+        element: (
+          <RequireSection section="platform">
+            <Suspense fallback={null}>
+              <Spend />
             </Suspense>
           </RequireSection>
         ),

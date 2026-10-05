@@ -41,6 +41,8 @@ const paths = {
   mail: 'M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
   bolt: 'M13 10V3L4 14h7v7l9-11h-7z',
   chevronDown: 'M19 9l-7 7-7-7',
+  chart:
+    'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z',
 };
 
 const nav: { to: string; label: string; icon: string; section: Section }[] = [
@@ -49,6 +51,7 @@ const nav: { to: string; label: string; icon: string; section: Section }[] = [
   { to: '/ledger', label: 'Fan Ledger', icon: paths.ledger, section: 'fans' },
   { to: '/tripwires', label: 'Tripwires', icon: paths.bell, section: 'marketing' },
   { to: '/stadium', label: 'Stadium Heat', icon: paths.map, section: 'stadium' },
+  { to: '/spend', label: 'Pipeline Spend', icon: paths.chart, section: 'platform' },
 ];
 
 /* Stale-but-kept destinations, parked at the bottom behind "More" so the
@@ -64,7 +67,7 @@ function Wordmark() {
       <span className="size-2 rounded-[2px] bg-sdfc-orange" aria-hidden />
       <span className="font-heading text-2xl font-bold tracking-wide text-white">SDFC</span>
       <span className="h-5 w-px bg-sdfc-overlay" aria-hidden />
-      <span className="text-sm font-medium text-sdfc-chrome">Marketing Ops</span>
+      <span className="text-sm font-medium text-sdfc-chrome">Technology Portal</span>
     </NavLink>
   );
 }

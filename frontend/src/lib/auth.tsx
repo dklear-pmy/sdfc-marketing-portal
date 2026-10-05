@@ -19,12 +19,13 @@ export const ROLE_LABELS: Record<Role, string> = {
   admin: 'Admin',
 };
 
-export type Section = 'marketing' | 'fans' | 'stadium';
-export const SECTIONS: readonly Section[] = ['marketing', 'fans', 'stadium'];
+export type Section = 'marketing' | 'fans' | 'stadium' | 'platform';
+export const SECTIONS: readonly Section[] = ['marketing', 'fans', 'stadium', 'platform'];
 export const SECTION_LABELS: Record<Section, string> = {
   marketing: 'Marketing tools',
   fans: 'Fan data',
   stadium: 'Stadium',
+  platform: 'Platform',
 };
 
 /* Mirrors the API's resolve_sections: admins hold everything, and a MISSING
@@ -132,6 +133,7 @@ const SECTION_HOME: Record<Section, string> = {
   marketing: '/triggers',
   fans: '/fans',
   stadium: '/stadium',
+  platform: '/spend',
 };
 
 export function LandingRedirect() {

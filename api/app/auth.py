@@ -24,8 +24,8 @@ from .config import AUTH_DISABLED, GCP_PROJECT, PORTAL_SA_EMAIL, TICK_AUDIENCE
 Role = Literal["viewer", "operator", "admin"]
 _ROLE_RANK: dict[str, int] = {"viewer": 0, "operator": 1, "admin": 2}
 
-Section = Literal["marketing", "fans", "stadium"]
-SECTIONS: tuple[str, ...] = ("marketing", "fans", "stadium")
+Section = Literal["marketing", "fans", "stadium", "platform"]
+SECTIONS: tuple[str, ...] = ("marketing", "fans", "stadium", "platform")
 
 _app = None
 
