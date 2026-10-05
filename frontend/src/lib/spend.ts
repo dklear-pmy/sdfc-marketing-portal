@@ -48,7 +48,7 @@ export const KIND_LABEL: Record<FindingKind, string> = {
   silence: 'Silent',
   hourly_total: 'Hourly total',
   ceiling: 'Ceiling',
-  retries: 'Retried attempts',
+  retries: 'Failed or retried attempts',
 };
 
 export const STATUS_LABEL: Record<FindingStatus, string> = {
