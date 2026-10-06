@@ -92,6 +92,9 @@ TRIGGER_CAPS = {
     "stm_welcome_tickets_260807": 100,
     "stm_welcome_tickets_supporters_260807": 25,
     "stm_welcome_tickets_premium_260813": 25,
+    "welcome_chrome_crew_starter_260828": 300,
+    "welcome_chrome_crew_captain_260828": 100,
+    "welcome_chrome_crew_captain_stm_260828": 250,
 }
 
 # Bullet-list mirror of each trigger's selection SQL in triggers.py (same
@@ -159,6 +162,34 @@ TRIGGER_LOGIC = {
         "No-email rows held, not fired, until an email lands in SF or the window ages out",
         "Grain: one fire per opportunity_id",
     ],
+    "welcome_chrome_crew_starter_260828": [
+        "Source: TradableBits bronze activities, Starter form page tab 556708935 (partitions since 2026-08-01)",
+        "First entry per guardian email; names as typed on the form",
+        "Skipped while the guardian holds a Captain or Member Captain membership",
+        "Tier order (SDFC, 2026-10-06): paid Captain > Member (STM) Captain > Starter — a lower tier fires only while the guardian holds no higher tier",
+        "No time window: every member since the 2026-08-17 launch; the backlog at arming time is the absorb-or-send decision",
+        "No child data on the event — the email goes to the guardian",
+        "Grain: one fire per guardian email per tier",
+    ],
+    "welcome_chrome_crew_captain_260828": [
+        "Source: shopify_silver.order_items + orders, paid Captain product 10350185709853 (SKU SDF907328)",
+        "financial_status NOT IN ('REFUNDED', 'VOIDED') — a refunded order is not a held membership",
+        "First kept order per guardian email; names from the fan-attributes view, then the Starter form, else ''",
+        "Tier order (SDFC, 2026-10-06): paid Captain > Member (STM) Captain > Starter — a lower tier fires only while the guardian holds no higher tier",
+        "No time window: every member since the 2026-08-17 launch; the backlog at arming time is the absorb-or-send decision",
+        "No child data on the event — the email goes to the guardian",
+        "Grain: one fire per guardian email per tier",
+    ],
+    "welcome_chrome_crew_captain_stm_260828": [
+        "Source: shopify_silver.order_items + orders, Member Captain product 10353083580701 (SKU SDF907366; one free per STM)",
+        "financial_status NOT IN ('REFUNDED', 'VOIDED') — a refunded order is not a held membership",
+        "First kept order per guardian email; names from the fan-attributes view, then the Starter form, else ''",
+        "Skipped while the guardian holds a paid Captain membership",
+        "Tier order (SDFC, 2026-10-06): paid Captain > Member (STM) Captain > Starter — a lower tier fires only while the guardian holds no higher tier",
+        "No time window: every member since the 2026-08-17 launch; the backlog at arming time is the absorb-or-send decision",
+        "No child data on the event — the email goes to the guardian",
+        "Grain: one fire per guardian email per tier",
+    ],
 }
 
 # The webhook payload each trigger POSTs — field per line, mirrored from the
@@ -205,6 +236,29 @@ TRIGGER_PAYLOAD = {
     "stm_welcome_tickets_supporters_260807": _SF_MEMBERSHIP_PAYLOAD,
     "stm_welcome_tickets_premium_260813": _SF_MEMBERSHIP_PAYLOAD,
     "stm_welcome_tickets_260807": _SF_MEMBERSHIP_PAYLOAD,
+    "welcome_chrome_crew_starter_260828": [
+        "dedup_key — the guardian's lowercased email (exactly-once key: one welcome per guardian per tier)",
+        "email / first_name / last_name — the guardian ('' when the warehouse has no name)",
+        "membership_tier — starter · captain · captain_stm",
+        "activity_id — the guardian's first Starter form entry",
+        "joined_at — that entry's time, ISO-8601 UTC",
+    ],
+    "welcome_chrome_crew_captain_260828": [
+        "dedup_key — the guardian's lowercased email (exactly-once key: one welcome per guardian per tier)",
+        "email / first_name / last_name — the guardian ('' when the warehouse has no name)",
+        "membership_tier — starter · captain · captain_stm",
+        "order_id / order_number — the guardian's first kept Captain order",
+        "order_total — what was paid on that order (USD)",
+        "joined_at — that order's time, ISO-8601 UTC",
+    ],
+    "welcome_chrome_crew_captain_stm_260828": [
+        "dedup_key — the guardian's lowercased email (exactly-once key: one welcome per guardian per tier)",
+        "email / first_name / last_name — the guardian ('' when the warehouse has no name)",
+        "membership_tier — starter · captain · captain_stm",
+        "order_id / order_number — the guardian's first kept Member Captain order",
+        "order_total — what was paid on that order (USD; $0 for the free STM claim)",
+        "joined_at — that order's time, ISO-8601 UTC",
+    ],
 }
 
 # Mirror of each trigger's CODE GATE in the hub (Trigger.enabled in
@@ -220,6 +274,9 @@ TRIGGER_CODE_ENABLED = {
     "stm_welcome_tickets_260807": True,  # complement of the two carve-outs (re-specced 2026-08-18); CIO relay pair 72/65
     "stm_welcome_tickets_supporters_260807": True,  # SUPP deals — CIO relay pair 74/67
     "stm_welcome_tickets_premium_260813": True,  # CIO relay pair 75/71 still draft — held by its Enabled toggle, not by code
+    "welcome_chrome_crew_starter_260828": True,  # Kids Club, code gate opened 2026-10-06; CIO journey 84, relay campaign not built — held by its state row
+    "welcome_chrome_crew_captain_260828": True,  # Kids Club, code gate opened 2026-10-06; CIO journey 83, relay campaign not built — held by its state row
+    "welcome_chrome_crew_captain_stm_260828": True,  # Kids Club, code gate opened 2026-10-06; CIO journey 82, relay campaign not built — held by its state row
 }
 
 

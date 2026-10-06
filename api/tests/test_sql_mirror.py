@@ -89,6 +89,31 @@ def test_shopify_mirrors_the_hub():
         assert SHOPIFY_OLD not in sql, name
 
 
+# Chrome Crew (Kids Club) welcomes, 2026-10-06: mirrored in the live view only
+# (the history function has no branch yet). Must carry the hub's decisions —
+# the TB page tab and Shopify product ids, refunds not held, the tier order,
+# guardian grain with no child fields, blank-not-null names.
+CHROME_CREW_PINS = (
+    "page_tab_id = '556708935'",
+    "WHERE li.product_id IN ('10350185709853', '10353083580701')",
+    "WHERE cand.starter IS NOT NULL AND cand.captain IS NULL AND cand.captain_stm IS NULL",
+    "WHERE cand.captain_stm IS NOT NULL AND cand.captain IS NULL",
+    "WHERE cand.captain IS NOT NULL",
+    "COALESCE(v.first_name, m.starter.first_name, '')",
+    "COALESCE(v.last_name, m.starter.last_name, '')",
+)
+
+
+def test_chrome_crew_mirrors_the_hub():
+    """DRIFT WARNING: keep in step with _chrome_crew_welcome_query in triggers.py."""
+    sql = (SQL_DIR / "vw_campaign_would_fire.sql").read_text()
+    for pin in CHROME_CREW_PINS:
+        assert pin in sql, pin
+    cc = sql[sql.index("chrome_crew_starter AS ("):sql.index("chrome_crew_cand AS (")]
+    for child_field in ("child", "dob", "number_of_kids", "favorite_player"):
+        assert child_field not in cc.lower(), child_field
+
+
 if __name__ == "__main__":
     for _name, _fn in list(globals().items()):
         if _name.startswith("test_") and callable(_fn):
