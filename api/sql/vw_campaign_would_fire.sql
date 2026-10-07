@@ -340,6 +340,78 @@ membership_cand AS (
              o.system_modstamp DESC
   ) = 1
     AND email IS NOT NULL
+),
+-- Chrome Crew (Kids Club) welcomes — MIRROR of the hub's
+-- _chrome_crew_welcome_query in triggers.py (keep identical). One welcome per
+-- GUARDIAN per tier (dedup_key = email, no child fields); tier order paid
+-- Captain > Member (STM) Captain > Starter — a lower tier fires only while no
+-- higher tier is held; no time window (every member since launch, so the
+-- arming backlog is the absorb-or-send decision). Starter = TB form page tab
+-- 556708935; Captain = Shopify products 10350185709853 / 10353083580701,
+-- refunded or voided orders not counting as held.
+chrome_crew_starter AS (
+  SELECT
+    LOWER(TRIM(email)) AS email,
+    ARRAY_AGG(STRUCT(
+        SAFE_CAST(NULLIF(CAST(activity_id AS STRING), '') AS INT64)                AS activity_id,
+        SAFE_CAST(NULLIF(CAST(creation_timestamp_iso AS STRING), '') AS TIMESTAMP) AS joined_ts,
+        NULLIF(NULLIF(TRIM(first_name), ''), 'None')                              AS first_name,
+        NULLIF(NULLIF(TRIM(last_name), ''), 'None')                               AS last_name)
+      ORDER BY SAFE_CAST(NULLIF(CAST(creation_timestamp_iso AS STRING), '') AS TIMESTAMP),
+               activity_id
+      LIMIT 1)[OFFSET(0)] AS starter
+  FROM `sdfc-udp-dev.tradablebits_bronze.tb_activities`
+  WHERE DATE(year, month, day) >= '2026-08-01'
+    AND page_tab_id = '556708935'
+    AND email LIKE '%@%'
+  GROUP BY 1
+),
+chrome_crew_captain_orders AS (
+  SELECT
+    LOWER(o.customer_email) AS email,
+    li.product_id,
+    ARRAY_AGG(STRUCT(o.id AS order_id, o.order_number, o.current_total, o.created_at)
+              ORDER BY o.created_at, o.id LIMIT 1)[OFFSET(0)] AS first_order
+  FROM `sdfc-udp-dev.shopify_silver.order_items` li
+  JOIN `sdfc-udp-dev.shopify_silver.orders` o
+    ON o.id = li.order_id
+  WHERE li.product_id IN ('10350185709853', '10353083580701')
+    AND o.customer_email LIKE '%@%'
+    AND o.financial_status NOT IN ('REFUNDED', 'VOIDED')
+  GROUP BY 1, 2
+),
+chrome_crew_members AS (
+  SELECT
+    g.email,
+    s.starter,
+    c.first_order AS captain,
+    x.first_order AS captain_stm
+  FROM (
+    SELECT email FROM chrome_crew_starter
+    UNION DISTINCT
+    SELECT email FROM chrome_crew_captain_orders
+  ) g
+  LEFT JOIN chrome_crew_starter s
+    ON s.email = g.email
+  LEFT JOIN chrome_crew_captain_orders c
+    ON c.email = g.email AND c.product_id = '10350185709853'
+  LEFT JOIN chrome_crew_captain_orders x
+    ON x.email = g.email AND x.product_id = '10353083580701'
+),
+chrome_crew_cand AS (
+  SELECT
+    m.*,
+    COALESCE(v.first_name, m.starter.first_name, '') AS first_name,
+    COALESCE(v.last_name, m.starter.last_name, '')   AS last_name
+  FROM chrome_crew_members m
+  LEFT JOIN (
+    SELECT LOWER(email) AS email,
+           NULLIF(TRIM(first_name), '') AS first_name,
+           NULLIF(TRIM(last_name), '')  AS last_name
+    FROM `sdfc-udp-dev.customerio_gold.fan_attributes_cio_sync`
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY LOWER(email) ORDER BY first_name IS NULL, email) = 1
+  ) v
+    ON v.email = m.email
 )
 
 
@@ -495,4 +567,80 @@ LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
  AND s.dedup_key = cand.dedup_key
  AND s.status IN ('sent', 'suppressed', 'baseline')
 WHERE cand.matched_trigger = 'stm_welcome_tickets_premium_260813'
+  AND s.dedup_key IS NULL
+
+UNION ALL
+
+-- welcome_chrome_crew_starter_260828: Welcome-Chrome-Crew-Starter-Membership-20260828
+-- (CIO journey 84). Skipped while the guardian holds either Captain tier.
+SELECT
+  'welcome_chrome_crew_starter_260828',
+  cand.email,
+  cand.email,
+  cand.first_name,
+  cand.last_name,
+  cand.starter.joined_ts,
+  TO_JSON_STRING(STRUCT(
+    cand.email AS dedup_key, cand.email AS email, cand.first_name, cand.last_name,
+    'starter' AS membership_tier, cand.starter.activity_id AS activity_id,
+    FORMAT_TIMESTAMP('%FT%TZ', cand.starter.joined_ts) AS joined_at
+  ))
+FROM chrome_crew_cand cand
+LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
+  ON s.trigger = 'welcome_chrome_crew_starter_260828'
+ AND s.dedup_key = cand.email
+ AND s.status IN ('sent', 'suppressed', 'baseline')
+WHERE cand.starter IS NOT NULL AND cand.captain IS NULL AND cand.captain_stm IS NULL
+  AND s.dedup_key IS NULL
+
+UNION ALL
+
+-- welcome_chrome_crew_captain_260828: Welcome-Chrome-Crew-Captain-Membership-20260828
+-- (CIO journey 83). Top tier — always fires.
+SELECT
+  'welcome_chrome_crew_captain_260828',
+  cand.email,
+  cand.email,
+  cand.first_name,
+  cand.last_name,
+  cand.captain.created_at,
+  TO_JSON_STRING(STRUCT(
+    cand.email AS dedup_key, cand.email AS email, cand.first_name, cand.last_name,
+    'captain' AS membership_tier, cand.captain.order_id AS order_id,
+    cand.captain.order_number AS order_number,
+    IFNULL(cand.captain.current_total, 0.0) AS order_total,
+    FORMAT_TIMESTAMP('%FT%TZ', cand.captain.created_at) AS joined_at
+  ))
+FROM chrome_crew_cand cand
+LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
+  ON s.trigger = 'welcome_chrome_crew_captain_260828'
+ AND s.dedup_key = cand.email
+ AND s.status IN ('sent', 'suppressed', 'baseline')
+WHERE cand.captain IS NOT NULL
+  AND s.dedup_key IS NULL
+
+UNION ALL
+
+-- welcome_chrome_crew_captain_stm_260828: Welcome-Chrome-Crew-Captain-Membership-STM-20260828
+-- (CIO journey 82). Skipped while the guardian holds a paid Captain membership.
+SELECT
+  'welcome_chrome_crew_captain_stm_260828',
+  cand.email,
+  cand.email,
+  cand.first_name,
+  cand.last_name,
+  cand.captain_stm.created_at,
+  TO_JSON_STRING(STRUCT(
+    cand.email AS dedup_key, cand.email AS email, cand.first_name, cand.last_name,
+    'captain_stm' AS membership_tier, cand.captain_stm.order_id AS order_id,
+    cand.captain_stm.order_number AS order_number,
+    IFNULL(cand.captain_stm.current_total, 0.0) AS order_total,
+    FORMAT_TIMESTAMP('%FT%TZ', cand.captain_stm.created_at) AS joined_at
+  ))
+FROM chrome_crew_cand cand
+LEFT JOIN `sdfc-udp-dev.customerio_state.cio_trigger_log` s
+  ON s.trigger = 'welcome_chrome_crew_captain_stm_260828'
+ AND s.dedup_key = cand.email
+ AND s.status IN ('sent', 'suppressed', 'baseline')
+WHERE cand.captain_stm IS NOT NULL AND cand.captain IS NULL
   AND s.dedup_key IS NULL

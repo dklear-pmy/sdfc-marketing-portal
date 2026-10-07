@@ -88,6 +88,9 @@ def test_code_gate_mirror_matches_the_hub():
         "stm_welcome_tickets_260807",
         "stm_welcome_tickets_supporters_260807",
         "stm_welcome_tickets_premium_260813",
+        "welcome_chrome_crew_starter_260828",
+        "welcome_chrome_crew_captain_260828",
+        "welcome_chrome_crew_captain_stm_260828",
     }
     assert all(TRIGGER_CODE_ENABLED.values()), "no placeholder should remain"
 
