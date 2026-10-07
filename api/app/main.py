@@ -922,13 +922,13 @@ def spend_accept_baseline(
 
 
 @app.get("/api/admin/spend-alert-recipients")
-def spend_recipients_list(principal: Principal = require_role("admin")) -> dict:
+def spend_recipients_list(principal: Principal = require_access("platform", "admin")) -> dict:
     return spend.list_recipients()
 
 
 @app.post("/api/admin/spend-alert-recipients/{list_name}")
 def spend_recipients_add(
-    list_name: str, body: RecipientRequest, principal: Principal = require_role("admin")
+    list_name: str, body: RecipientRequest, principal: Principal = require_access("platform", "admin")
 ) -> dict:
     if body.label and len(body.label) > 80:
         raise HTTPException(status_code=400, detail="Label too long")
@@ -939,7 +939,7 @@ def spend_recipients_add(
 
 
 @app.delete("/api/admin/spend-alert-recipients/{list_name}/{email}")
-def spend_recipients_remove(list_name: str, email: str, principal: Principal = require_role("admin")) -> dict:
+def spend_recipients_remove(list_name: str, email: str, principal: Principal = require_access("platform", "admin")) -> dict:
     try:
         return spend.remove_recipient(list_name, _valid_email(email))
     except ValueError as e:
@@ -947,7 +947,7 @@ def spend_recipients_remove(list_name: str, email: str, principal: Principal = r
 
 
 @app.post("/api/admin/spend-alert-recipients/{list_name}/test")
-def spend_recipients_test(list_name: str, principal: Principal = require_role("admin")) -> dict:
+def spend_recipients_test(list_name: str, principal: Principal = require_access("platform", "admin")) -> dict:
     try:
         return spend.send_test(list_name, principal.email)
     except ValueError as e:

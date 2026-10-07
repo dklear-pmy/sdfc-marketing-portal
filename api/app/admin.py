@@ -11,6 +11,7 @@ import secrets
 import firebase_admin
 from firebase_admin import auth as fb_auth
 
+from .auth import platform_allowed
 from .config import GCP_PROJECT
 
 VALID_ROLES = ("viewer", "operator", "admin")
@@ -33,6 +34,7 @@ def merged_claims(
     existing: dict | None,
     portal_role: str | None,
     portal_sections: list[str] | None,
+    email: str | None = None,
 ) -> dict:
     """Next full claims dict, touching only the portal-owned keys.
 
@@ -40,7 +42,8 @@ def merged_claims(
     - portal_sections None with a role ⇒ sections left as they are (callers
       that only change the role must not silently rewrite grants).
     - portal_sections list ⇒ validated, deduped, stored in canonical order.
-      An empty list is legitimate: role but no sections yet.
+      An empty list is legitimate: role but no sections yet. `platform`
+      (Pipeline Spend) is accepted only for accounts on an allowed domain.
     """
     claims = dict(existing or {})
     if portal_role is None:
@@ -52,6 +55,10 @@ def merged_claims(
         bad = [s for s in portal_sections if s not in VALID_SECTIONS]
         if bad:
             raise ValueError(f"Unknown sections {bad}; valid: {list(VALID_SECTIONS)}")
+        if "platform" in portal_sections and not platform_allowed(email):
+            raise ValueError(
+                "Pipeline Spend (platform) can only be granted to @pmygroup.com or @sandiegofc.com accounts"
+            )
         claims["portal_sections"] = [s for s in VALID_SECTIONS if s in portal_sections]
     return claims
 
@@ -76,6 +83,8 @@ def list_portal_users() -> list[dict]:
                 # None = pre-sections account (legacy full access) — distinct
                 # from [] (explicitly no sections).
                 "portal_sections": claims.get("portal_sections"),
+                # Whether the Pipeline Spend grant is available for this account's domain.
+                "platform_eligible": platform_allowed(u.email),
                 "providers": [p.provider_id for p in u.provider_data],
                 "disabled": u.disabled,
             }
@@ -94,7 +103,7 @@ def invite(email: str, role: str, sections: list[str] | None = None) -> dict:
     except fb_auth.UserNotFoundError:
         user = fb_auth.create_user(email=email, password=secrets.token_urlsafe(24))
         created = True
-    claims = merged_claims(user.custom_claims, role, sections)
+    claims = merged_claims(user.custom_claims, role, sections, email)
     fb_auth.set_custom_user_claims(user.uid, claims)
     # Password-set link doubles as the invite for email/password sign-in.
     # Google-SSO users can ignore it — the role claim is what matters.
@@ -114,7 +123,7 @@ def set_role(uid: str, role: str | None, sections: list[str] | None = None) -> d
         raise ValueError(f"role must be one of {VALID_ROLES} or null")
     _ensure_app()
     user = fb_auth.get_user(uid)
-    claims = merged_claims(user.custom_claims, role, sections)
+    claims = merged_claims(user.custom_claims, role, sections, user.email)
     fb_auth.set_custom_user_claims(uid, claims)
     return {
         "uid": uid,
