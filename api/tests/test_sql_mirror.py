@@ -89,8 +89,8 @@ def test_shopify_mirrors_the_hub():
         assert SHOPIFY_OLD not in sql, name
 
 
-# Chrome Crew (Kids Club) welcomes, 2026-10-06: mirrored in the live view only
-# (the history function has no branch yet). Must carry the hub's decisions —
+# Chrome Crew (Kids Club) welcomes, 2026-10-06 (history branches 2026-10-07).
+# Both copies must carry the hub's decisions —
 # the TB page tab and Shopify product ids, refunds not held, the tier order,
 # guardian grain with no child fields, blank-not-null names.
 CHROME_CREW_PINS = (
@@ -106,12 +106,17 @@ CHROME_CREW_PINS = (
 
 def test_chrome_crew_mirrors_the_hub():
     """DRIFT WARNING: keep in step with _chrome_crew_welcome_query in triggers.py."""
-    sql = (SQL_DIR / "vw_campaign_would_fire.sql").read_text()
-    for pin in CHROME_CREW_PINS:
-        assert pin in sql, pin
-    cc = sql[sql.index("chrome_crew_starter AS ("):sql.index("chrome_crew_cand AS (")]
-    for child_field in ("child", "dob", "number_of_kids", "favorite_player"):
-        assert child_field not in cc.lower(), child_field
+    for name in MIRRORED:
+        sql = (SQL_DIR / name).read_text()
+        for pin in CHROME_CREW_PINS:
+            assert pin in sql, (name, pin)
+        cc = sql[sql.index("chrome_crew_starter AS ("):sql.index("chrome_crew_cand AS (")]
+        for child_field in ("child", "dob", "number_of_kids", "favorite_player"):
+            assert child_field not in cc.lower(), (name, child_field)
+    # the history variant windows on each tier's own join time, never the log
+    hist = (SQL_DIR / "tf_campaign_would_fire_history.sql").read_text()
+    for col in ("starter.joined_ts", "captain.created_at", "captain_stm.created_at"):
+        assert f"cand.{col} >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL history_days * 24 HOUR)" in hist, col
 
 
 if __name__ == "__main__":

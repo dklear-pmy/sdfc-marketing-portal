@@ -62,6 +62,9 @@ KILL_ALL_KEY = "all"
 HISTORY_TRIGGERS = {
     "tb_signup_260715",
     "welcome_shopify_260715",
+    "welcome_chrome_crew_starter_260828",
+    "welcome_chrome_crew_captain_260828",
+    "welcome_chrome_crew_captain_stm_260828",
     "stm_welcome_tickets_supporters_260807",
     "stm_welcome_tickets_premium_260813",
     "stm_welcome_tickets_260807",
