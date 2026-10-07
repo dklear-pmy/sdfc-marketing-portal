@@ -7,10 +7,12 @@ sign-up is left open.
 
 Access is two-axis:
 - `portal_role` (viewer < operator < admin) — how much a user may DO.
-- `portal_sections` (marketing / fans / stadium) — which areas they may SEE.
-  Admins always hold every section. A missing sections claim grants every
-  section too: pre-sections accounts were invited when access was
-  all-or-nothing, so absence means "legacy full access", not "none".
+- `portal_sections` — which areas they may SEE. Three sections (marketing /
+  fans / stadium) are implied: admins always hold them, and a missing claim
+  grants them too, because pre-sections accounts were invited when access was
+  all-or-nothing. The `platform` section (Pipeline Spend) is never implied:
+  an account holds it only through an explicit grant, and only when its email
+  is on one of PLATFORM_DOMAINS.
 """
 
 from typing import Literal
@@ -26,6 +28,10 @@ _ROLE_RANK: dict[str, int] = {"viewer": 0, "operator": 1, "admin": 2}
 
 Section = Literal["marketing", "fans", "stadium", "platform"]
 SECTIONS: tuple[str, ...] = ("marketing", "fans", "stadium", "platform")
+# Held by every admin and by every pre-sections account.
+IMPLIED_SECTIONS: tuple[str, ...] = ("marketing", "fans", "stadium")
+# Pipeline Spend is an explicit per-account grant, limited to these domains.
+PLATFORM_DOMAINS: tuple[str, ...] = ("pmygroup.com", "sandiegofc.com")
 
 _app = None
 
@@ -45,22 +51,38 @@ class Principal:
         self.sections = sections
 
 
-def resolve_sections(role: str, claim: object) -> frozenset[str]:
-    """Sections a token grants. Admin or a missing claim ⇒ all (see module
-    docstring); an explicit list is authoritative for non-admins, with unknown
-    keys dropped; any other claim shape grants nothing."""
+def platform_allowed(email: str | None) -> bool:
+    """Whether this account may hold the platform section at all."""
+    if not email or "@" not in email:
+        return False
+    return email.rsplit("@", 1)[1].lower() in PLATFORM_DOMAINS
+
+
+def resolve_sections(role: str, claim: object, email: str | None = None) -> frozenset[str]:
+    """Sections a token grants.
+
+    Admin or a missing claim ⇒ the implied sections; for a non-admin an
+    explicit list is authoritative over the implied sections, with unknown
+    keys dropped; any other claim shape grants nothing. `platform` is held
+    only when the list names it and the account's domain allows it — never by
+    admin rank, never through a missing claim.
+    """
     if role == "admin" or claim is None:
-        return frozenset(SECTIONS)
-    if not isinstance(claim, list):
+        held = set(IMPLIED_SECTIONS)
+    elif isinstance(claim, list):
+        held = {s for s in claim if s in IMPLIED_SECTIONS}
+    else:
         return frozenset()
-    return frozenset(s for s in claim if s in SECTIONS)
+    if isinstance(claim, list) and "platform" in claim and platform_allowed(email):
+        held.add("platform")
+    return frozenset(held)
 
 
 def access_error(role: str, sections: frozenset[str], section: str | None, minimum: str) -> str | None:
     """The 403 detail for this principal/requirement pair, or None if allowed."""
     if _ROLE_RANK[role] < _ROLE_RANK[minimum]:
         return f"Requires {minimum} role"
-    if section is not None and role != "admin" and section not in sections:
+    if section is not None and section not in sections:
         return f"Account has no access to the {section} section"
     return None
 
@@ -115,7 +137,7 @@ async def _authenticate(request: Request) -> Principal:
         uid=decoded["uid"],
         email=decoded.get("email"),
         role=role,
-        sections=resolve_sections(role, decoded.get("portal_sections")),
+        sections=resolve_sections(role, decoded.get("portal_sections"), decoded.get("email")),
     )
 
 
@@ -133,7 +155,8 @@ def require_role(minimum: Role):
 
 
 def require_access(section: Section, minimum: Role = "viewer"):
-    """Level check + section membership (admins bypass the section check)."""
+    """Level check + section membership. Admins hold the implied sections
+    through resolve_sections; `platform` needs an explicit grant even for them."""
 
     async def dependency(request: Request) -> Principal:
         principal = await _authenticate(request)

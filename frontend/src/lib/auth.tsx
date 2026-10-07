@@ -25,17 +25,37 @@ export const SECTION_LABELS: Record<Section, string> = {
   marketing: 'Marketing tools',
   fans: 'Fan data',
   stadium: 'Stadium',
-  platform: 'Platform',
+  platform: 'Pipeline Spend',
 };
 
-/* Mirrors the API's resolve_sections: admins hold everything, and a MISSING
-   claim also grants everything — pre-sections accounts were invited when
-   access was all-or-nothing. An explicit list (even []) is authoritative. */
-function resolveSections(role: Role | null, claim: unknown): Section[] {
+/* Held by every admin and by every pre-sections account. Pipeline Spend
+   (platform) is never implied: it takes an explicit grant, and only accounts
+   on these domains can hold it. Both lists mirror the API's auth.py. */
+export const IMPLIED_SECTIONS: readonly Section[] = ['marketing', 'fans', 'stadium'];
+export const PLATFORM_DOMAINS: readonly string[] = ['pmygroup.com', 'sandiegofc.com'];
+
+export function platformAllowed(email: string | null | undefined): boolean {
+  const at = (email ?? '').lastIndexOf('@');
+  return at >= 0 && PLATFORM_DOMAINS.includes(email!.slice(at + 1).toLowerCase());
+}
+
+/* Mirrors the API's resolve_sections: admins and pre-sections accounts (a
+   MISSING claim — they were invited when access was all-or-nothing) hold the
+   implied sections; an explicit list (even []) is authoritative for everyone
+   else; platform is added only when the list names it and the domain allows. */
+export function resolveSections(
+  role: Role | null,
+  claim: unknown,
+  email: string | null | undefined
+): Section[] {
   if (!role) return [];
-  if (role === 'admin' || claim == null) return [...SECTIONS];
-  if (!Array.isArray(claim)) return [];
-  return SECTIONS.filter((s) => (claim as unknown[]).includes(s));
+  let held: Section[];
+  if (role === 'admin' || claim == null) held = [...IMPLIED_SECTIONS];
+  else if (Array.isArray(claim)) held = IMPLIED_SECTIONS.filter((s) => claim.includes(s));
+  else return [];
+  if (Array.isArray(claim) && claim.includes('platform') && platformAllowed(email))
+    held.push('platform');
+  return held;
 }
 
 interface AuthState {
@@ -73,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         const nextRole = (token.claims.portal_role as Role | undefined) ?? null;
         setRole(nextRole);
-        setSections(resolveSections(nextRole, token.claims.portal_sections));
+        setSections(resolveSections(nextRole, token.claims.portal_sections, u.email));
       } else {
         setRole(null);
         setSections([]);

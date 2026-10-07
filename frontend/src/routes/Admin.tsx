@@ -1,7 +1,16 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { ROLE_LABELS, SECTIONS, SECTION_LABELS, type Role, type Section } from '@/lib/auth';
+import {
+  IMPLIED_SECTIONS,
+  ROLE_LABELS,
+  SECTIONS,
+  SECTION_LABELS,
+  platformAllowed,
+  useAuth,
+  type Role,
+  type Section,
+} from '@/lib/auth';
 import { SpendAlertRecipientsCard } from '@/components/SpendAlertRecipients';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,8 +32,10 @@ interface PortalUser {
   uid: string;
   email: string | null;
   portal_role: string | null;
-  /* null = pre-sections account: full access until explicit grants are stamped. */
+  /* null = pre-sections account: the implied sections until explicit grants are stamped. */
   portal_sections: string[] | null;
+  /* Whether this account's domain may hold Pipeline Spend at all. */
+  platform_eligible: boolean;
   providers: string[];
   disabled: boolean;
 }
@@ -47,35 +58,51 @@ interface InviteResult {
 
 const ROLES = ['viewer', 'operator', 'admin'] as const;
 
-/* What this user can currently see — mirrors the API's resolution: a missing
-   grants list means legacy full access. */
+const PLATFORM_HINT =
+  'Pipeline Spend can only be granted to @pmygroup.com or @sandiegofc.com accounts';
+
+/* What this user can currently see — mirrors the API's resolution: admins and
+   pre-sections accounts hold the implied sections; Pipeline Spend only by
+   explicit grant on an eligible domain. */
 function userSections(u: PortalUser): Section[] {
-  if (u.portal_sections == null) return [...SECTIONS];
-  return SECTIONS.filter((s) => u.portal_sections!.includes(s));
+  const held =
+    u.portal_role === 'admin' || u.portal_sections == null
+      ? [...IMPLIED_SECTIONS]
+      : IMPLIED_SECTIONS.filter((s) => u.portal_sections!.includes(s));
+  if (u.portal_sections?.includes('platform') && u.platform_eligible) held.push('platform');
+  return held;
 }
 
 function SectionChips({
   value,
   disabled,
+  locked = [],
+  unavailable = [],
   onToggle,
 }: {
   value: Section[];
   disabled?: boolean;
+  /* Shown held but not toggleable (an admin's implied sections). */
+  locked?: readonly Section[];
+  /* Shown off and not toggleable (Pipeline Spend on a non-eligible domain). */
+  unavailable?: readonly Section[];
   onToggle: (s: Section) => void;
 }) {
   return (
     <div className="flex flex-wrap gap-1">
       {SECTIONS.map((s) => {
         const active = value.includes(s);
+        const fixed = locked.includes(s) || unavailable.includes(s);
         return (
           <Button
             key={s}
             type="button"
             variant={active ? 'secondary' : 'outline'}
             size="sm"
-            disabled={disabled}
+            disabled={disabled || fixed}
             className={active ? '' : 'text-muted-foreground'}
             aria-pressed={active}
+            title={unavailable.includes(s) ? PLATFORM_HINT : undefined}
             onClick={() => onToggle(s)}
           >
             {SECTION_LABELS[s]}
@@ -88,9 +115,11 @@ function SectionChips({
 
 export default function Admin() {
   const queryClient = useQueryClient();
+  const { sections: mySections } = useAuth();
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<(typeof ROLES)[number]>('viewer');
-  const [inviteSections, setInviteSections] = useState<Section[]>([...SECTIONS]);
+  // Pipeline Spend is opt-in, so a new invite starts with the implied sections only.
+  const [inviteSections, setInviteSections] = useState<Section[]>([...IMPLIED_SECTIONS]);
   const [lastInvite, setLastInvite] = useState<InviteResult | null>(null);
 
   const users = useQuery({
@@ -103,8 +132,9 @@ export default function Admin() {
       api.post<InviteResult>('/api/admin/invites', {
         email,
         role,
-        // Admins hold every section implicitly — send no grants.
-        sections: role === 'admin' ? null : inviteSections,
+        // Admins hold the implied sections by rank; only a Pipeline Spend grant is stored for them.
+        sections:
+          role === 'admin' ? inviteSections.filter((s) => s === 'platform') : inviteSections,
       }),
     onSuccess: (result) => {
       setLastInvite(result);
@@ -143,8 +173,9 @@ export default function Admin() {
         <p className="mt-1 text-sm text-muted-foreground">
           Invite teammates, set their portal role, and choose which sections they can see. Role =
           what they can do (viewer reads, operator runs and edits); sections = which areas exist for
-          them. Changes reach a signed-in user within an hour, or immediately after they sign out
-          and back in.
+          them. Pipeline Spend is granted per account, admins included, and only to PMY and SDFC
+          addresses. Changes reach a signed-in user within an hour, or immediately after they sign
+          out and back in.
         </p>
       </div>
 
@@ -183,18 +214,26 @@ export default function Admin() {
             </Button>
             <div className="grid w-full gap-2">
               <Label>Sections</Label>
-              {role === 'admin' ? (
-                <p className="text-sm text-muted-foreground">Admins see every section.</p>
-              ) : (
-                <SectionChips
-                  value={inviteSections}
-                  disabled={invite.isPending}
-                  onToggle={(s) =>
-                    setInviteSections((cur) =>
-                      cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]
-                    )
-                  }
-                />
+              <SectionChips
+                value={
+                  role === 'admin'
+                    ? [...IMPLIED_SECTIONS, ...inviteSections.filter((s) => s === 'platform')]
+                    : inviteSections
+                }
+                disabled={invite.isPending}
+                locked={role === 'admin' ? IMPLIED_SECTIONS : []}
+                unavailable={platformAllowed(email) ? [] : ['platform']}
+                onToggle={(s) =>
+                  setInviteSections((cur) =>
+                    cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]
+                  )
+                }
+              />
+              {role === 'admin' && (
+                <p className="text-sm text-muted-foreground">
+                  Admins hold Marketing tools, Fan data and Stadium by rank; Pipeline Spend is a
+                  separate grant.
+                </p>
               )}
             </div>
           </form>
@@ -243,7 +282,7 @@ export default function Admin() {
 
       <AlertRecipientsCard />
 
-      <SpendAlertRecipientsCard />
+      {mySections.includes('platform') && <SpendAlertRecipientsCard />}
 
       <Card>
         <CardHeader>
@@ -292,33 +331,31 @@ export default function Admin() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {u.portal_role === 'admin' ? (
-                          <Badge variant="outline">all sections</Badge>
-                        ) : (
-                          <div className="grid gap-1">
-                            <SectionChips
-                              value={userSections(u)}
-                              disabled={setUserRole.isPending}
-                              onToggle={(s) => {
-                                const cur = userSections(u);
-                                const next = cur.includes(s)
-                                  ? cur.filter((x) => x !== s)
-                                  : [...cur, s];
-                                setUserRole.mutate({
-                                  uid: u.uid,
-                                  newRole: u.portal_role,
-                                  sections: next,
-                                });
-                              }}
-                            />
-                            {u.portal_sections == null && (
-                              <span className="text-xs text-muted-foreground">
-                                full access from before sections existed — any toggle makes grants
-                                explicit
-                              </span>
-                            )}
-                          </div>
-                        )}
+                        <div className="grid gap-1">
+                          <SectionChips
+                            value={userSections(u)}
+                            disabled={setUserRole.isPending}
+                            locked={u.portal_role === 'admin' ? IMPLIED_SECTIONS : []}
+                            unavailable={u.platform_eligible ? [] : ['platform']}
+                            onToggle={(s) => {
+                              const cur = userSections(u);
+                              const next = cur.includes(s)
+                                ? cur.filter((x) => x !== s)
+                                : [...cur, s];
+                              setUserRole.mutate({
+                                uid: u.uid,
+                                newRole: u.portal_role,
+                                sections: next,
+                              });
+                            }}
+                          />
+                          {u.portal_sections == null && u.portal_role !== 'admin' && (
+                            <span className="text-xs text-muted-foreground">
+                              Marketing tools, Fan data and Stadium from before sections existed —
+                              any toggle makes grants explicit
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {u.providers.join(', ') || '—'}
