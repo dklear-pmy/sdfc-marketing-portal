@@ -23,7 +23,7 @@ import {
   type TriggerRow,
   type WouldFirePage,
 } from '@/lib/api';
-import { Loader2Icon } from 'lucide-react';
+import { ChevronDownIcon, ChevronRightIcon, Loader2Icon } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { useUrlFilters } from '@/lib/urlState';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -560,25 +560,79 @@ function TriggerDrilldownSkeleton() {
   );
 }
 
-/* Who the trigger would affect: the live next-run selection, or every event
-   of the trailing 90 days from the history table function. Same data the
-   campaign drilldown's Matching Customers tab shows, addressed by trigger
-   key so it works even for a trigger with no registered campaign. Strictly
-   preview — the portal never fires a production webhook. */
+/* Who the trigger would affect — both windows stacked on one card, so a reader
+   never flips tabs to compare them: Next Run (the live selection, who the next
+   armed run would send to) on top and collapsible, Last 90 Days (every event
+   the history table function says it would have fired on, had it been on)
+   always below. Each window loads on its own. Same data the campaign
+   drilldown's Matching Customers tab shows, addressed by trigger key so it
+   works even for a trigger with no registered campaign. Strictly preview —
+   the portal never fires a production webhook. */
 function TriggerAffected({ t }: { t: TriggerRow }) {
-  /* The window lives in the URL (twin=history; absent = next run) so both
-     tabs are directly linkable, same as the drilldown's ttab. Paging stays
-     local — a deep link always lands on page one. */
-  const [{ twin }, setUrl] = useUrlFilters({ twin: '' }, ['twin']);
-  const win: 'next' | 'history' = twin === 'history' ? 'history' : 'next';
+  /* Only the fold lives in the URL (tnext=closed) so a link can land straight
+     on the history; paging stays local — a deep link always lands on page one. */
+  const [{ tnext }, setUrl] = useUrlFilters({ tnext: '' }, ['tnext']);
+  const nextOpen = tnext !== 'closed';
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Matching Customers</CardTitle>
+        <CardDescription>
+          <span className="font-medium text-foreground">Next Run</span> is everyone this
+          trigger&apos;s selection matches right now — who the next armed run would send to.{' '}
+          <span className="font-medium text-foreground">Last {HISTORY_DAYS} Days</span> is every
+          event it would have fired on in that window, had it been on.{' '}
+          <strong className="font-medium text-foreground">
+            These are real fans with real addresses
+          </strong>{' '}
+          — this list is preview-only and the portal never fires a production webhook.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {/* Whole-campaign export: BOTH windows in one file, as worksheet
+            tabs — distinct from the per-window buttons in each section. */}
+        <div className="flex justify-start">
+          <ExportExcelButton
+            label="Export Campaign Excel"
+            path={`/api/triggers/${encodeURIComponent(t.key)}/preview/export?windows=all&days=${HISTORY_DAYS}`}
+          />
+        </div>
+        <PreviewWindow
+          triggerKey={t.key}
+          win="next"
+          open={nextOpen}
+          onToggle={() => setUrl({ tnext: nextOpen ? 'closed' : '' })}
+        />
+        <PreviewWindow triggerKey={t.key} win="history" />
+      </CardContent>
+    </Card>
+  );
+}
+
+/* One window of the Matching Customers card: its own query, count, export,
+   table and pager. `open`/`onToggle` make the section collapsible (Next Run);
+   without them it is always expanded (Last 90 Days). A collapsed section
+   still fetches so its header can carry the count. */
+function PreviewWindow({
+  triggerKey,
+  win,
+  open = true,
+  onToggle,
+}: {
+  triggerKey: string;
+  win: 'next' | 'history';
+  open?: boolean;
+  onToggle?: () => void;
+}) {
   const [offset, setOffset] = useState(0);
   const [openRow, setOpenRow] = useState<string | null>(null);
 
   const list = useQuery({
-    queryKey: ['trigger-preview', t.key, win, offset],
+    queryKey: ['trigger-preview', triggerKey, win, offset],
     queryFn: () =>
       api.get<WouldFirePage>(
-        `/api/triggers/${encodeURIComponent(t.key)}/preview?limit=${AFFECTED_PAGE}&offset=${offset}` +
+        `/api/triggers/${encodeURIComponent(triggerKey)}/preview?limit=${AFFECTED_PAGE}&offset=${offset}` +
           (win === 'history' ? `&days=${HISTORY_DAYS}` : ''),
         { timeoutMs: PREVIEW_TIMEOUT_MS }
       ),
@@ -590,202 +644,203 @@ function TriggerAffected({ t }: { t: TriggerRow }) {
   const rows = page?.rows ?? [];
   const total = page?.total ?? 0;
   const overCap = win === 'next' && page?.cap != null && total > page.cap;
-  /* isPlaceholderData = what's on screen belongs to the PREVIOUS window or
-     page, not the one now being fetched — so a window switch shows the
-     skeleton instead of the old window's rows and count. isPending covers the
-     first load, when there is nothing to hold over at all. */
+  const noHistory = win === 'history' && page?.history_available === false;
+  /* isPlaceholderData = what's on screen belongs to the PREVIOUS page, not
+     the one now being fetched; isPending covers the first load. */
   const loading = list.isPending || list.isPlaceholderData;
 
+  const title = win === 'next' ? 'Next Run' : `Last ${HISTORY_DAYS} Days`;
+  const summary = loading
+    ? null
+    : list.isError
+      ? 'couldn’t load'
+      : noHistory
+        ? 'no history view'
+        : win === 'next'
+          ? `${total.toLocaleString()} ${total === 1 ? 'customer' : 'customers'} currently selected`
+          : `${total.toLocaleString()} matching ${total === 1 ? 'event' : 'events'}`;
+  const sectionId = `preview-${win}`;
+
+  /* Heading + count stacked, shared by the collapsible (button) and static
+     (div) header so the two windows read as the same kind of surface. */
+  const heading = (
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <span className="font-heading text-lg leading-snug font-semibold group-hover/fold:underline group-hover/fold:decoration-muted-foreground/60 group-hover/fold:underline-offset-4">
+        {title}
+      </span>
+      {summary && <span className="text-sm text-muted-foreground">{summary}</span>}
+      {loading && <PreviewCountSkeleton />}
+    </span>
+  );
+  const chevron = 'mt-0.5 size-5 shrink-0 text-muted-foreground group-hover/fold:text-foreground';
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Matching Customers</CardTitle>
-        <CardDescription>
-          {win === 'next'
-            ? "Everyone this trigger's selection matches right now — who the next armed run would send to."
-            : `Every event this trigger would have fired on in the last ${HISTORY_DAYS} days, had it been on.`}{' '}
-          <strong className="font-medium text-foreground">
-            These are real fans with real addresses
-          </strong>{' '}
-          — this list is preview-only and the portal never fires a production webhook.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {/* Whole-campaign export: BOTH windows in one file, as worksheet
-            tabs — distinct from the per-window button below the tabs. */}
-        <div className="flex justify-start">
-          <ExportExcelButton
-            label="Export Campaign Excel"
-            path={`/api/triggers/${encodeURIComponent(t.key)}/preview/export?windows=all&days=${HISTORY_DAYS}`}
-          />
-        </div>
-        <Tabs
-          value={win}
-          onValueChange={(v) => {
-            setUrl({ twin: v === 'history' ? 'history' : '' });
-            setOffset(0);
-          }}
+    <Card className="gap-3 bg-muted/30 shadow-none">
+      {onToggle ? (
+        <button
+          type="button"
+          className="group/fold mx-(--card-spacing) flex items-start gap-2 rounded-md text-left focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+          aria-expanded={open}
+          aria-controls={sectionId}
+          onClick={onToggle}
         >
-          <TabsList>
-            <TabsTrigger value="next">Next Run</TabsTrigger>
-            <TabsTrigger value="history">Last {HISTORY_DAYS} Days</TabsTrigger>
-          </TabsList>
-        </Tabs>
-        {list.isError && (
-          <Alert variant="destructive">
-            <AlertTitle>Couldn&apos;t load the preview</AlertTitle>
-            <AlertDescription>{(list.error as Error).message}</AlertDescription>
-          </Alert>
-        )}
-        {loading && (
-          <>
-            <PreviewCountSkeleton />
-            <PreviewTableSkeleton />
-          </>
-        )}
-        {!loading && win === 'history' && page?.history_available === false && (
-          <Alert>
-            <AlertTitle>
-              {page.no_history_reason
-                ? 'History can’t be reconstructed for this trigger'
-                : 'No history view for this trigger yet'}
-            </AlertTitle>
-            <AlertDescription>
-              {page.no_history_reason ??
-                'The history table function doesn’t carry this trigger’s branch — only the live next-run view is available.'}
-            </AlertDescription>
-          </Alert>
-        )}
-        {!loading && overCap && (
-          <Alert className="border-amber-500/50 text-amber-700 dark:text-amber-500 [&>div]:text-amber-700/90 dark:[&>div]:text-amber-500/90">
-            <AlertTitle>
-              {total.toLocaleString()} exceeds the per-run safety cap ({page!.cap!.toLocaleString()}
-              )
-            </AlertTitle>
-            <AlertDescription>
-              The hub would skip this run and alert instead of sending — a backlog this size needs
-              its state re-baselined (backlog absorbed) before arming.
-            </AlertDescription>
-          </Alert>
-        )}
-        {!loading && page && !(win === 'history' && page.history_available === false) && (
-          <>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">{total.toLocaleString()}</span>{' '}
-                {win === 'next'
-                  ? `${total === 1 ? 'customer' : 'customers'} currently selected.`
-                  : `matching ${total === 1 ? 'event' : 'events'} in the last ${HISTORY_DAYS} days.`}
-              </p>
-              <ExportExcelButton
-                path={
-                  `/api/triggers/${encodeURIComponent(t.key)}/preview/export` +
-                  (win === 'history' ? `?days=${HISTORY_DAYS}` : '')
-                }
-                disabled={total === 0}
-              />
-            </div>
-            <div
-              className={cn('overflow-x-auto rounded-md border', list.isFetching && 'opacity-60')}
-            >
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Event</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead className="w-24">Payload</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.length === 0 && (
+          {open ? (
+            <ChevronDownIcon className={chevron} />
+          ) : (
+            <ChevronRightIcon className={chevron} />
+          )}
+          {heading}
+        </button>
+      ) : (
+        <div className="flex items-start gap-2 px-(--card-spacing)">{heading}</div>
+      )}
+      {open && (
+        <CardContent id={sectionId} className="space-y-3">
+          {list.isError && (
+            <Alert variant="destructive">
+              <AlertTitle>Couldn&apos;t load the preview</AlertTitle>
+              <AlertDescription>{(list.error as Error).message}</AlertDescription>
+            </Alert>
+          )}
+          {loading && <PreviewTableSkeleton />}
+          {!loading && noHistory && (
+            <Alert>
+              <AlertTitle>
+                {page!.no_history_reason
+                  ? 'History can’t be reconstructed for this trigger'
+                  : 'No history view for this trigger yet'}
+              </AlertTitle>
+              <AlertDescription>
+                {page!.no_history_reason ??
+                  'The history table function doesn’t carry this trigger’s branch — only the live next-run view is available.'}
+              </AlertDescription>
+            </Alert>
+          )}
+          {!loading && overCap && (
+            <Alert className="border-amber-500/50 text-amber-700 dark:text-amber-500 [&>div]:text-amber-700/90 dark:[&>div]:text-amber-500/90">
+              <AlertTitle>
+                {total.toLocaleString()} exceeds the per-run safety cap (
+                {page!.cap!.toLocaleString()})
+              </AlertTitle>
+              <AlertDescription>
+                The hub would skip this run and alert instead of sending — a backlog this size needs
+                its state re-baselined (backlog absorbed) before arming.
+              </AlertDescription>
+            </Alert>
+          )}
+          {!loading && page && !noHistory && (
+            <>
+              <div className="flex justify-end">
+                <ExportExcelButton
+                  path={
+                    `/api/triggers/${encodeURIComponent(triggerKey)}/preview/export` +
+                    (win === 'history' ? `?days=${HISTORY_DAYS}` : '')
+                  }
+                  disabled={total === 0}
+                />
+              </div>
+              <div
+                className={cn('overflow-x-auto rounded-md border', list.isFetching && 'opacity-60')}
+              >
+                <Table>
+                  <TableHeader>
                     <TableRow>
-                      <TableCell colSpan={3} className="h-16 text-center text-muted-foreground">
-                        {win === 'next'
-                          ? 'No customers currently match this trigger’s logic.'
-                          : `No matching events in the last ${HISTORY_DAYS} days.`}
-                      </TableCell>
+                      <TableHead>Event</TableHead>
+                      <TableHead>Customer</TableHead>
+                      <TableHead className="w-24">Payload</TableHead>
                     </TableRow>
-                  )}
-                  {rows.map((r) => {
-                    const key = `${r.dedup_key}`;
-                    const name = [r.first_name, r.last_name].filter(Boolean).join(' ');
-                    return (
-                      <Fragment key={key}>
-                        <TableRow>
-                          <TableCell className="text-sm whitespace-nowrap">
-                            {r.event_at ? (
-                              <>
-                                <div>{formatPacific(r.event_at)}</div>
-                                <div className="text-xs text-muted-foreground">
-                                  {relativeFrom(r.event_at)}
-                                </div>
-                              </>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {name && <div className="text-sm">{name}</div>}
-                            <div className="text-xs text-muted-foreground">{r.email ?? '—'}</div>
-                          </TableCell>
-                          <TableCell>
-                            {r.payload_json ? (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setOpenRow(openRow === key ? null : key)}
-                              >
-                                {openRow === key ? 'Hide' : 'View'}
-                              </Button>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                        {openRow === key && r.payload_json && (
+                  </TableHeader>
+                  <TableBody>
+                    {rows.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={3} className="h-16 text-center text-muted-foreground">
+                          {win === 'next'
+                            ? 'No customers currently match this trigger’s logic.'
+                            : `No matching events in the last ${HISTORY_DAYS} days.`}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {rows.map((r) => {
+                      const key = `${r.dedup_key}`;
+                      const name = [r.first_name, r.last_name].filter(Boolean).join(' ');
+                      return (
+                        <Fragment key={key}>
                           <TableRow>
-                            <TableCell colSpan={3} className="bg-muted/40">
-                              <pre className="p-1 text-xs break-all whitespace-pre-wrap">
-                                {prettyPayload(r.payload_json)}
-                              </pre>
+                            <TableCell className="text-sm whitespace-nowrap">
+                              {r.event_at ? (
+                                <>
+                                  <div>{formatPacific(r.event_at)}</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {relativeFrom(r.event_at)}
+                                  </div>
+                                </>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {name && <div className="text-sm">{name}</div>}
+                              <div className="text-xs text-muted-foreground">{r.email ?? '—'}</div>
+                            </TableCell>
+                            <TableCell>
+                              {r.payload_json ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setOpenRow(openRow === key ? null : key)}
+                                >
+                                  {openRow === key ? 'Hide' : 'View'}
+                                </Button>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
                             </TableCell>
                           </TableRow>
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-            {total > AFFECTED_PAGE && (
-              <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>
-                  {rows.length === 0 ? '0' : `${offset + 1}–${offset + rows.length}`} of{' '}
-                  {total.toLocaleString()}
-                </span>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={offset === 0}
-                    onClick={() => setOffset(Math.max(0, offset - AFFECTED_PAGE))}
-                  >
-                    Previous
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={offset + AFFECTED_PAGE >= total}
-                    onClick={() => setOffset(offset + AFFECTED_PAGE)}
-                  >
-                    Next
-                  </Button>
-                </div>
+                          {openRow === key && r.payload_json && (
+                            <TableRow>
+                              <TableCell colSpan={3} className="bg-muted/40">
+                                <pre className="p-1 text-xs break-all whitespace-pre-wrap">
+                                  {prettyPayload(r.payload_json)}
+                                </pre>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                        </Fragment>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               </div>
-            )}
-          </>
-        )}
-      </CardContent>
+              {total > AFFECTED_PAGE && (
+                <div className="flex items-center justify-between text-sm text-muted-foreground">
+                  <span>
+                    {rows.length === 0 ? '0' : `${offset + 1}–${offset + rows.length}`} of{' '}
+                    {total.toLocaleString()}
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={offset === 0}
+                      onClick={() => setOffset(Math.max(0, offset - AFFECTED_PAGE))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={offset + AFFECTED_PAGE >= total}
+                      onClick={() => setOffset(offset + AFFECTED_PAGE)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      )}
     </Card>
   );
 }
@@ -1174,19 +1229,19 @@ function TriggerDrilldown({
 }
 
 export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) => void }) {
-  const [{ tstat, tq, tsel, ttab, twin }, setUrl] = useUrlFilters(
+  const [{ tstat, tq, tsel, ttab, tnext }, setUrl] = useUrlFilters(
     {
       tstat: '',
       tq: '',
       tsel: '',
       ttab: '',
       /* owned by TriggerAffected; declared here so leaving a drilldown
-         clears it instead of leaking last-90-days into the next one */
-      twin: '',
+         clears it instead of leaking a folded Next Run into the next one */
+      tnext: '',
     },
     ['tsel', 'ttab']
   );
-  void twin;
+  void tnext;
   const filter: TriggerState = tstat === 'disabled' || tstat === 'draft' ? tstat : 'enabled';
   const tab: TriggerTab = ttab === 'preview' ? 'preview' : 'overview';
 
@@ -1232,7 +1287,7 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
             <button
               type="button"
               className="underline underline-offset-2"
-              onClick={() => setUrl({ tsel: '', ttab: '', twin: '' })}
+              onClick={() => setUrl({ tsel: '', ttab: '', tnext: '' })}
             >
               back to the list
             </button>
@@ -1245,7 +1300,7 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
         t={t}
         tab={tab}
         onTab={(next) => setUrl({ ttab: next === 'overview' ? '' : next })}
-        onBack={() => setUrl({ tsel: '', ttab: '', twin: '' })}
+        onBack={() => setUrl({ tsel: '', ttab: '', tnext: '' })}
         onCampaign={(slug) => onSelect(slug)}
         hubDryRun={list.data?.hub_dry_run ?? null}
       />
@@ -1538,7 +1593,7 @@ export default function TriggersPanel({ onSelect }: { onSelect: (slug: string) =
                     <TableRow
                       key={t.key}
                       onClick={() =>
-                        setUrl({ tsel: t.campaigns[0]?.slug ?? t.key, ttab: '', twin: '' })
+                        setUrl({ tsel: t.campaigns[0]?.slug ?? t.key, ttab: '', tnext: '' })
                       }
                       className="cursor-pointer"
                     >
